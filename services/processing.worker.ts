@@ -254,34 +254,26 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
         return;
     }
 
-    // --- DEBUGGING FIRST ROW ---
-    if (rows.length > 0 && state_processedRowsCount === 0) {
-        const sample = rows[0];
-        console.log('[Worker] First Chunk Sample Row:', JSON.stringify(sample).substring(0, 300));
-        console.log('[Worker] Has clients?', Array.isArray((sample as any).clients), 'Length:', (sample as any).clients?.length);
-    }
-
     rows.forEach(item => {
-        // Determine if it's an Aggregated Group or a Flat Client
         let clientsToProcess: any[] = [];
         
         if (item.clients && Array.isArray(item.clients)) {
-            // It's an Aggregated Row
             clientsToProcess = item.clients;
         } else {
-            // It's a Flat Client Row
-            // Treat the whole row as the client data
             clientsToProcess = [item];
         }
 
         clientsToProcess.forEach(client => {
             let clientFact = typeof client.fact === 'number' ? client.fact : 0;
             
-            // --- APPLY DATE FILTER ---
-            // STRICT FIX: If we have a filter, but NO monthlyFact data, we should EXCLUDE the record
-            // to avoid polluting the specific period view with "timeless" historical data.
+            // --- DATE FILTER & TAGGING ---
+            // If the client data lacks granularity (snapshot), but we have a Load Date filter active,
+            // we should assume the user wants to attribute this snapshot data to the selected start date.
+            // This prevents the data from being invisible when Strict Filtering is applied in the UI.
+            
             if (state_filterStartDate || state_filterEndDate) {
                 if (client.monthlyFact && Object.keys(client.monthlyFact).length > 0) {
+                    // It has dates, so calculate fact normally based on range
                     clientFact = 0;
                     Object.entries(client.monthlyFact).forEach(([dateStr, val]) => {
                         const parts = dateStr.split(/[-.]/); 
@@ -296,26 +288,27 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
                                 const endDateObj = new Date(state_filterEndDate);
                                 if (ts > state_filterEndDate) inRange = false;
                             }
-                            
                             if (inRange) clientFact += (val as number);
                         }
                     });
-                } else {
-                    // STRICT MODE: If a date filter is active, but the record has NO date breakdown,
-                    // we must assume it does NOT belong to this specific period to prevent overcounting.
-                    // Only if NO filter is active do we include the total fact.
-                    const isFilterActive = !!(state_filterStartDate || state_filterEndDate);
-                    clientFact = isFilterActive ? 0 : (typeof client.fact === 'number' ? client.fact : 0);
+                } else if (state_filterStartDate) {
+                    // NO DATES + FILTER ACTIVE -> Apply Fallback Tag
+                    // If no internal date exists, assign the fact to the filter start date
+                    // so the UI filter can "see" it.
+                    const d = new Date(state_filterStartDate);
+                    const m = String(d.getMonth() + 1).padStart(2, '0');
+                    const fallbackKey = `${d.getFullYear()}-${m}`;
+                    
+                    if (!client.monthlyFact) client.monthlyFact = {};
+                    client.monthlyFact[fallbackKey] = (client.fact || 0);
+                    
+                    // We don't filter here, we let the UI filter based on the new monthlyFact
+                    clientFact = client.fact || 0; 
                 }
             }
 
-            // Inclusion criteria
-            const isFilterActive = !!(state_filterStartDate || state_filterEndDate);
-            const shouldInclude = !isFilterActive || clientFact > 0;
-
-            if (shouldInclude) {
-                // Ensure Client Key exists and is STABLE
-                // FIX: Use address+name for hash if key is missing, instead of random.
+            // Always include, let UI filter
+            if (true) {
                 let safeKey = client.key;
                 if (!safeKey) {
                     const addr = client.address || 'unknown';
@@ -325,10 +318,9 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
                     safeKey = `${normAddr}#${normName}`;
                 }
                 
+                // Use the potentially updated monthlyFact
                 const filteredClient = { ...client, key: safeKey, fact: clientFact };
                 
-                // Reconstruct Group Key (Region-RM-Brand-Packaging)
-                // Use fallback 'unknown' if fields are missing in flattened data
                 const reg = filteredClient.region || 'Не определен';
                 const rm = filteredClient.rm || 'Не указан';
                 const brand = filteredClient.brand || 'Без бренда';
@@ -336,7 +328,6 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
                 
                 const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
 
-                // Ensure Group Exists in State
                 if (!state_aggregatedData[groupKey]) {
                     state_aggregatedData[groupKey] = {
                         __rowId: generateRowId(),
@@ -355,34 +346,26 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
                     };
                 }
 
-                // Add to Group
                 const group = state_aggregatedData[groupKey];
                 
-                // If client already exists in this group (duplicate in chunk?), merge fact
                 if (group.clients.has(safeKey)) {
                     const existing = group.clients.get(safeKey)!;
-                    // Only sum if it's not the exact same object/record being reprocessed
-                    // For flat files, we assume distinct rows mean distinct sales transactions or SKU lines
                     existing.fact = (existing.fact || 0) + clientFact;
+                    // Merge monthly facts if needed
+                    if (filteredClient.monthlyFact) {
+                        if (!existing.monthlyFact) existing.monthlyFact = {};
+                        Object.entries(filteredClient.monthlyFact).forEach(([k, v]) => {
+                            existing.monthlyFact![k] = (existing.monthlyFact![k] || 0) + (v as number);
+                        });
+                    }
                 } else {
                     group.clients.set(safeKey, filteredClient);
                 }
                 
-                // Update Group Totals
                 group.fact += clientFact;
-                group.potential = group.fact * 1.15; // Simple heuristic update
+                group.potential = group.fact * 1.15; 
 
-                // Update Global Unique Clients Map
-                // NOTE: Ideally we want to merge facts if the client already exists globally
-                if (state_uniquePlottableClients.has(safeKey)) {
-                     const globalClient = state_uniquePlottableClients.get(safeKey)!;
-                     // Merge facts from different groups (e.g. client bought Brand A and Brand B)
-                     // But verify we aren't double counting the exact same row/object
-                     if (globalClient !== filteredClient) {
-                         // We don't modify global client fact here because it's a pointer. 
-                         // But we ensure it's tracked.
-                     }
-                } else {
+                if (!state_uniquePlottableClients.has(safeKey)) {
                     state_uniquePlottableClients.set(safeKey, filteredClient);
                 }
             }
@@ -447,16 +430,27 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const row = jsonData[i];
         state_processedRowsCount++;
         
-        if (state_filterStartDate || state_filterEndDate) {
-            const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
-            if (dateRaw) {
-                const rowTime = parseRawDateToTimestamp(dateRaw);
-                if (rowTime !== null) {
-                    if (state_filterStartDate && rowTime < state_filterStartDate) continue;
-                    if (state_filterEndDate && rowTime > state_filterEndDate) continue;
-                }
-            }
+        const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
+        let dateKey = parseDateKey(dateRaw);
+        let rowTime = parseRawDateToTimestamp(dateRaw);
+
+        // --- FILTER CHECK ---
+        // If we have a filter, and the row HAS a date, we check it.
+        // If the row HAS NO date, we fall through and will tag it later.
+        if ((state_filterStartDate || state_filterEndDate) && rowTime !== null) {
+            if (state_filterStartDate && rowTime < state_filterStartDate) continue;
+            if (state_filterEndDate && rowTime > state_filterEndDate) continue;
         }
+        
+        // --- DATE TAGGING FALLBACK ---
+        // If row has no internal date, but we have a load filter, assume it belongs to the start of the filter.
+        if (!dateKey && state_filterStartDate) {
+            const d = new Date(state_filterStartDate);
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            dateKey = `${d.getFullYear()}-${m}`;
+        }
+        
+        const finalDateKey = dateKey || 'unknown';
         
         const rawAddr = findAddressInRow(row);
         if (!rawAddr) continue;
@@ -501,8 +495,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
         const totalWeight = parseCleanFloat(weightRaw);
         const weightPerBrand = brands.length > 0 ? totalWeight / brands.length : 0;
-        const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
-        const dateKey = parseDateKey(dateRaw) || 'unknown';
+        
         const normName = clientName.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
         const uniqueClientKey = (normName.length > 2 && normName !== 'тт') ? `${normAddr}#${normName}` : normAddr;
 
@@ -529,7 +522,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
             state_aggregatedData[groupKey].fact += weightPerBrand;
             if (!state_aggregatedData[groupKey].monthlyFact) state_aggregatedData[groupKey].monthlyFact = {};
-            state_aggregatedData[groupKey].monthlyFact[dateKey] = (state_aggregatedData[groupKey].monthlyFact[dateKey] || 0) + weightPerBrand;
+            state_aggregatedData[groupKey].monthlyFact[finalDateKey] = (state_aggregatedData[groupKey].monthlyFact[finalDateKey] || 0) + weightPerBrand;
 
             if (!state_uniquePlottableClients.has(uniqueClientKey)) {
                 const okb = state_okbCoordIndex.get(normAddr);
@@ -564,7 +557,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             if (pt) {
                 pt.fact = (pt.fact || 0) + weightPerBrand;
                 if (!pt.monthlyFact) pt.monthlyFact = {};
-                pt.monthlyFact[dateKey] = (pt.monthlyFact[dateKey] || 0) + weightPerBrand;
+                pt.monthlyFact[finalDateKey] = (pt.monthlyFact[finalDateKey] || 0) + weightPerBrand;
                 state_aggregatedData[groupKey].clients.set(uniqueClientKey, pt);
             }
         }

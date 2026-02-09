@@ -218,6 +218,11 @@ export const useAppLogic = () => {
     useEffect(() => {
         const init = async () => {
             setDbStatus('loading');
+            
+            // DISABLED AUTO-RESTORE: Force fresh start on reload as requested.
+            // To restore persistence, uncomment the logic below.
+            
+            /*
             const local = await loadAnalyticsState();
             if (local?.allData?.length > 0) {
                 let validatedLocal = normalize(local.allData); enrichWithAbcCategories(validatedLocal);
@@ -233,6 +238,10 @@ export const useAppLogic = () => {
                     setDbStatus('ready');
                 }
             } catch (e) { setDbStatus('ready'); }
+            */
+
+            // Immediate ready state with empty data
+            setDbStatus('ready');
         };
         init();
         return () => { if (updatePollingInterval.current) clearInterval(updatePollingInterval.current); };
