@@ -4,12 +4,10 @@ import FileUpload from '../FileUpload';
 import OKBManagement from '../OKBManagement';
 import OutlierDetailsModal from '../OutlierDetailsModal';
 import Modal from '../Modal';
-import FiltersBar from '../FiltersBar';
 import EmptyState from '../EmptyState';
 import Motion from '../Motion';
 import TopBar from '../TopBar';
 import DataTable from '../DataTable';
-import GlobalSearch from '../GlobalSearch';
 import SavedViews from '../SavedViews';
 import ExportButtons from '../ExportButtons';
 import RoleSwitcher from '../auth/RoleSwitcher';
@@ -19,21 +17,17 @@ import { ChartCard, ChannelBarChart } from '../charts/PremiumCharts';
 
 import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState, MapPoint } from '../../types';
 import {
-  CheckIcon,
   AlertIcon,
-  DataIcon,
   InfoIcon,
   SuccessIcon,
   ChannelIcon,
   LoaderIcon,
   SearchIcon,
   UsersIcon,
-  FactIcon,
 } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
 import { Card, CardHeader, CardBody } from '../ui/Card';
-import { Button } from '../ui/Button';
 import { Chip } from '../ui/Chip';
 import { StatTile } from '../ui/StatTile';
 
@@ -65,6 +59,12 @@ interface AdaptaProps {
   loadEndDate?: string;
   onLoadStartDateChange?: (date: string) => void;
   onLoadEndDateChange?: (date: string) => void;
+
+  // Navigation & Search Integration
+  openChannelRequest?: string | null;
+  onConsumeOpenChannelRequest?: () => void;
+  onTabChange?: (tab: string) => void;
+  setIsSearchOpen?: (isOpen: boolean) => void;
 }
 
 interface OutlierItem {
@@ -78,21 +78,14 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   const [selectedOutlier, setSelectedOutlier] = useState<OutlierItem | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [channelSearchTerm, setChannelSearchTerm] = useState('');
-  
-  // Global Search State
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
 
-  // Keyboard shortcut for Global Search
+  // Handle external request to open a channel (e.g., from Global Search)
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setIsSearchOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+    if (props.openChannelRequest) {
+      setSelectedChannel(props.openChannelRequest);
+      props.onConsumeOpenChannelRequest?.();
+    }
+  }, [props.openChannelRequest, props.onConsumeOpenChannelRequest]);
 
   const healthScore = useMemo(() => {
     if (props.activeClientsCount === 0) return 0;
@@ -244,41 +237,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     return baseClientKeys.size.toLocaleString('ru-RU');
   }, [props.processingState.isProcessing, props.processingState.totalRowsProcessed, baseClientKeys]);
 
-  // Generate Search Items for Global Search
-  const searchItems = useMemo(() => {
-      const items: { id: string; title: string; subtitle?: string; onSelect: () => void }[] = [];
-      
-      // Add Channels
-      channelStats.forEach(ch => {
-          items.push({
-              id: `channel-${ch.name}`,
-              title: ch.name,
-              subtitle: `Канал продаж • ${ch.count} ТТ`,
-              onSelect: () => setSelectedChannel(ch.name)
-          });
-      });
-
-      // Add Active Clients (Limit to first 500 to avoid freezing if too many)
-      if (props.uploadedData) {
-          let count = 0;
-          for (const row of props.uploadedData) {
-              for (const client of row.clients) {
-                  if (count > 500) break;
-                  items.push({
-                      id: `client-${client.key}`,
-                      title: client.name,
-                      subtitle: `Клиент • ${client.address} • ${client.rm}`,
-                      onSelect: () => props.onStartEdit?.(client)
-                  });
-                  count++;
-              }
-              if (count > 500) break;
-          }
-      }
-
-      return items;
-  }, [channelStats, props.uploadedData]);
-
   const tabBtn = (tab: 'ingest' | 'hygiene', label: string, disabled?: boolean) => {
     const active = activeTab === tab;
     return (
@@ -301,17 +259,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
   return (
     <div className="space-y-6">
-      {/* Onboarding */}
-      <OnboardingTour
-        enabled={true}
-        steps={[
-            { key: "t1", title: "Период анализа", text: "Выберите период — все метрики и карта пересчитаются на лету.", selector: '[data-tour="topbar"]', placement: "bottom" },
-            { key: "t2", title: "Шаг 1: База клиентов", text: "Сначала загружаем/обновляем базу ОКБ для корректного покрытия.", selector: '[data-tour="okb"]', placement: "right" },
-            { key: "t3", title: "Шаг 2: Cloud Sync", text: "Синхронизация снапшотов продаж из облака.", selector: '[data-tour="upload"]', placement: "right" },
-            { key: "t4", title: "Каналы продаж", text: "Кликните на канал, чтобы увидеть детализацию по РМ и городам.", selector: '[data-tour="channels"]', placement: "left" },
-        ]}
-      />
-
       {/* Header with TopBar */}
       <Motion delayMs={0}>
         <div data-tour="topbar">
@@ -335,26 +282,35 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 rightSlot={
                     <div className="flex items-center gap-3">
                         <FeatureGate perm="use_saved_views">
-                            <SavedViews 
-                                currentState={{ startDate: props.startDate, endDate: props.endDate }}
-                                onApply={(state) => {
-                                    if (state.startDate) props.onStartDateChange(state.startDate);
-                                    if (state.endDate) props.onEndDateChange(state.endDate);
-                                }}
-                            />
+                            <div data-tour="savedViews">
+                                <SavedViews 
+                                    currentState={{ startDate: props.startDate, endDate: props.endDate, activeTab: 'adapta' }}
+                                    onApply={(state) => {
+                                        if (state.startDate) props.onStartDateChange(state.startDate);
+                                        if (state.endDate) props.onEndDateChange(state.endDate);
+                                        // Tab switching is handled in App level or by switching internal tab
+                                        if (state.activeTab && state.activeTab !== 'adapta' && props.onTabChange) {
+                                            props.onTabChange(state.activeTab);
+                                        }
+                                    }}
+                                />
+                            </div>
                         </FeatureGate>
                         
                         <FeatureGate perm="export_data">
                             <ExportButtons />
                         </FeatureGate>
 
-                        <button
-                            onClick={() => setIsSearchOpen(true)}
-                            className="px-3 py-2 rounded-2xl bg-slate-900 text-white font-black text-xs shadow-md hover:bg-slate-800 transition-all active:scale-95"
-                            title="Глобальный поиск (Ctrl+K)"
-                        >
-                            ⌘K
-                        </button>
+                        <FeatureGate perm="use_global_search">
+                            <button
+                                onClick={() => props.setIsSearchOpen?.(true)}
+                                className="px-3 py-2 rounded-2xl bg-slate-900 text-white font-black text-xs shadow-md hover:bg-slate-800 transition-all active:scale-95"
+                                title="Глобальный поиск (Ctrl+K)"
+                                data-tour="search"
+                            >
+                                ⌘K
+                            </button>
+                        </FeatureGate>
                         
                         <div className="w-px h-6 bg-slate-300 mx-1"></div>
                         
@@ -861,13 +817,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       {selectedOutlier && (
         <OutlierDetailsModal isOpen={!!selectedOutlier} onClose={() => setSelectedOutlier(null)} item={selectedOutlier} />
       )}
-
-      {/* Global Search Component */}
-      <GlobalSearch 
-        isOpen={isSearchOpen}
-        onClose={() => setIsSearchOpen(false)}
-        items={searchItems}
-      />
     </div>
   );
 };

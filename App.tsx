@@ -1,5 +1,5 @@
 
-import React, { Suspense, useEffect } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
 import Prophet from './components/modules/Prophet';
@@ -17,6 +17,10 @@ import DataUpdateOverlay from './components/DataUpdateOverlay';
 import { useAppLogic } from './hooks/useAppLogic';
 import { AppHeader } from './components/AppHeader';
 import { RoleProvider } from './components/auth/RoleProvider';
+
+// Enhanced UX imports
+import GlobalSearch from './components/GlobalSearch';
+import { useSearchEverywhereItems } from './components/search/useSearchEverywhereItems';
 
 const DetailsModal = React.lazy(() => import('./components/DetailsModal'));
 const UnidentifiedRowsModal = React.lazy(() => import('./components/UnidentifiedRowsModal'));
@@ -58,6 +62,58 @@ const AppContent: React.FC = () => {
         loadStartDate, setLoadStartDate,
         loadEndDate, setLoadEndDate
     } = useAppLogic();
+
+    // -- Global Search Logic --
+    const [isSearchOpen, setIsSearchOpen] = useState(false);
+    const [openChannelRequest, setOpenChannelRequest] = useState<string | null>(null);
+
+    // Deep Link Handling
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const module = params.get("module");
+        const channel = params.get("channel");
+
+        if (module && ['adapta', 'amp', 'dashboard', 'prophet', 'agile', 'roi-genome'].includes(module)) {
+            setActiveModule(module);
+        }
+
+        if (channel) {
+            setActiveModule("adapta");
+            setOpenChannelRequest(channel);
+        }
+    }, [setActiveModule]);
+
+    const searchItems = useSearchEverywhereItems({
+        activeTab: activeModule,
+        onTabChange: setActiveModule,
+        uploadedData: filtered,
+        okbData: okbData,
+        onStartEdit: (client) => {
+            setActiveModule('amp');
+            setEditingClient(client);
+        },
+        openChannel: (ch) => {
+            setActiveModule('adapta');
+            setOpenChannelRequest(ch);
+            
+            // Update URL for deep linking
+            const p = new URLSearchParams(window.location.search);
+            p.set("module", "adapta");
+            p.set("channel", ch);
+            window.history.replaceState({}, "", `?${p.toString()}`);
+        },
+    });
+
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+                e.preventDefault();
+                setIsSearchOpen(true);
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, []);
 
     useEffect(() => {
         const pingServer = () => {
@@ -115,6 +171,12 @@ const AppContent: React.FC = () => {
                                 loadEndDate={loadEndDate}
                                 onLoadStartDateChange={setLoadStartDate}
                                 onLoadEndDateChange={setLoadEndDate}
+                                
+                                // Enhanced props
+                                openChannelRequest={openChannelRequest}
+                                onConsumeOpenChannelRequest={() => setOpenChannelRequest(null)}
+                                onTabChange={setActiveModule}
+                                setIsSearchOpen={setIsSearchOpen}
                             />
                         )}
 
@@ -170,6 +232,13 @@ const AppContent: React.FC = () => {
                         globalTheme="light" 
                     />
                 )}
+                
+                {/* Global Search Component */}
+                <GlobalSearch 
+                    isOpen={isSearchOpen} 
+                    onClose={() => setIsSearchOpen(false)} 
+                    items={searchItems} 
+                />
             </div>
         </div>
     );
