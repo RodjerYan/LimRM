@@ -38,6 +38,7 @@
     "react-leaflet": "^4.2.1",
     "react-virtualized-auto-sizer": "^1.0.24",
     "react-window": "^1.8.10",
+    "recharts": "^2.13.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
