@@ -12,7 +12,6 @@ import SavedViews from '../SavedViews';
 import ExportButtons from '../ExportButtons';
 import RoleSwitcher from '../auth/RoleSwitcher';
 import FeatureGate from '../auth/FeatureGate';
-import OnboardingTour from '../onboarding/OnboardingTour';
 import { ChartCard, ChannelBarChart } from '../charts/PremiumCharts';
 
 import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState, MapPoint } from '../../types';
@@ -24,6 +23,7 @@ import {
   LoaderIcon,
   SearchIcon,
   UsersIcon,
+  DataIcon,
 } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
@@ -244,7 +244,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         onClick={() => setActiveTab(tab)}
         disabled={disabled}
         className={[
-          'px-4 py-2.5 rounded-2xl text-sm font-extrabold transition-all active:scale-[0.98]',
+          'px-4 py-2.5 rounded-2xl text-sm font-semibold transition-all active:scale-[0.98]',
           'border',
           active
             ? 'bg-gradient-to-r from-indigo-600 to-sky-500 text-white border-transparent shadow-[0_14px_40px_rgba(99,102,241,0.22)]'
@@ -304,7 +304,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         <FeatureGate perm="use_global_search">
                             <button
                                 onClick={() => props.setIsSearchOpen?.(true)}
-                                className="px-3 py-2 rounded-2xl bg-slate-900 text-white font-black text-xs shadow-md hover:bg-slate-800 transition-all active:scale-95"
+                                className="px-3 py-2 rounded-2xl bg-slate-900 text-white font-medium text-xs shadow-md hover:bg-slate-800 transition-all active:scale-95"
                                 title="Глобальный поиск (Ctrl+K)"
                                 data-tour="search"
                             >
@@ -337,7 +337,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             action={
               <button
                 onClick={() => { props.onStartDateChange(''); props.onEndDateChange(''); }}
-                className="rounded-2xl px-4 py-2.5 text-sm font-black bg-gradient-to-r from-indigo-600 to-sky-500 text-white shadow-[0_14px_40px_rgba(99,102,241,0.22)] hover:from-indigo-500 hover:to-sky-400 transition-all"
+                className="rounded-2xl px-4 py-2.5 text-sm font-semibold bg-gradient-to-r from-indigo-600 to-sky-500 text-white shadow-[0_14px_40px_rgba(99,102,241,0.22)] hover:from-indigo-500 hover:to-sky-400 transition-all"
               >
                 Сбросить период
               </button>
@@ -385,10 +385,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                       {props.dbStatus === 'ready' ? <SuccessIcon /> : <InfoIcon />}
                     </div>
                     <div>
-                      <div className="text-slate-900 font-black text-lg leading-none">
+                      <div className="t-h2 leading-none">
                         {props.dbStatus === 'ready' ? 'Live Index: OK' : 'No Index Found'}
                       </div>
-                      <div className="text-xs text-slate-500 mt-1">
+                      <div className="t-muted mt-1">
                         {props.activeClientsCount.toLocaleString()} уник. ТТ
                       </div>
                     </div>
@@ -396,7 +396,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
                   {props.processingState.isProcessing && (
                     <div className="pt-2">
-                      <div className="flex justify-between text-[11px] text-slate-500 mb-2 font-black uppercase tracking-[0.16em]">
+                      <div className="flex justify-between text-[11px] text-slate-500 mb-2 font-semibold uppercase tracking-[0.08em]">
                         <span>Прогресс индексации</span>
                         <span className="text-indigo-700">{Math.round(props.processingState.progress)}%</span>
                       </div>
@@ -510,7 +510,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         ].join(' ')}
                       >
                         <div className="flex items-start justify-between">
-                          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500 font-extrabold">
+                          <div className="t-label">
                             Неопознанные
                           </div>
                           {props.onUnidentifiedClick && (
@@ -521,13 +521,13 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         </div>
                         <div
                           className={[
-                            'mt-2 text-3xl font-black',
+                            'mt-2 t-metric',
                             props.unidentifiedCount > 0 ? 'text-amber-600' : 'text-emerald-600',
                           ].join(' ')}
                         >
                           {props.unidentifiedCount.toLocaleString('ru-RU')}
                         </div>
-                        <div className="mt-2 text-[11px] font-extrabold uppercase tracking-[0.16em]">
+                        <div className="mt-2 text-[11px] font-semibold uppercase tracking-[0.08em]">
                           {props.unidentifiedCount > 0 ? (
                             <span className="text-amber-700">⚠️ Ошибка разбора</span>
                           ) : (
@@ -588,9 +588,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                 onClick={() => setSelectedChannel(stat.name)}
                                 className="text-left rounded-2xl border border-slate-200/70 bg-white/70 p-4 hover:bg-white hover:shadow-[0_14px_30px_rgba(15,23,42,0.06)] active:scale-[0.98] transition-all"
                             >
-                                <div className="text-xs font-black text-slate-500 uppercase tracking-wider mb-1">{stat.name}</div>
-                                <div className="text-xl font-black text-slate-900">{stat.count.toLocaleString('ru-RU')}</div>
-                                <div className="text-[10px] text-slate-400 mt-1">{stat.percentage.toFixed(1)}% от базы</div>
+                                <div className="t-label mb-1">{stat.name}</div>
+                                <div className="text-xl font-semibold text-slate-900 tabular-nums tracking-tight">{stat.count.toLocaleString('ru-RU')}</div>
+                                <div className="t-muted mt-1">{stat.percentage.toFixed(1)}% от базы</div>
                             </button>
                         ))}
                     </div>
@@ -600,7 +600,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             <Motion delayMs={250}>
               {/* Info callout */}
               <div className="rounded-3xl border border-indigo-200 bg-indigo-50 p-5 text-sm text-indigo-900 shadow-sm">
-                <strong className="block mb-1 text-indigo-700 flex items-center gap-2">
+                <strong className="block mb-1 text-indigo-700 flex items-center gap-2 font-semibold">
                   <InfoIcon small /> Технология Online Preview:
                 </strong>
                 Вы можете использовать аналитику, пока данные синхронизируются в фоне. Система обновляет расчеты в реальном времени
@@ -621,7 +621,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                   right={<Chip tone="neutral">DQ</Chip>}
                 />
                 <CardBody className="space-y-4">
-                  <p className="text-sm text-slate-500">
+                  <p className="t-body text-slate-500">
                     Инструмент контроля качества (Data Quality). Нажмите на строку, чтобы посмотреть детализацию.
                   </p>
                   <div className="flex items-center gap-2 text-amber-800 text-sm bg-amber-50 p-4 rounded-2xl border border-amber-200">
@@ -656,7 +656,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                           key: "name",
                           title: "Клиент",
                           render: (r) => (
-                            <span className="font-black text-slate-900">
+                            <span className="font-semibold text-slate-900">
                               {r.row.clientName}
                             </span>
                           ),
@@ -666,7 +666,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                           title: "Факт",
                           align: "right",
                           render: (r) => (
-                            <span className="font-mono">
+                            <span className="t-mono">
                               {new Intl.NumberFormat('ru-RU').format(r.row.fact)}
                             </span>
                           ),
@@ -677,7 +677,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                           align: "right",
                           render: (r) => (
                             <span
-                              className={`font-mono font-black ${
+                              className={`t-mono font-bold ${
                                 Math.abs(r.zScore) > 3
                                   ? "text-red-600"
                                   : "text-amber-600"
@@ -691,7 +691,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                           key: "reason",
                           title: "Диагноз",
                           render: (r) => (
-                            <span className="text-xs text-slate-500">
+                            <span className="t-muted">
                               {r.reason}
                             </span>
                           ),
@@ -713,8 +713,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
           onClose={() => setSelectedChannel(null)}
           title={
             <div className="flex flex-col">
-              <span className="text-xl font-black text-slate-900">Канал: {selectedChannel}</span>
-              <span className="text-xs text-slate-500 uppercase font-black tracking-widest mt-1">
+              <span className="t-h2">Канал: {selectedChannel}</span>
+              <span className="t-label mt-1">
                 Детализация уник. адресов по РМ и городам
               </span>
             </div>
@@ -731,7 +731,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 placeholder="Поиск по адресу, названию ТТ или менеджеру..."
                 value={channelSearchTerm}
                 onChange={(e) => setChannelSearchTerm(e.target.value)}
-                className="w-full bg-white border border-slate-200 rounded-2xl py-3 pl-10 pr-4 text-sm text-slate-900 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 outline-none transition-all"
+                className="w-full bg-white border border-slate-200 rounded-2xl py-3 pl-10 pr-4 text-sm text-slate-900 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 outline-none transition-all font-medium"
               />
             </div>
 
@@ -743,13 +743,13 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                     .map(([rm, cities]) => (
                       <div key={rm} className="space-y-4">
                         <div className="sticky top-0 bg-white/95 backdrop-blur z-10 py-2 border-b border-slate-200 flex justify-between items-center">
-                          <h4 className="text-sm font-black text-indigo-700 uppercase tracking-widest flex items-center gap-2">
+                          <h4 className="text-sm font-semibold text-indigo-700 uppercase tracking-wider flex items-center gap-2">
                             <div className="p-1 bg-indigo-50 rounded-xl border border-indigo-200">
                               <UsersIcon small />
                             </div>{' '}
                             {rm}
                           </h4>
-                          <span className="text-[10px] bg-slate-50 text-slate-600 px-2 py-1 rounded-xl border border-slate-200 font-black">
+                          <span className="text-[10px] bg-slate-50 text-slate-600 px-2 py-1 rounded-xl border border-slate-200 font-semibold">
                             {Object.values(cities).flat().length} ТТ
                           </span>
                         </div>
@@ -759,7 +759,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                             .sort((a, b) => a[0].localeCompare(b[0]))
                             .map(([city, clients]) => (
                               <div key={city} className="space-y-2">
-                                <h5 className="text-xs font-black text-slate-700 flex items-center gap-2">
+                                <h5 className="text-xs font-semibold text-slate-700 flex items-center gap-2">
                                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
                                   {city}
                                 </h5>
@@ -771,11 +771,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                       className="bg-slate-50 p-3 rounded-2xl border border-slate-200 hover:border-indigo-200 hover:bg-white hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] active:scale-[0.99] transition-all flex justify-between items-start gap-4 group"
                                     >
                                       <div className="min-w-0">
-                                        <div className="text-xs font-black text-slate-900 truncate" title={client.name}>
+                                        <div className="text-xs font-semibold text-slate-900 truncate" title={client.name}>
                                           {client.name}
                                         </div>
                                         <div
-                                          className="text-[11px] text-slate-500 mt-1 truncate cursor-pointer hover:text-indigo-700 flex items-center gap-1 transition-colors"
+                                          className="text-[11px] text-slate-500 mt-1 truncate cursor-pointer hover:text-indigo-700 flex items-center gap-1 transition-colors font-medium"
                                           onClick={() => props.onStartEdit?.(client)}
                                         >
                                           <span className="opacity-0 group-hover:opacity-100 transition-opacity">📍</span>
@@ -784,11 +784,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                       </div>
 
                                       <div className="flex flex-col items-end shrink-0">
-                                        <div className="text-[11px] font-mono font-black text-emerald-700">
+                                        <div className="text-[11px] font-mono font-semibold text-emerald-700">
                                           {(client.totalFact || 0).toLocaleString('ru-RU')}{' '}
                                           <span className="text-[9px] text-slate-400 font-normal">кг</span>
                                         </div>
-                                        <div className="text-[9px] text-slate-400 mt-0.5 uppercase font-black tracking-tighter">
+                                        <div className="text-[9px] text-slate-400 mt-0.5 uppercase font-semibold tracking-tight">
                                           {client.brand || 'Уникальная ТТ'}
                                         </div>
                                       </div>

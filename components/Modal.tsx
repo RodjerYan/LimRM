@@ -51,9 +51,9 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer,
                 <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200/70 bg-white/70 rounded-t-3xl flex-shrink-0">
                     <div id="modal-title" className="min-w-0">
                         {typeof title === 'string' ? (
-                            <h3 className="text-lg font-black text-slate-900 truncate">{title}</h3>
+                            <h3 className="t-h2">{title}</h3>
                         ) : (
-                            <div className="text-slate-900 font-bold">{title}</div>
+                            <div className="t-h2">{title}</div>
                         )}
                     </div>
                     <button
@@ -81,7 +81,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer,
                     <div className="flex justify-end gap-2 px-6 py-4 bg-white/50 border-t border-slate-200/70 rounded-b-3xl flex-shrink-0">
                         <button
                             onClick={onClose}
-                            className="bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-6 rounded-2xl transition duration-200 shadow-[0_10px_20px_rgba(15,23,42,0.15)] active:scale-95"
+                            className="bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2.5 px-6 rounded-2xl transition duration-200 shadow-[0_10px_20px_rgba(15,23,42,0.15)] active:scale-95 text-sm"
                         >
                             Закрыть
                         </button>

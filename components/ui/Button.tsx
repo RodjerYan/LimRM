@@ -10,7 +10,7 @@ export function Button({
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
   const base =
-    "rounded-2xl px-4 py-2.5 text-sm font-bold transition-all active:scale-[0.98] " +
+    "rounded-2xl px-4 py-2.5 text-sm font-semibold transition-all active:scale-[0.98] " +
     "disabled:opacity-50 disabled:cursor-not-allowed";
 
   const v =

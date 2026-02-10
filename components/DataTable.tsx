@@ -34,7 +34,7 @@ export default function DataTable<T>({
         <table className="w-full text-sm">
           <thead
             className={[
-              "text-slate-500 bg-white/95 backdrop-blur border-b border-slate-200",
+              "bg-white/95 backdrop-blur border-b border-slate-200",
               stickyHeader ? "sticky top-0 z-10" : "",
             ].join(" ")}
           >
@@ -44,7 +44,7 @@ export default function DataTable<T>({
                   key={col.key}
                   style={{ width: col.width }}
                   className={[
-                    "px-4 py-3 text-xs font-black uppercase tracking-widest",
+                    "px-4 py-3 t-label text-left",
                     col.align === "right"
                       ? "text-right"
                       : col.align === "center"
@@ -74,7 +74,7 @@ export default function DataTable<T>({
                   <td
                     key={col.key}
                     className={[
-                      "px-4 py-3",
+                      "px-4 py-3 t-body",
                       col.align === "right"
                         ? "text-right"
                         : col.align === "center"

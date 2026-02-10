@@ -27,9 +27,9 @@ export function StatTile({
         "hover:shadow-[0_18px_50px_rgba(15,23,42,0.10)] transition-all"
       }
     >
-      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500 font-extrabold">{label}</div>
-      <div className="mt-2 text-3xl font-black text-slate-900">{value}</div>
-      {footnote && <div className="mt-2 text-xs text-slate-500">{footnote}</div>}
+      <div className="t-label">{label}</div>
+      <div className="mt-2 t-metric">{value}</div>
+      {footnote && <div className="mt-2 text-xs text-slate-500 font-medium">{footnote}</div>}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 
+@import url("https://rsms.me/inter/inter.css");
 @import "https://geist-font.vercel.app/css/geist.css";
 @import "https://geist-font.vercel.app/css/geist-mono.css";
 
@@ -19,18 +20,53 @@
   --card-bg: 255 255 255;      
   --text-main: 15 23 42;       
   --text-muted: 100 116 139;   
+
+  /* Advanced Typography Settings */
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* SCALING: 75% for dense analytics */
 html {
-  font-size: 12px;
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  font-size: 13px; /* Slightly adjusted for better readability */
 }
 
 @media (min-width: 1920px) {
-  html { font-size: 13px; }
-}
-@media (min-width: 2560px) {
   html { font-size: 14px; }
+}
+
+/* Typography Tokens - The "Expensive" Look */
+@layer components {
+  .t-title {
+    @apply text-2xl font-semibold tracking-tight text-slate-900;
+  }
+  .t-h1 {
+    @apply text-xl font-semibold tracking-tight text-slate-900;
+  }
+  .t-h2 {
+    @apply text-lg font-semibold text-slate-900 tracking-tight;
+  }
+  .t-body {
+    @apply text-sm font-normal text-slate-700 leading-relaxed;
+  }
+  .t-muted {
+    @apply text-xs font-normal text-slate-500;
+  }
+  .t-label {
+    /* Subtle label: uppercase, tracked, but not bold/black */
+    @apply text-[11px] uppercase tracking-[0.08em] font-semibold text-slate-500;
+  }
+  .t-metric {
+    /* Big numbers: tabular for alignment, tight tracking */
+    @apply text-3xl font-semibold text-slate-900 tabular-nums tracking-tight;
+  }
+  .t-mono {
+    @apply text-xs font-medium text-slate-500 font-mono tabular-nums;
+  }
 }
 
 /* Premium Light Background Glow & Grid */
