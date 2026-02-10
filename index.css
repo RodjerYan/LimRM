@@ -7,37 +7,55 @@
 @tailwind utilities;
 
 :root {
-  /* Corporate Light Mode (Presentation Style) */
-  --primary-dark: 243 244 246; /* #f3f4f6 (gray-100) - Main App Background */
-  --card-bg: 255 255 255;      /* #ffffff - Card Background */
-  --text-main: 17 24 39;       /* #111827 (gray-900) - Main Text */
-  --text-muted: 107 114 128;   /* #6b7280 (gray-500) - Muted Text */
+  /* Premium Light Theme Variables */
+  --bg: 248 250 252;           /* slate-50 */
+  --panel: 255 255 255;        /* white */
+  --text: 15 23 42;            /* slate-900 */
+  --muted: 100 116 139;        /* slate-500 */
+  --border: 226 232 240;       /* slate-200 */
+
+  /* Legacy support variables mapped to new theme */
+  --primary-dark: 248 250 252; 
+  --card-bg: 255 255 255;      
+  --text-main: 15 23 42;       
+  --text-muted: 100 116 139;   
 }
 
-/* 
-   SCALING: 75% 
-   Standard browser font-size is 16px. 
-   Setting root to 12px scales all REM-based Tailwind classes (width, height, padding, font) to 75%.
-   This creates the "Zoom Out" effect without breaking 100vh layout calculations.
-*/
+/* SCALING: 75% for dense analytics */
 html {
   font-size: 12px;
 }
 
-/*
-  Ultra‑wide / 4K tuning:
-  - The app intentionally runs at ~75% scale (12px root) for dense analytics.
-  - On very large screens, slightly increase base font size to improve readability
-    while keeping the layout geometry (vh, fixed sidebars) stable.
-*/
 @media (min-width: 1920px) {
   html { font-size: 13px; }
 }
 @media (min-width: 2560px) {
   html { font-size: 14px; }
 }
-@media (min-width: 3200px) {
-  html { font-size: 15px; }
+
+/* Premium Light Background Glow & Grid */
+.app-premium-bg {
+  position: relative;
+  min-height: 100vh;
+  background:
+    radial-gradient(900px 520px at 20% 10%, rgba(99,102,241,0.16), transparent 60%),
+    radial-gradient(880px 520px at 72% 18%, rgba(34,211,238,0.14), transparent 60%),
+    radial-gradient(950px 560px at 40% 92%, rgba(163,230,53,0.12), transparent 60%),
+    linear-gradient(to bottom, rgb(248,250,252), rgb(255,255,255));
+}
+
+.app-premium-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(15,23,42,0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(15,23,42,0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at 40% 20%, rgba(0,0,0,0.7), transparent 65%);
+  opacity: 0.35;
+  z-index: 0;
 }
 
 /* GLOBAL SCROLLBAR STYLING (Light & Sleek) */
@@ -46,88 +64,91 @@ html {
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #f3f4f6; /* gray-100 */
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d1d5db; /* gray-300 */
+  background: rgba(15,23,42,0.15);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #9ca3af; /* gray-400 */
+  background: rgba(15,23,42,0.25);
 }
+
+.custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(15,23,42,0.12); border-radius: 10px; border: none; }
+.custom-scrollbar::-webkit-scrollbar-track { background: rgba(15,23,42,0.02); }
 
 @layer base {
   body {
-    @apply text-text-main;
+    @apply text-slate-900 bg-slate-50;
   }
 }
 
 @layer utilities {
-  /* Utility to completely hide scrollbar while keeping functionality */
-  .scrollbar-hide::-webkit-scrollbar {
-      display: none;
-  }
-  .scrollbar-hide {
-      -ms-overflow-style: none;  /* IE and Edge */
-      scrollbar-width: none;  /* Firefox */
-  }
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
 
   .shimmer-effect::after {
     content: '';
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    top: 0; left: 0; right: 0; bottom: 0;
     background-image: linear-gradient(
       to right,
       rgba(255, 255, 255, 0) 0%,
-      rgba(255, 255, 255, 0.4) 50%,
+      rgba(255, 255, 255, 0.6) 50%,
       rgba(255, 255, 255, 0) 100%
     );
     background-size: 1000px 100%;
-    animation: shimmer 3s infinite linear;
+    animation: shimmer 2s infinite linear;
   }
-
-  /* Hide number input arrows */
-  .no-spinner::-webkit-outer-spin-button,
-  .no-spinner::-webkit-inner-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
-  }
-  .no-spinner {
-    -moz-appearance: textfield;
+  
+  .glass-panel {
+    @apply bg-white/70 backdrop-blur-xl border border-slate-200/70 shadow-xl;
   }
 }
 
+/* --- Premium motion pack (safe) --- */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes softPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .65; }
+}
+
+/* shimmer */
 @keyframes shimmer {
-  0% {
-    background-position: -1000px 0;
-  }
-  100% {
-    background-position: 1000px 0;
-  }
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(120%); }
 }
 
-/* Animation for pulsing red markers (Churn/Risk) */
-@keyframes pulse-red {
-  0% {
-    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
-    transform: scale(1);
-  }
-  70% {
-    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
-    transform: scale(1.1);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
-    transform: scale(1);
-  }
+.animate-fade-up {
+  animation: fadeUp 420ms ease-out both;
 }
 
-.pulsing-marker-red {
-  animation: pulse-red 2s infinite;
-  border-radius: 50%;
-  background-color: #ef4444 !important;
-  border: 2px solid white !important;
+.animate-soft-pulse {
+  animation: softPulse 1400ms ease-in-out infinite;
+}
+
+/* Universal shimmer utility (apply to any element) */
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-120%);
+  background: linear-gradient(
+    90deg,
+    rgba(255,255,255,0) 0%,
+    rgba(255,255,255,0.55) 45%,
+    rgba(255,255,255,0) 100%
+  );
+  animation: shimmer 1200ms ease-in-out infinite;
+  pointer-events: none;
 }

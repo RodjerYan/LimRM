@@ -253,7 +253,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [isLoadingGeo, setIsLoadingGeo] = useState(true);
     const [isFromCache, setIsFromCache] = useState(false);
     
-    const [localTheme, setLocalTheme] = useState<Theme>(theme);
+    const [localTheme, setLocalTheme] = useState<Theme>(theme ?? 'light');
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [overlayMode, setOverlayMode] = useState<OverlayMode>('sales');
 
@@ -712,18 +712,58 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     }, [flyToClientKey]);
 
     return (
-        <div className={`relative w-full rounded-2xl overflow-hidden border border-gray-200 shadow-md transition-all duration-500 ${isFullscreen ? 'fixed inset-0 z-[100] h-screen' : 'h-[600px] group'}`}>
-            <div ref={mapContainer} className="h-full w-full bg-gray-50" />
-            
-            <div className="absolute top-4 left-14 z-[400] w-72">
-                <div className="relative group/search">
-                    <input type="text" placeholder="Поиск региона..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-white/95 backdrop-blur-md text-gray-900 px-4 py-2.5 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none shadow-lg transition-all pl-10 text-sm" />
-                    <div className="absolute left-3 top-2.5 text-gray-400"><SearchIcon small /></div>
+        <div
+            className={[
+                "relative w-full overflow-hidden transition-all duration-500",
+                "rounded-3xl border border-slate-200/70 bg-white/70 backdrop-blur-xl",
+                "shadow-[0_18px_50px_rgba(15,23,42,0.08)]",
+                isFullscreen ? "fixed inset-0 z-[100] h-screen" : "h-[600px] group",
+            ].join(" ")}
+        >
+            {/* premium glow */}
+            <div
+                className="pointer-events-none absolute inset-0 opacity-70"
+                style={{
+                    background:
+                        "radial-gradient(900px 520px at 20% 10%, rgba(99,102,241,0.14), transparent 60%)," +
+                        "radial-gradient(880px 520px at 72% 18%, rgba(34,211,238,0.12), transparent 60%)," +
+                        "radial-gradient(950px 560px at 40% 92%, rgba(163,230,53,0.10), transparent 60%)",
+                }}
+            />
+
+            {/* Map */}
+            <div ref={mapContainer} className="relative z-0 h-full w-full bg-slate-50" />
+
+            {/* Search */}
+            <div className="absolute top-4 left-14 z-[400] w-80">
+                <div className="relative">
+                    <input
+                        type="text"
+                        placeholder="Поиск региона…"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className={[
+                            "w-full rounded-2xl border border-slate-200 bg-white/90 backdrop-blur",
+                            "px-4 py-3 pl-11 text-sm font-bold text-slate-900 shadow-[0_18px_50px_rgba(15,23,42,0.10)]",
+                            "focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition",
+                        ].join(" ")}
+                    />
+                    <div className="absolute left-4 top-3.5 text-slate-400">
+                        <SearchIcon small />
+                    </div>
+
                     {searchResults.length > 0 && (
-                        <div className="absolute top-full left-0 w-full mt-2 bg-white/95 backdrop-blur-xl border border-gray-200 rounded-xl shadow-2xl overflow-hidden max-h-60 overflow-y-auto">
+                        <div className="absolute top-full left-0 w-full mt-2 bg-white/95 backdrop-blur-xl border border-slate-200 rounded-2xl shadow-[0_18px_60px_rgba(15,23,42,0.14)] overflow-hidden max-h-64 overflow-y-auto custom-scrollbar">
                             {searchResults.map((res, idx) => (
-                                <div key={idx} onClick={() => handleLocationSelect(res)} className="px-4 py-2.5 hover:bg-gray-100 cursor-pointer text-sm text-gray-700 border-b border-gray-100 last:border-0 transition-colors flex items-center justify-between">
-                                    <span>{res.name}</span><span className="text-[10px] uppercase text-gray-500 font-bold bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200">Регион</span>
+                                <div
+                                    key={idx}
+                                    onClick={() => handleLocationSelect(res)}
+                                    className="px-4 py-3 hover:bg-indigo-50 cursor-pointer text-sm text-slate-700 border-b border-slate-200 last:border-0 transition-colors flex items-center justify-between"
+                                >
+                                    <span className="font-bold">{res.name}</span>
+                                    <span className="text-[10px] uppercase text-slate-600 font-black bg-slate-900/5 px-2 py-1 rounded-xl border border-slate-200">
+                                        Регион
+                                    </span>
                                 </div>
                             ))}
                         </div>
@@ -731,30 +771,59 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 </div>
             </div>
 
+            {/* Controls */}
             <div className="absolute top-4 right-4 z-[400] flex flex-col gap-2">
-                <button onClick={() => setLocalTheme(t => t === 'dark' ? 'light' : 'dark')} className="p-2.5 bg-white/95 backdrop-blur-md rounded-xl border border-gray-200 text-gray-700 hover:bg-gray-100 transition-all shadow-lg active:scale-95" title="Сменить тему">
-                    {localTheme === 'dark' ? <SunIcon small /> : <MoonIcon small />}
+                <button
+                    onClick={() => setLocalTheme((t) => (t === "dark" ? "light" : "dark"))}
+                    className="p-2.5 bg-white/90 backdrop-blur rounded-2xl border border-slate-200 text-slate-700 hover:bg-white transition-all shadow-[0_18px_50px_rgba(15,23,42,0.10)] active:scale-95"
+                    title="Сменить тему"
+                >
+                    {localTheme === "dark" ? <SunIcon small /> : <MoonIcon small />}
                 </button>
-                <button onClick={() => setIsFullscreen(!isFullscreen)} className="p-2.5 bg-white/95 backdrop-blur-md rounded-xl border border-gray-200 text-gray-700 hover:bg-gray-100 transition-all shadow-lg active:scale-95" title={isFullscreen ? "Свернуть" : "На весь экран"}>
+
+                <button
+                    onClick={() => setIsFullscreen(!isFullscreen)}
+                    className="p-2.5 bg-white/90 backdrop-blur rounded-2xl border border-slate-200 text-slate-700 hover:bg-white transition-all shadow-[0_18px_50px_rgba(15,23,42,0.10)] active:scale-95"
+                    title={isFullscreen ? "Свернуть" : "На весь экран"}
+                >
                     {isFullscreen ? <MinimizeIcon small /> : <MaximizeIcon small />}
                 </button>
             </div>
 
-            <div className="absolute bottom-8 left-24 z-[400] flex gap-2">
-                <div className="bg-white/95 backdrop-blur-md p-1 rounded-xl border border-gray-200 shadow-xl flex">
-                    {(['sales', 'pets', 'competitors', 'age', 'abc'] as OverlayMode[]).map(mode => (
-                        <button key={mode} onClick={() => setOverlayMode(mode)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${overlayMode === mode ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'}`}>
-                            {mode === 'sales' ? 'Продажи' : mode === 'pets' ? 'Питомцы' : mode === 'competitors' ? 'Конкуренты' : mode === 'age' ? 'Возраст' : 'ABC'}
+            {/* Overlay mode switch */}
+            <div className="absolute bottom-8 left-24 z-[400]">
+                <div className="bg-white/90 backdrop-blur p-1.5 rounded-2xl border border-slate-200 shadow-[0_18px_60px_rgba(15,23,42,0.14)] flex gap-1">
+                    {(['sales', 'pets', 'competitors', 'age', 'abc'] as OverlayMode[]).map((mode) => (
+                        <button
+                            key={mode}
+                            onClick={() => setOverlayMode(mode)}
+                            className={[
+                                "px-3.5 py-2 rounded-xl text-xs font-black transition-all",
+                                overlayMode === mode
+                                    ? "bg-gradient-to-r from-indigo-600 to-sky-500 text-white shadow-[0_12px_30px_rgba(99,102,241,0.18)]"
+                                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-900/5",
+                            ].join(" ")}
+                        >
+                            {mode === 'sales'
+                                ? 'Продажи'
+                                : mode === 'pets'
+                                ? 'Питомцы'
+                                : mode === 'competitors'
+                                ? 'Конкуренты'
+                                : mode === 'age'
+                                ? 'Возраст'
+                                : 'ABC'}
                         </button>
                     ))}
                 </div>
             </div>
 
+            {/* Loading overlay */}
             {isLoadingGeo && (
-                <div className="absolute inset-0 z-[500] flex items-center justify-center bg-white/80 backdrop-blur-sm">
+                <div className="absolute inset-0 z-[500] flex items-center justify-center bg-white/70 backdrop-blur-sm">
                     <div className="flex flex-col items-center gap-3">
-                        <LoaderIcon className="w-8 h-8 text-indigo-500" />
-                        <span className="text-gray-900 font-bold text-sm">Загрузка геометрии...</span>
+                        <LoaderIcon className="w-8 h-8 text-indigo-600" />
+                        <span className="text-slate-900 font-black text-sm">Загрузка геометрии…</span>
                     </div>
                 </div>
             )}

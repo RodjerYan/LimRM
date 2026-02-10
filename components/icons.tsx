@@ -85,7 +85,15 @@ export const RetryIcon: React.FC<IconProps> = ({ className, small }) => {
     );
 };
 
-// NEW: Sync Icon
+export const RefreshIcon: React.FC<IconProps> = ({ className, small }) => {
+    const size = small ? "w-4 h-4" : "w-5 h-5";
+    return (
+        <svg className={`${size} ${className || ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+        </svg>
+    );
+};
+
 export const SyncIcon: React.FC<IconProps> = ({ className, small }) => {
     const size = small ? "w-4 h-4" : "w-5 h-5";
     return (
@@ -350,7 +358,6 @@ export const ChartBarIcon: React.FC<IconProps> = ({ className, small }) => {
     );
 };
 
-// FIX: Added missing CloudDownloadIcon.
 export const CloudDownloadIcon: React.FC<IconProps> = ({ className, small }) => {
     const size = small ? "w-4 h-4" : "w-5 h-5";
     return (
@@ -375,6 +382,24 @@ export const HeartIcon: React.FC<IconProps> = ({ className, small }) => {
     return (
         <svg className={`${size} ${className || ''}`} fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path d="M11.645 20.91l-.007-.003-.022-.012a15.247 15.247 0 01-.383-.218 25.18 25.18 0 01-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.688 3A5.5 5.5 0 0112 5.052 5.5 5.5 0 0116.313 3c2.973 0 5.437 2.322 5.437 5.25 0 3.925-2.438 7.111-4.739 9.256a25.175 25.175 0 01-4.244 3.17 15.247 15.247 0 01-.383.219l-.022.012-.007.004-.003.001a.752.752 0 01-.704 0l-.003-.001z"></path>
+        </svg>
+    );
+};
+
+export const CalendarIcon: React.FC<IconProps> = ({ className, small }) => {
+    const size = small ? "w-4 h-4" : "w-5 h-5";
+    return (
+        <svg className={`${size} ${className || ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+        </svg>
+    );
+};
+
+export const FilterIcon: React.FC<IconProps> = ({ className, small }) => {
+    const size = small ? "w-4 h-4" : "w-5 h-5";
+    return (
+        <svg className={`${size} ${className || ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path>
         </svg>
     );
 };

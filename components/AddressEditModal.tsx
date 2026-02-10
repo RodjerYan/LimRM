@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import Modal from './Modal';
+
 import { MapPoint, UnidentifiedRow } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
@@ -22,7 +23,7 @@ import {
   SyncIcon,
 } from './icons';
 
-// --- Fix Leaflet Icons (Aligned to v1.9.4) ---
+// --- Fix Leaflet default icons ---
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
@@ -52,6 +53,7 @@ type Status =
   | 'error_deleting'
   | 'success_geocoding'
   | 'syncing';
+
 type Theme = 'dark' | 'light';
 
 interface NominatimResult {
@@ -65,9 +67,7 @@ interface AddressEditModalProps {
   onClose: () => void;
   onBack: () => void;
   data: EditableData | null;
-  // Updated signature to accept options
   onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number, options?: { skipHistory?: boolean }) => void;
-  // Updated signature to accept originalAddress
   onStartPolling: (
     rmName: string,
     address: string,
@@ -80,22 +80,85 @@ interface AddressEditModalProps {
   globalTheme?: Theme;
 }
 
-// --- Safe Data Getter ---
+const isUnidentifiedRow = (item: any): item is UnidentifiedRow => item && item.originalIndex !== undefined;
+
 const getSafeOriginalRow = (data: EditableData | null): any => {
   if (!data) return {};
   const rawRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
   return rawRow && typeof rawRow === 'object' ? rawRow : {};
 };
 
-// --- Helper to reliably get RM Name ---
 const getRmName = (data: EditableData | null): string => {
   if (!data) return '';
-  if ('rm' in data && data.rm) return data.rm;
+  if ('rm' in data && (data as any).rm) return String((data as any).rm);
   const row = getSafeOriginalRow(data);
   return findValueInRow(row, ['рм', 'региональный менеджер', 'менеджер', 'manager', 'ответственный']) || '';
 };
 
-// --- Subcomponent: SinglePointMap ---
+// --- Premium light helpers ---
+const Glow = () => (
+  <div
+    className="pointer-events-none absolute inset-0 opacity-70"
+    style={{
+      background:
+        'radial-gradient(900px 520px at 20% 10%, rgba(99,102,241,0.16), transparent 60%),' +
+        'radial-gradient(880px 520px at 72% 18%, rgba(34,211,238,0.14), transparent 60%),' +
+        'radial-gradient(950px 560px at 40% 92%, rgba(163,230,53,0.12), transparent 60%)',
+    }}
+  />
+);
+
+const Card: React.FC<{ className?: string; children: React.ReactNode }> = ({ className = '', children }) => (
+  <div
+    className={
+      'rounded-3xl border border-slate-200/70 bg-white/75 backdrop-blur-xl ' +
+      'shadow-[0_18px_50px_rgba(15,23,42,0.08)] ' +
+      className
+    }
+  >
+    {children}
+  </div>
+);
+
+const Chip: React.FC<{ tone?: 'neutral' | 'lime' | 'blue' | 'pink' | 'red'; children: React.ReactNode }> = ({
+  tone = 'neutral',
+  children,
+}) => {
+  const map: Record<string, string> = {
+    neutral: 'bg-slate-900/5 text-slate-700 border-slate-200',
+    lime: 'bg-lime-400/20 text-lime-800 border-lime-300/40',
+    blue: 'bg-sky-400/20 text-sky-800 border-sky-300/40',
+    pink: 'bg-fuchsia-400/20 text-fuchsia-800 border-fuchsia-300/40',
+    red: 'bg-red-400/15 text-red-700 border-red-300/40',
+  };
+  return (
+    <span className={`inline-flex items-center rounded-xl border px-2.5 py-1 text-[11px] font-extrabold ${map[tone]}`}>
+      {children}
+    </span>
+  );
+};
+
+const Btn: React.FC<
+  React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'soft' | 'ghost' | 'danger' }
+> = ({ variant = 'soft', className = '', children, ...props }) => {
+  const base =
+    'rounded-2xl px-4 py-2.5 text-sm font-extrabold transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed';
+  const v =
+    variant === 'primary'
+      ? 'bg-gradient-to-r from-indigo-600 to-sky-500 text-white shadow-[0_14px_40px_rgba(99,102,241,0.22)] hover:from-indigo-500 hover:to-sky-400'
+      : variant === 'danger'
+      ? 'bg-red-600 hover:bg-red-500 text-white shadow-[0_14px_40px_rgba(239,68,68,0.18)]'
+      : variant === 'ghost'
+      ? 'bg-transparent hover:bg-slate-900/5 text-slate-700'
+      : 'bg-slate-900/5 hover:bg-slate-900/7 text-slate-800 border border-slate-200';
+  return (
+    <button {...props} className={`${base} ${v} ${className}`}>
+      {children}
+    </button>
+  );
+};
+
+// --- Map component (no dependency on Modal) ---
 const SinglePointMap: React.FC<{
   lat?: number;
   lon?: number;
@@ -113,7 +176,6 @@ const SinglePointMap: React.FC<{
   const markerRef = useRef<L.Marker | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
 
-  const [hasMarker, setHasMarker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<NominatimResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -124,7 +186,6 @@ const SinglePointMap: React.FC<{
   const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
   const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
-  // 1. Initialize Map
   useLayoutEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
@@ -153,21 +214,17 @@ const SinglePointMap: React.FC<{
     };
   }, []);
 
-  // 2. Handle Theme Updates
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    if (tileLayerRef.current) {
-      map.removeLayer(tileLayerRef.current);
-    }
+    if (tileLayerRef.current) map.removeLayer(tileLayerRef.current);
 
     const newUrl = theme === 'dark' ? darkUrl : lightUrl;
     tileLayerRef.current = L.tileLayer(newUrl, { attribution: '&copy; CARTO' }).addTo(map);
     tileLayerRef.current.bringToBack();
   }, [theme]);
 
-  // 3. Handle Markers & View
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -179,12 +236,7 @@ const SinglePointMap: React.FC<{
       const iconToUse = isSuccess ? greenIcon : new L.Icon.Default();
 
       if (!markerRef.current) {
-        const marker = L.marker(latLng, {
-          icon: iconToUse,
-          draggable: true,
-          autoPan: true,
-        }).addTo(map);
-
+        const marker = L.marker(latLng, { icon: iconToUse, draggable: true, autoPan: true }).addTo(map);
         marker.on('dragend', (e) => {
           const { lat: newLat, lng: newLon } = e.target.getLatLng();
           onCoordinatesChange(newLat, newLon);
@@ -193,10 +245,9 @@ const SinglePointMap: React.FC<{
       } else {
         markerRef.current.setLatLng(latLng).setIcon(iconToUse);
       }
-      setHasMarker(true);
 
-      const popupContent = `<b>${address}</b><br><span style="font-size:10px; color: #6b7280">Перетащите маркер для уточнения</span>`;
-      markerRef.current.bindPopup(popupContent, { maxWidth: 350 });
+      const popup = `<b>${address}</b><br><span style="font-size:10px; color:#64748b">Перетащите маркер для уточнения</span>`;
+      markerRef.current.bindPopup(popup, { maxWidth: 360 });
 
       map.setView(latLng, isExpanded ? 17 : 14, { animate: true });
     } else {
@@ -204,7 +255,6 @@ const SinglePointMap: React.FC<{
         map.removeLayer(markerRef.current);
         markerRef.current = null;
       }
-      setHasMarker(false);
       map.setView([55.75, 37.61], 5, { animate: true });
     }
   }, [lat, lon, isSuccess, isExpanded, address, onCoordinatesChange]);
@@ -222,28 +272,22 @@ const SinglePointMap: React.FC<{
 
     setIsSearching(true);
     searchTimeoutRef.current = setTimeout(async () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
+      if (abortControllerRef.current) abortControllerRef.current.abort();
       abortControllerRef.current = new AbortController();
 
       try {
         const res = await fetch(
           `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5&accept-language=ru`,
-          {
-            signal: abortControllerRef.current.signal,
-          }
+          { signal: abortControllerRef.current.signal }
         );
         if (res.ok) {
           const data: NominatimResult[] = await res.json();
           setSearchResults(data);
         }
       } catch (err: any) {
-        if (err.name !== 'AbortError') console.error(err);
+        if (err?.name !== 'AbortError') console.error(err);
       } finally {
-        if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
-          setIsSearching(false);
-        }
+        if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) setIsSearching(false);
       }
     }, 600);
   };
@@ -258,42 +302,41 @@ const SinglePointMap: React.FC<{
     }
   };
 
-  // Light modern buttons (controls)
-  const btnClass =
-    'flex items-center justify-center w-10 h-10 bg-white/90 hover:bg-gray-100 text-gray-700 rounded-lg shadow-md border border-gray-200 transition-all transform active:scale-95 backdrop-blur-sm';
+  const ctrlBtn =
+    'flex items-center justify-center w-10 h-10 rounded-2xl border border-slate-200 bg-white/85 hover:bg-white text-slate-700 shadow-[0_14px_40px_rgba(15,23,42,0.10)] transition-all active:scale-[0.98] backdrop-blur';
 
   return (
-    <div className="relative h-full w-full group">
+    <div className="relative h-full w-full">
       <style>{`.leaflet-control-attribution { display: none !important; }`}</style>
+
       <div
         ref={mapContainerRef}
-        className={`h-full w-full rounded-lg bg-gray-100 border border-gray-200 z-0 ${
-          hasMarker ? 'cursor-move' : 'cursor-default'
-        }`}
+        className="h-full w-full rounded-2xl bg-slate-100 border border-slate-200"
         style={{ minHeight: '100%' }}
       />
 
-      <div className="absolute top-3 left-3 z-[1000] w-[calc(100%-4rem)] md:w-80 pointer-events-none">
-        <div className="relative pointer-events-auto shadow-lg rounded-lg">
-          <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">
+      {/* Search */}
+      <div className="absolute top-3 left-3 z-[1000] w-[calc(100%-4rem)] md:w-96">
+        <div className="relative rounded-2xl shadow-[0_18px_50px_rgba(15,23,42,0.10)]">
+          <div className="absolute inset-y-0 left-0 flex items-center pl-4 text-slate-400 pointer-events-none">
             {isSearching ? <LoaderIcon className="w-4 h-4" /> : <SearchIcon className="w-4 h-4" />}
           </div>
           <input
-            type="text"
             value={searchQuery}
             onChange={handleSearch}
-            placeholder="Поиск места на карте..."
-            className="w-full py-2 pl-10 pr-4 bg-white/90 backdrop-blur text-sm text-gray-900 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 shadow-sm transition-all"
+            placeholder="Поиск места на карте…"
+            className="w-full rounded-2xl border border-slate-200 bg-white/90 backdrop-blur px-4 py-3 pl-11 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition"
           />
+
           {searchResults.length > 0 && (
-            <ul className="absolute mt-1 w-full bg-white backdrop-blur border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto custom-scrollbar z-[1050]">
-              {searchResults.map((res, idx) => (
+            <ul className="absolute mt-2 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.12)] max-h-64 overflow-y-auto custom-scrollbar">
+              {searchResults.map((r, idx) => (
                 <li
                   key={idx}
-                  onClick={() => selectResult(res)}
-                  className="px-4 py-2 text-sm text-gray-800 hover:bg-indigo-50 hover:text-indigo-700 cursor-pointer border-b border-gray-200 last:border-0 transition-colors"
+                  onClick={() => selectResult(r)}
+                  className="px-4 py-3 text-sm text-slate-800 hover:bg-indigo-50 hover:text-indigo-700 cursor-pointer border-b border-slate-200 last:border-0"
                 >
-                  {res.display_name}
+                  {r.display_name}
                 </li>
               ))}
             </ul>
@@ -301,11 +344,16 @@ const SinglePointMap: React.FC<{
         </div>
       </div>
 
-      <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2 pointer-events-auto">
-        <button onClick={onToggleTheme} className={btnClass} title="Сменить тему">
+      {/* Controls */}
+      <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
+        <button onClick={onToggleTheme} className={ctrlBtn} title="Сменить тему карты">
           {theme === 'dark' ? <SunIcon className="w-5 h-5" /> : <MoonIcon className="w-5 h-5" />}
         </button>
-        <button onClick={isExpanded ? onCollapse : onExpand} className={btnClass} title={isExpanded ? 'Свернуть' : 'Развернуть'}>
+        <button
+          onClick={isExpanded ? onCollapse : onExpand}
+          className={ctrlBtn}
+          title={isExpanded ? 'Свернуть' : 'Развернуть'}
+        >
           {isExpanded ? <MinimizeIcon className="w-5 h-5" /> : <MaximizeIcon className="w-5 h-5" />}
         </button>
       </div>
@@ -313,7 +361,7 @@ const SinglePointMap: React.FC<{
   );
 };
 
-// --- Main Component: AddressEditModal ---
+// --- Main component (Variant A: no Modal.tsx) ---
 const AddressEditModal: React.FC<AddressEditModalProps> = ({
   isOpen,
   onClose,
@@ -336,9 +384,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
   const [mapTheme, setMapTheme] = useState<Theme>(globalTheme);
   const [isMapExpanded, setIsMapExpanded] = useState(false);
 
-  const isCommentTouched = useRef(false);
-
   const prevKeyRef = useRef<string | number | undefined>(undefined);
+  const isCommentTouched = useRef(false);
 
   const fetchHistory = async (rm: string, address: string) => {
     try {
@@ -355,73 +402,64 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     }
   };
 
-  // --- Effect 1: Init Data & Theme ---
   useEffect(() => {
     if (!isOpen) return;
     setMapTheme(globalTheme);
 
-    if (data) {
-      const originalRow = getSafeOriginalRow(data);
+    if (!data) return;
 
-      let currentAddress = '';
-      const isUnidentifiedRow = (item: any): item is UnidentifiedRow => item.originalIndex !== undefined;
+    const originalRow = getSafeOriginalRow(data);
 
-      if (isUnidentifiedRow(data)) {
-        const rawAddress = findAddressInRow(originalRow) || '';
-        let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor', 'партнер']);
-        if (!distributor) {
-          const values = Object.values(originalRow);
-          const possibleDistributor = values.find((v) => typeof v === 'string' && v.includes('(') && v.includes(')'));
-          if (possibleDistributor) distributor = String(possibleDistributor);
-        }
-        const parsed = parseRussianAddress(rawAddress, distributor);
-        currentAddress = parsed.finalAddress || rawAddress;
+    let currentAddress = '';
+    if (isUnidentifiedRow(data)) {
+      const rawAddress = findAddressInRow(originalRow) || '';
+      let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor', 'партнер']);
+      if (!distributor) {
+        const values = Object.values(originalRow);
+        const possibleDistributor = values.find((v) => typeof v === 'string' && v.includes('(') && v.includes(')'));
+        if (possibleDistributor) distributor = String(possibleDistributor);
+      }
+      const parsed = parseRussianAddress(rawAddress, distributor);
+      currentAddress = parsed.finalAddress || rawAddress;
+    } else {
+      currentAddress = (data as MapPoint).address;
+    }
+
+    const currentKey = (data as MapPoint).key || (data as UnidentifiedRow).originalIndex;
+
+    if (currentKey !== prevKeyRef.current) {
+      setEditedAddress(currentAddress);
+      setComment((data as MapPoint).comment || '');
+      isCommentTouched.current = false;
+
+      setManualCoords(null);
+      setIsMapExpanded(false);
+      setShowDeleteConfirm(false);
+      setStatus('idle');
+      setError(null);
+
+      const pt = data as MapPoint;
+      setLastUpdatedStr(pt.lastUpdated ? new Date(pt.lastUpdated).toLocaleString('ru-RU') : null);
+
+      const rm = getRmName(data);
+      if (rm && currentAddress) {
+        const isRecent = pt.lastUpdated && Date.now() - pt.lastUpdated < 3000;
+        if (!isRecent) fetchHistory(rm, currentAddress);
       } else {
-        currentAddress = (data as MapPoint).address;
+        setHistory([]);
       }
 
-      const currentKey = (data as MapPoint).key || (data as UnidentifiedRow).originalIndex;
+      prevKeyRef.current = currentKey;
+    } else {
+      const pt = data as MapPoint;
+      if (status === 'geocoding') {
+        const isStillGeocoding = pt.isGeocoding;
+        const hasCoords = pt.lat && pt.lon && pt.lat !== 0;
 
-      if (currentKey !== prevKeyRef.current) {
-        setEditedAddress(currentAddress);
-        setComment((data as MapPoint).comment || '');
-        isCommentTouched.current = false;
-        setManualCoords(null);
-        setIsMapExpanded(false);
-        setShowDeleteConfirm(false);
-        setStatus('idle');
-        setError(null);
-
-        const pt = data as MapPoint;
-        if (pt.lastUpdated) {
-          setLastUpdatedStr(new Date(pt.lastUpdated).toLocaleString('ru-RU'));
-        } else {
-          setLastUpdatedStr(null);
-        }
-
-        const rm = getRmName(data);
-        if (rm && currentAddress) {
-          const isRecent = pt.lastUpdated && Date.now() - pt.lastUpdated < 3000;
-          if (!isRecent) fetchHistory(rm, currentAddress);
-        } else {
-          setHistory([]);
-        }
-        prevKeyRef.current = currentKey;
-      } else {
-        const pt = data as MapPoint;
-        if (status === 'geocoding') {
-          const isStillGeocoding = pt.isGeocoding;
-          const hasCoords = pt.lat && pt.lon && pt.lat !== 0;
-
-          if (!isStillGeocoding && hasCoords) {
-            setStatus('success_geocoding');
-            console.info('✅ [Modal] Polling complete. Coordinates found!');
-          }
-
-          if (!isStillGeocoding && !hasCoords && pt.geocodingError) {
-            setStatus('error_geocoding');
-            setError(pt.geocodingError);
-          }
+        if (!isStillGeocoding && hasCoords) setStatus('success_geocoding');
+        if (!isStillGeocoding && !hasCoords && pt.geocodingError) {
+          setStatus('error_geocoding');
+          setError(pt.geocodingError);
         }
       }
     }
@@ -432,6 +470,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     setComment(e.target.value);
     isCommentTouched.current = true;
   };
+
+  const handleCoordinatesChange = useCallback((lat: number, lon: number) => {
+    setManualCoords({ lat, lon });
+  }, []);
 
   const handleCloudSync = async () => {
     if (!data) return;
@@ -477,11 +519,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       return;
     }
 
-    const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.toLowerCase();
+    const isAddressChanged =
+      editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.toLowerCase();
     const needsGeocoding = isAddressChanged && !manualCoords;
     const updateTimestamp = Date.now();
 
-    let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
+    const distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
     const parsed = parseRussianAddress(editedAddress, distributor);
 
     const baseNewPoint: MapPoint = {
@@ -508,7 +551,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
 
     if (needsGeocoding) {
       setStatus('geocoding');
-      console.info('📡 [Modal] Starting geocoding polling for:', editedAddress);
       onStartPolling(rm, editedAddress, oldKey, baseNewPoint, originalIndex, oldAddress);
     } else {
       onDataUpdate(oldKey, baseNewPoint, originalIndex);
@@ -523,8 +565,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     const addressToDelete = (data as MapPoint).address || findAddressInRow(originalRow) || '';
     const rm = getRmName(data);
 
-    console.warn('🗑️ [Modal] Delete requested for:', addressToDelete);
-
     if (!rm) {
       setStatus('error_deleting');
       setError('Не удалось определить имя РМ. Удаление невозможно.');
@@ -535,26 +575,43 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     onClose();
   };
 
-  if (!data) return null;
+  // close on ESC
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
 
-  const clientName = findValueInRow(getSafeOriginalRow(data), ['наименование клиента', 'контрагент', 'клиент']);
+  if (!isOpen || !data) return null;
+
+  const originalRow = getSafeOriginalRow(data);
+  const clientName = findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']);
   const currentLat = (data as MapPoint).lat;
   const currentLon = (data as MapPoint).lon;
-  const detailsToShow = Object.entries(getSafeOriginalRow(data))
-    .map(([key, value]) => ({ key: String(key).trim(), value: String(value).trim() }))
-    .filter((item) => item.value && item.value !== 'null' && item.key !== '__rowNum__');
-
-  const modalTitle = `Редактирование: ${clientName || 'Неизвестный клиент'}`;
-  const isProcessing = status === 'saving' || status === 'deleting' || status === 'syncing';
 
   const displayLat = manualCoords ? manualCoords.lat : currentLat;
   const displayLon = manualCoords ? manualCoords.lon : currentLon;
 
   const isMapSuccess =
-    typeof displayLat === 'number' && typeof displayLon === 'number' && displayLat !== 0 && displayLon !== 0 && status !== 'geocoding';
+    typeof displayLat === 'number' &&
+    typeof displayLon === 'number' &&
+    displayLat !== 0 &&
+    displayLon !== 0 &&
+    status !== 'geocoding';
 
+  const isProcessing = status === 'saving' || status === 'deleting' || status === 'syncing';
+
+  const detailsToShow = Object.entries(originalRow)
+    .map(([k, v]) => ({ key: String(k).trim(), value: String(v).trim() }))
+    .filter((x) => x.value && x.value !== 'null' && x.key !== '__rowNum__');
+
+  // button text logic (same as before)
   let saveButtonText = 'Сохранить изменения';
-  const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== ((data as MapPoint).address || '').toLowerCase();
+  const oldAddress = (data as MapPoint).address || '';
+  const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.toLowerCase();
   const isCoordsChanged = manualCoords !== null;
   const isCommentChanged = comment.trim() !== ((data as MapPoint).comment || '').trim();
 
@@ -563,330 +620,381 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
   if (isAddressChanged && isCoordsChanged) saveButtonText = 'Сохранить адрес и координаты';
   if (isCommentChanged && !isAddressChanged && !isCoordsChanged) saveButtonText = 'Сохранить комментарий';
 
-  const handleCoordinatesChange = useCallback((lat: number, lon: number) => {
-    setManualCoords({ lat, lon });
-  }, []);
-
-  const customFooter = (
-    <div className="flex justify-between items-center p-4 bg-white/80 rounded-b-2xl border-t border-gray-200 flex-shrink-0 backdrop-blur-md">
-      <button
-        onClick={onBack}
-        className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2 shadow-sm border border-gray-200"
-      >
-        <ArrowLeftIcon className="w-4 h-4" /> Назад
-      </button>
-      <button onClick={onClose} className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-6 rounded-lg transition duration-200 shadow-md">
-        Закрыть
-      </button>
-    </div>
-  );
-
   return (
     <>
-      <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={customFooter} maxWidth="max-w-7xl" zIndex="z-[9999]">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Left Column */}
-          <div className="flex flex-col gap-6">
-            <div className="bg-white p-5 rounded-2xl border border-gray-200 max-h-[40vh] overflow-y-auto custom-scrollbar shadow-inner">
-              <h4 className="font-bold text-xs uppercase tracking-widest mb-4 text-indigo-700">Исходные данные строки</h4>
-              <table className="w-full text-sm">
-                <tbody className="divide-y divide-gray-200">
-                  {detailsToShow.map(({ key, value }, index) => (
-                    <tr key={index} className="group">
-                      <td className="py-2.5 pr-4 text-gray-500 font-medium align-top w-1/3 group-hover:text-gray-700 transition-colors">
-                        {key}
-                      </td>
-                      <td className="py-2.5 text-gray-800 break-words leading-relaxed">{value}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+      {/* Overlay */}
+      <div className="fixed inset-0 z-[9999]">
+        <div
+          className="absolute inset-0 bg-white/55 backdrop-blur-md"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+        <div className="absolute inset-0 pointer-events-none">
+          <Glow />
+        </div>
 
-            <div className="bg-white p-5 rounded-2xl border border-gray-200 flex-grow flex flex-col shadow-inner">
-              <div className="flex justify-between items-center mb-4">
-                <h4 className="font-bold text-xs uppercase tracking-widest text-gray-600 flex items-center gap-2">
-                  История изменений {isLoadingHistory && <LoaderIcon className="w-3 h-3" />}
-                </h4>
-                <span className="text-[10px] font-bold text-gray-600 bg-gray-100 px-2 py-1 rounded-md border border-gray-200 uppercase">
-                  Всего: {history.length}
-                </span>
-              </div>
-
-              <div className="flex-grow overflow-y-auto custom-scrollbar rounded-xl bg-gray-50 p-2 border border-gray-200 min-h-[140px]">
-                {history.length > 0 ? (
-                  <ul className="space-y-3">
-                    {history.map((item, idx) => (
-                      <li
-                        key={idx}
-                        className="p-3 bg-white rounded-lg border border-gray-200 text-sm text-gray-600 flex flex-col gap-1.5 hover:bg-gray-50 transition-colors group"
-                      >
-                        <div className="flex items-center gap-2 text-indigo-700 text-[10px] font-bold uppercase tracking-tighter">
-                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 group-hover:animate-ping"></span>
-                          <span>Событие #{history.length - idx}</span>
+        {/* Modal shell */}
+        <div className="relative z-[10000] h-full w-full flex items-center justify-center p-3 md:p-6">
+          <div className="relative w-full max-w-7xl h-[92vh]">
+            <Card className="relative h-full overflow-hidden">
+              {/* Header */}
+              <div className="relative px-6 pt-6 pb-4 border-b border-slate-200/70 bg-white/70">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-600 to-sky-500 text-white font-black flex items-center justify-center shadow-[0_14px_40px_rgba(99,102,241,0.18)]">
+                        ✦
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-base md:text-lg font-black text-slate-900 truncate">
+                          Редактирование: {clientName || 'Неизвестный клиент'}
                         </div>
-                        <span className="pl-3 border-l border-gray-200 text-gray-800 break-words whitespace-pre-wrap leading-relaxed">{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="h-full flex flex-col items-center justify-center text-gray-400 text-sm p-8">
-                    <InfoIcon className="w-10 h-10 mb-2" />
-                    <span>История изменений пуста</span>
+                        <div className="text-xs text-slate-500 truncate">
+                          Адрес • координаты • история изменений
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                )}
-              </div>
-            </div>
-          </div>
 
-          {/* Right Column */}
-          <div className="flex flex-col gap-6">
-            <div className="h-72 shadow-2xl rounded-2xl overflow-hidden border border-gray-200 bg-white">
-              <SinglePointMap
-                lat={displayLat}
-                lon={displayLon}
-                address={editedAddress}
-                isSuccess={isMapSuccess}
-                onCoordinatesChange={handleCoordinatesChange}
-                theme={mapTheme}
-                onToggleTheme={() => setMapTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
-                onExpand={() => setIsMapExpanded(true)}
-                isExpanded={isMapExpanded}
-              />
-            </div>
+                  <div className="flex items-center gap-2">
+                    <Chip tone={status === 'geocoding' ? 'blue' : status === 'success' || status === 'success_geocoding' ? 'lime' : status.startsWith('error') ? 'red' : 'neutral'}>
+                      {status === 'geocoding'
+                        ? 'GEOCODING'
+                        : status === 'success' || status === 'success_geocoding'
+                        ? 'SAVED'
+                        : status.startsWith('error')
+                        ? 'ERROR'
+                        : 'EDIT'}
+                    </Chip>
 
-            <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-xl relative flex flex-col gap-5">
-              <div className="flex justify-between items-center">
-                <h4 className="font-bold text-xs uppercase tracking-widest text-indigo-700 flex items-center gap-2">
-                  <SaveIcon className="w-4 h-4" />
-                  Параметры объекта
-                </h4>
-
-                {!showDeleteConfirm ? (
-                  <button
-                    onClick={() => setShowDeleteConfirm(true)}
-                    className="text-gray-500 hover:text-red-600 transition-colors p-2 hover:bg-red-50 rounded-full flex items-center gap-2 group"
-                    title="Удалить запись"
-                  >
-                    <TrashIcon className="w-4 h-4" />
-                    <span className="text-[10px] font-bold uppercase hidden group-hover:inline">Удалить</span>
-                  </button>
-                ) : (
-                  <div className="flex items-center gap-3 bg-red-50 px-3 py-1.5 rounded-xl border border-red-200 animate-fade-in">
-                    <span className="text-[10px] font-bold text-red-700 uppercase">Удалить из базы?</span>
-                    <button
-                      onClick={handleDelete}
-                      className="text-[10px] bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded-lg font-bold uppercase transition-all shadow-md"
-                    >
-                      Да
-                    </button>
-                    <button
-                      onClick={() => setShowDeleteConfirm(false)}
-                      className="text-[10px] bg-white hover:bg-gray-50 text-gray-700 px-3 py-1 rounded-lg font-bold uppercase transition-all border border-gray-200"
-                    >
-                      Нет
-                    </button>
+                    <Btn variant="ghost" onClick={onClose} className="px-3 py-2">
+                      Закрыть
+                    </Btn>
                   </div>
-                )}
-              </div>
-
-              <div className="space-y-4">
-                <div className="relative">
-                  <label htmlFor="address-input" className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">
-                    Адрес ТТ LimKorm
-                  </label>
-                  <textarea
-                    id="address-input"
-                    rows={2}
-                    value={editedAddress}
-                    onChange={(e) => setEditedAddress(e.target.value)}
-                    disabled={isProcessing || status === 'geocoding' || status === 'success'}
-                    className={`w-full p-4 bg-white border rounded-xl focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-50 transition-all duration-300 text-sm text-gray-900 shadow-sm resize-none ${
-                      status === 'success'
-                        ? 'border-emerald-400 ring-2 ring-emerald-200'
-                        : error
-                        ? 'border-red-300 ring-2 ring-red-200'
-                        : 'border-gray-300 hover:border-gray-400'
-                    }`}
-                  />
-                  {status === 'success' && <CheckIcon className="absolute right-4 top-10 text-emerald-600 animate-bounce w-6 h-6" />}
                 </div>
+              </div>
 
-                <div className="relative pt-1">
-                  <div className="flex justify-between items-center mb-2">
-                    <div className="flex gap-4 w-full">
-                      <div className="w-1/2">
-                        <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1 ml-1">Широта (Lat)</label>
-                        <input
-                          type="text"
-                          readOnly
-                          value={displayLat ? displayLat.toFixed(6) : '—'}
-                          className="w-full p-2 bg-white border border-gray-300 rounded-lg text-sm font-mono text-gray-700 text-center"
+              {/* Body */}
+              <div className="relative p-6 h-[calc(92vh-160px)] overflow-y-auto custom-scrollbar">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Left column */}
+                  <div className="flex flex-col gap-6">
+                    <Card className="p-5 bg-white/70">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="text-[11px] uppercase tracking-[0.18em] text-indigo-700 font-black">
+                          Исходные данные строки
+                        </div>
+                        <Chip tone="neutral">{detailsToShow.length} полей</Chip>
+                      </div>
+
+                      <div className="max-h-[34vh] overflow-y-auto custom-scrollbar rounded-2xl border border-slate-200 bg-white/70">
+                        <table className="w-full text-sm">
+                          <tbody className="divide-y divide-slate-200">
+                            {detailsToShow.map(({ key, value }, idx) => (
+                              <tr key={idx} className="hover:bg-slate-50">
+                                <td className="py-3 px-4 text-slate-500 font-bold align-top w-1/3">{key}</td>
+                                <td className="py-3 pr-4 text-slate-900 break-words">{value}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </Card>
+
+                    <Card className="p-5 bg-white/70">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-600 font-black">
+                          История изменений {isLoadingHistory && <LoaderIcon className="w-3 h-3" />}
+                        </div>
+                        <Chip tone="neutral">Всего: {history.length}</Chip>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 min-h-[170px] max-h-[34vh] overflow-y-auto custom-scrollbar">
+                        {history.length > 0 ? (
+                          <ul className="space-y-3">
+                            {history.map((item, idx) => (
+                              <li key={idx} className="p-3 bg-white rounded-2xl border border-slate-200 shadow-sm">
+                                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-indigo-700">
+                                  <span className="w-2 h-2 rounded-full bg-indigo-500" />
+                                  Событие #{history.length - idx}
+                                </div>
+                                <div className="mt-2 text-sm text-slate-800 whitespace-pre-wrap break-words leading-relaxed">
+                                  {item}
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div className="h-full flex flex-col items-center justify-center text-slate-400 text-sm p-8">
+                            <InfoIcon className="w-10 h-10 mb-2" />
+                            <span>История изменений пуста</span>
+                          </div>
+                        )}
+                      </div>
+                    </Card>
+                  </div>
+
+                  {/* Right column */}
+                  <div className="flex flex-col gap-6">
+                    {/* Map */}
+                    <Card className="overflow-hidden">
+                      <div className="h-72 md:h-80">
+                        <SinglePointMap
+                          lat={displayLat}
+                          lon={displayLon}
+                          address={editedAddress}
+                          isSuccess={isMapSuccess}
+                          onCoordinatesChange={handleCoordinatesChange}
+                          theme={mapTheme}
+                          onToggleTheme={() => setMapTheme((p) => (p === 'dark' ? 'light' : 'dark'))}
+                          onExpand={() => setIsMapExpanded(true)}
+                          isExpanded={false}
                         />
                       </div>
-                      <div className="w-1/2">
-                        <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1 ml-1">Долгота (Lon)</label>
-                        <input
-                          type="text"
-                          readOnly
-                          value={displayLon ? displayLon.toFixed(6) : '—'}
-                          className="w-full p-2 bg-white border border-gray-300 rounded-lg text-sm font-mono text-gray-700 text-center"
-                        />
+                      <div className="px-5 py-4 border-t border-slate-200 bg-white/70 flex items-center justify-between">
+                        <div className="text-xs text-slate-600 flex items-center gap-2">
+                          <InfoIcon className="w-4 h-4 text-indigo-600" />
+                          Перетащите маркер для точной привязки
+                        </div>
+                        <Chip tone={isMapSuccess ? 'lime' : 'neutral'}>{isMapSuccess ? 'COORDS OK' : 'NO COORDS'}</Chip>
                       </div>
-                    </div>
+                    </Card>
+
+                    {/* Editable fields */}
+                    <Card className="p-6 bg-white/70">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="text-[11px] uppercase tracking-[0.18em] text-indigo-700 font-black flex items-center gap-2">
+                          <SaveIcon className="w-4 h-4" />
+                          Параметры объекта
+                        </div>
+
+                        {!showDeleteConfirm ? (
+                          <button
+                            onClick={() => setShowDeleteConfirm(true)}
+                            className="text-slate-500 hover:text-red-600 transition-colors p-2 hover:bg-red-50 rounded-2xl flex items-center gap-2"
+                            title="Удалить запись"
+                          >
+                            <TrashIcon className="w-4 h-4" />
+                            <span className="text-[10px] font-black uppercase tracking-[0.16em]">Удалить</span>
+                          </button>
+                        ) : (
+                          <div className="flex items-center gap-2 bg-red-50 px-3 py-2 rounded-2xl border border-red-200">
+                            <span className="text-[10px] font-black text-red-700 uppercase tracking-[0.16em]">Удалить?</span>
+                            <Btn variant="danger" onClick={handleDelete} className="px-3 py-2 text-[11px] rounded-xl">
+                              Да
+                            </Btn>
+                            <Btn variant="soft" onClick={() => setShowDeleteConfirm(false)} className="px-3 py-2 text-[11px] rounded-xl">
+                              Нет
+                            </Btn>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-4">
+                        {/* Address */}
+                        <div>
+                          <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">
+                            Адрес ТТ LimKorm
+                          </label>
+                          <textarea
+                            rows={2}
+                            value={editedAddress}
+                            onChange={(e) => setEditedAddress(e.target.value)}
+                            disabled={isProcessing || status === 'geocoding' || status === 'success'}
+                            className={[
+                              'w-full rounded-2xl border bg-white/85 px-4 py-3 text-sm font-bold text-slate-900 shadow-sm',
+                              'focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition resize-none',
+                              status === 'success'
+                                ? 'border-emerald-300'
+                                : error
+                                ? 'border-red-300'
+                                : 'border-slate-200 hover:border-slate-300',
+                            ].join(' ')}
+                          />
+                          {status === 'success' && (
+                            <div className="mt-2 text-xs text-emerald-700 font-bold flex items-center gap-2">
+                              <CheckIcon className="w-4 h-4" /> Сохранено
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Coords */}
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">
+                              Широта (Lat)
+                            </label>
+                            <input
+                              readOnly
+                              value={displayLat ? displayLat.toFixed(6) : '—'}
+                              className="w-full rounded-2xl border border-slate-200 bg-white/85 px-4 py-3 text-sm font-black text-slate-700 text-center"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">
+                              Долгота (Lon)
+                            </label>
+                            <input
+                              readOnly
+                              value={displayLon ? displayLon.toFixed(6) : '—'}
+                              className="w-full rounded-2xl border border-slate-200 bg-white/85 px-4 py-3 text-sm font-black text-slate-700 text-center"
+                            />
+                          </div>
+                        </div>
+
+                        <Btn onClick={handleCloudSync} disabled={isProcessing} className="w-full py-3 rounded-2xl" variant="soft">
+                          <span className="inline-flex items-center gap-2">
+                            <SyncIcon small /> Синхронизировать с Google (Проверка координат)
+                          </span>
+                        </Btn>
+
+                        {/* Comment */}
+                        <div>
+                          <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">
+                            Заметка менеджера
+                          </label>
+                          <textarea
+                            rows={2}
+                            value={comment}
+                            onChange={handleCommentChange}
+                            disabled={isProcessing || status === 'geocoding' || status === 'success'}
+                            placeholder="Добавьте важный комментарий…"
+                            className="w-full rounded-2xl border border-slate-200 bg-white/85 px-4 py-3 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition resize-none"
+                          />
+                        </div>
+
+                        {lastUpdatedStr && (
+                          <div className="text-[11px] text-slate-500 text-right italic">Обновлено: {lastUpdatedStr}</div>
+                        )}
+
+                        {/* Status blocks */}
+                        {status === 'geocoding' && (
+                          <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+                            <div className="flex items-center justify-center gap-2 text-indigo-700 font-black">
+                              <LoaderIcon className="w-4 h-4" /> Ожидание координат (Polling)…
+                            </div>
+                            <div className="mt-2 text-xs text-slate-600 text-center">
+                              Запрос отправлен. Ждём ответ от геокодера.
+                            </div>
+                          </div>
+                        )}
+
+                        {status === 'success_geocoding' && (
+                          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                            <div className="flex items-center justify-center gap-2 text-emerald-700 font-black">
+                              <CheckIcon className="w-5 h-5" /> Координаты обновлены!
+                            </div>
+                            <div className="mt-1 text-xs text-emerald-700/70 text-center">Точка появилась на карте</div>
+                          </div>
+                        )}
+
+                        {(status === 'error_saving' || status === 'error_deleting' || status === 'error_geocoding') && (
+                          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 space-y-3">
+                            <div className="flex items-center gap-2 text-red-700 font-black text-sm">
+                              <ErrorIcon className="w-4 h-4" /> {error || 'Сбой соединения'}
+                            </div>
+                            {status !== 'error_deleting' && (
+                              <Btn onClick={handleSave} variant="soft" className="w-full py-3 rounded-2xl">
+                                <span className="inline-flex items-center gap-2">
+                                  <RetryIcon className="w-4 h-4" /> Повторить попытку
+                                </span>
+                              </Btn>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Save/processing */}
+                        {status === 'saving' ? (
+                          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center text-indigo-700 font-black flex items-center justify-center gap-2">
+                            <LoaderIcon className="w-4 h-4 animate-spin" /> Сохранение…
+                          </div>
+                        ) : status === 'syncing' ? (
+                          <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-center text-sky-800 font-black flex items-center justify-center gap-2">
+                            <LoaderIcon className="w-4 h-4 animate-spin" /> Проверка в Google…
+                          </div>
+                        ) : (
+                          <Btn
+                            onClick={handleSave}
+                            disabled={status === 'success'}
+                            variant="primary"
+                            className="w-full py-3.5 text-base rounded-2xl"
+                          >
+                            <span className="inline-flex items-center gap-2">
+                              <SaveIcon className="w-5 h-5" /> {status === 'success' ? 'Сохранено!' : saveButtonText}
+                            </span>
+                          </Btn>
+                        )}
+                      </div>
+                    </Card>
                   </div>
-
-                  <button
-                    onClick={handleCloudSync}
-                    disabled={isProcessing}
-                    className="w-full mt-2 py-2 px-3 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg text-xs font-bold text-blue-700 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-                    title="Проверить координаты в Google Таблице и обновить, если они отличаются"
-                  >
-                    <SyncIcon small />
-                    Синхронизировать с Google (Проверка координат)
-                  </button>
-                </div>
-
-                <div className="relative">
-                  <label htmlFor="comment-input" className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">
-                    Заметка менеджера
-                  </label>
-                  <textarea
-                    id="comment-input"
-                    rows={2}
-                    value={comment}
-                    onChange={handleCommentChange}
-                    disabled={isProcessing || status === 'geocoding' || status === 'success'}
-                    placeholder="Добавьте важный комментарий..."
-                    className="w-full p-4 bg-white border border-gray-300 hover:border-gray-400 rounded-xl focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-50 transition-all duration-300 text-sm text-gray-900 shadow-sm resize-none"
-                  />
-                </div>
-
-                {lastUpdatedStr && (
-                  <div className="text-[10px] text-gray-500 text-right italic -mt-1 uppercase tracking-tighter">Обновлено: {lastUpdatedStr}</div>
-                )}
-
-                <div className="pt-2">
-                  {(status === 'idle' || status === 'success') && !error && (
-                    <button
-                      onClick={handleSave}
-                      disabled={status === 'success'}
-                      className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg active:scale-[0.98] disabled:bg-emerald-600 disabled:cursor-not-allowed"
-                    >
-                      {status === 'success' ? (
-                        <>
-                          <CheckIcon className="w-6 h-6" /> Сохранено!
-                        </>
-                      ) : (
-                        <>
-                          <SaveIcon className="w-5 h-5" /> {saveButtonText}
-                        </>
-                      )}
-                    </button>
-                  )}
-
-                  {status === 'saving' && (
-                    <div className="w-full bg-gray-50 py-4 rounded-xl border border-gray-200 text-center text-indigo-700 flex items-center justify-center gap-3 font-bold shadow-sm">
-                      <LoaderIcon className="w-5 h-5 animate-spin" /> Сохранение...
-                    </div>
-                  )}
-
-                  {status === 'syncing' && (
-                    <div className="w-full bg-blue-50 py-4 rounded-xl border border-blue-200 text-center text-blue-700 flex items-center justify-center gap-3 font-bold animate-pulse shadow-sm">
-                      <LoaderIcon className="w-5 h-5 animate-spin" /> Проверка в Google...
-                    </div>
-                  )}
-
-                  {status === 'deleting' && (
-                    <div className="w-full bg-red-50 py-4 rounded-xl border border-red-200 text-center text-red-700 flex items-center justify-center gap-3 font-bold animate-pulse">
-                      <LoaderIcon className="w-5 h-5" /> Удаление объекта...
-                    </div>
-                  )}
-
-                  {status === 'geocoding' && (
-                    <div className="flex flex-col gap-4 p-5 bg-indigo-50 rounded-2xl border border-indigo-200 animate-pulse shadow-inner">
-                      <div className="text-center text-indigo-700 flex items-center justify-center gap-3 font-bold text-sm">
-                        <LoaderIcon className="w-4 h-4" />
-                        <span>Ожидание координат (Polling)...</span>
-                      </div>
-                      <p className="text-center text-[10px] leading-relaxed text-gray-500 px-4 italic uppercase tracking-tighter">
-                        Запрос отправлен. Система ждет ответ от геокодера...
-                      </p>
-                    </div>
-                  )}
-
-                  {status === 'success_geocoding' && (
-                    <div className="w-full bg-emerald-50 py-4 rounded-xl border border-emerald-200 text-center text-emerald-700 flex flex-col items-center justify-center gap-2 font-bold shadow-sm animate-bounce-in">
-                      <div className="flex items-center gap-2">
-                        <CheckIcon className="w-6 h-6" />
-                        <span>Координаты обновлены!</span>
-                      </div>
-                      <div className="text-[10px] font-normal text-emerald-600/70 uppercase tracking-widest">Точка появилась на карте</div>
-                    </div>
-                  )}
-
-                  {(status === 'error_saving' || status === 'error_deleting' || status === 'error_geocoding') && (
-                    <div className="text-center space-y-4 animate-fade-in">
-                      <div className="flex items-center justify-center gap-3 text-red-700 text-xs bg-red-50 p-3 rounded-xl border border-red-200 shadow-inner">
-                        <ErrorIcon className="w-4 h-4" /> {error || 'Сбой соединения'}
-                      </div>
-                      {status !== 'error_deleting' && (
-                        <button
-                          onClick={handleSave}
-                          className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 px-6 rounded-xl flex items-center justify-center gap-2 transition-all border border-gray-200"
-                        >
-                          <RetryIcon className="w-4 h-4" /> Повторить попытку
-                        </button>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
-            </div>
+
+              {/* Footer */}
+              <div className="px-6 py-4 border-t border-slate-200/70 bg-white/70 flex items-center justify-between">
+                <Btn onClick={onBack} variant="soft" className="px-5 py-3">
+                  <span className="inline-flex items-center gap-2">
+                    <ArrowLeftIcon className="w-4 h-4" /> Назад
+                  </span>
+                </Btn>
+
+                <div className="flex items-center gap-2">
+                  <Btn onClick={onClose} variant="ghost" className="px-5 py-3">
+                    Закрыть
+                  </Btn>
+                  <Btn onClick={onClose} variant="primary" className="px-6 py-3">
+                    Готово
+                  </Btn>
+                </div>
+              </div>
+            </Card>
           </div>
         </div>
-      </Modal>
+      </div>
 
+      {/* Fullscreen map overlay */}
       {isMapExpanded && (
-        <div className="fixed inset-0 z-[10000] bg-white/90 backdrop-blur-md flex flex-col animate-fade-in">
-          <div className="flex justify-between items-center p-4 bg-white border-b border-gray-200 backdrop-blur-md">
-            <div className="flex flex-col">
-              <h3 className="text-lg font-bold text-gray-900 uppercase tracking-wider">Уточнение координат</h3>
-              <span className="text-xs text-gray-500 truncate max-w-lg">{editedAddress}</span>
-            </div>
-            <button
-              onClick={() => setIsMapExpanded(false)}
-              className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-5 py-2 rounded-xl transition-all border border-gray-200 font-bold text-sm"
-            >
-              Закрыть карту
-            </button>
+        <div className="fixed inset-0 z-[10050] bg-white/80 backdrop-blur-md">
+          <div className="absolute inset-0 pointer-events-none">
+            <Glow />
           </div>
 
-          <div className="flex-grow relative">
-            <SinglePointMap
-              lat={displayLat}
-              lon={displayLon}
-              address={editedAddress}
-              isSuccess={isMapSuccess}
-              onCoordinatesChange={handleCoordinatesChange}
-              theme={mapTheme}
-              onToggleTheme={() => setMapTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
-              onCollapse={() => setIsMapExpanded(false)}
-              isExpanded={true}
-            />
-          </div>
-
-          <div className="p-5 bg-white border-t border-gray-200 flex justify-between items-center backdrop-blur-md">
-            <div className="text-xs text-gray-600 uppercase tracking-widest flex items-center gap-2">
-              <InfoIcon className="w-4 h-4 text-indigo-600" />
-              Перетащите маркер в нужное место. Координаты обновятся мгновенно.
+          <div className="relative h-full flex flex-col">
+            <div className="px-6 py-4 bg-white/80 border-b border-slate-200 flex items-center justify-between">
+              <div className="min-w-0">
+                <div className="text-lg font-black text-slate-900">Уточнение координат</div>
+                <div className="text-xs text-slate-500 truncate max-w-[70vw]">{editedAddress}</div>
+              </div>
+              <Btn onClick={() => setIsMapExpanded(false)} variant="soft" className="px-5 py-3">
+                Закрыть карту
+              </Btn>
             </div>
-            <button
-              onClick={() => setIsMapExpanded(false)}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-10 rounded-xl shadow-lg transition-all active:scale-95"
-            >
-              Применить
-            </button>
+
+            <div className="flex-1 p-4">
+              <Card className="h-full overflow-hidden">
+                <SinglePointMap
+                  lat={displayLat}
+                  lon={displayLon}
+                  address={editedAddress}
+                  isSuccess={isMapSuccess}
+                  onCoordinatesChange={handleCoordinatesChange}
+                  theme={mapTheme}
+                  onToggleTheme={() => setMapTheme((p) => (p === 'dark' ? 'light' : 'dark'))}
+                  onCollapse={() => setIsMapExpanded(false)}
+                  isExpanded={true}
+                />
+              </Card>
+            </div>
+
+            <div className="px-6 py-4 bg-white/80 border-t border-slate-200 flex items-center justify-between">
+              <div className="text-xs text-slate-600 flex items-center gap-2">
+                <InfoIcon className="w-4 h-4 text-indigo-600" />
+                Перетащите маркер. Координаты обновятся автоматически.
+              </div>
+              <Btn onClick={() => setIsMapExpanded(false)} variant="primary" className="px-8 py-3">
+                Применить
+              </Btn>
+            </div>
           </div>
         </div>
       )}

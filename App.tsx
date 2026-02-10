@@ -16,13 +16,14 @@ import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import DataUpdateOverlay from './components/DataUpdateOverlay';
 import { useAppLogic } from './hooks/useAppLogic';
 import { AppHeader } from './components/AppHeader';
+import { RoleProvider } from './components/auth/RoleProvider';
 
 const DetailsModal = React.lazy(() => import('./components/DetailsModal'));
 const UnidentifiedRowsModal = React.lazy(() => import('./components/UnidentifiedRowsModal'));
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_GEMINI_API_KEY !== '';
 
-const App: React.FC = () => {
+const AppContent: React.FC = () => {
     if (!isApiKeySet) return <ApiKeyErrorDisplay />;
 
     const {
@@ -53,15 +54,11 @@ const App: React.FC = () => {
         handleDataUpdate,
         handleDeleteClient,
         handleStartPolling,
-        queueLength, // Get queue info
-        // Load Date States
+        queueLength, 
         loadStartDate, setLoadStartDate,
         loadEndDate, setLoadEndDate
     } = useAppLogic();
 
-    // --- KEEP-ALIVE MECHANISM ---
-    // Pings the server every 14 minutes to prevent Render Free Tier from sleeping
-    // while the user has the tab open.
     useEffect(() => {
         const pingServer = () => {
             fetch('/api/keep-alive', { method: 'GET', cache: 'no-store' })
@@ -70,122 +67,119 @@ const App: React.FC = () => {
                 })
                 .catch(e => console.error('💓 [Keep-Alive] Ping failed:', e));
         };
-
-        // Initial ping
         pingServer();
-
-        // 14 minutes interval (840000ms)
         const intervalId = setInterval(pingServer, 840000); 
-
         return () => clearInterval(intervalId);
     }, []);
 
     return (
-        <div className="flex min-h-screen bg-gradient-to-b from-primary-dark via-primary-dark to-white font-sans text-text-main overflow-hidden">
-            <Navigation activeTab={activeModule} onTabChange={setActiveModule} />
-            
-            <main className="flex-1 ml-0 lg:ml-64 min-[1920px]:ml-72 min-[2560px]:ml-80 h-screen overflow-y-auto custom-scrollbar relative">
-                <AppHeader 
-                    dbStatus={dbStatus}
-                    isCloudSaving={isCloudSaving}
-                    processingState={processingState}
-                    activeModule={activeModule}
-                    updateJobStatus={updateJobStatus}
-                    onStartDataUpdate={handleStartDataUpdate}
-                    activeClientsCount={allActiveClients.length}
-                    queueLength={queueLength} // Pass to header
-                />
+        <div className="app-premium-bg">
+            <div className="relative flex">
+                <Navigation activeTab={activeModule} onTabChange={setActiveModule} />
+                
+                <main className="flex-1 ml-0 lg:ml-64 h-screen overflow-y-auto custom-scrollbar relative">
+                    <AppHeader 
+                        dbStatus={dbStatus}
+                        isCloudSaving={isCloudSaving}
+                        processingState={processingState}
+                        activeModule={activeModule}
+                        updateJobStatus={updateJobStatus}
+                        onStartDataUpdate={handleStartDataUpdate}
+                        activeClientsCount={allActiveClients.length}
+                        queueLength={queueLength} 
+                    />
 
-                {/*
-                  Ultra‑wide / 4K layout:
-                  - Keep lines readable by centering content and capping max width.
-                  - Add more breathing room on very large screens.
-                */}
-                <div className="py-8 px-4 lg:px-8 min-[1920px]:px-10 min-[2560px]:px-14">
-                    <div className="mx-auto w-full max-w-[1200px] min-[1280px]:max-w-[1320px] min-[1536px]:max-w-[1440px] min-[1920px]:max-w-[1680px] min-[2560px]:max-w-[1960px]">
-                    {activeModule === 'adapta' && (
-                        <Adapta 
-                            processingState={processingState}
-                            onForceUpdate={handleForceUpdate}
-                            onFileProcessed={() => {}}
-                            onProcessingStateChange={() => {}}
-                            okbData={okbData}
-                            okbStatus={okbStatus}
-                            onOkbStatusChange={setOkbStatus}
-                            onOkbDataChange={setOkbData}
-                            disabled={processingState.isProcessing}
-                            unidentifiedCount={unidentifiedRows.length}
-                            onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
-                            activeClientsCount={allActiveClients.length}
-                            uploadedData={filtered} 
-                            dbStatus={dbStatus}
-                            onStartEdit={setEditingClient}
-                            startDate={filterStartDate} 
-                            endDate={filterEndDate}     
-                            onStartDateChange={setFilterStartDate} 
-                            onEndDateChange={setFilterEndDate}
-                            // Pass Load Date Filters
-                            loadStartDate={loadStartDate}
-                            loadEndDate={loadEndDate}
-                            onLoadStartDateChange={setLoadStartDate}
-                            onLoadEndDateChange={setLoadEndDate}
-                        />
-                    )}
-
-                    {activeModule === 'amp' && (
-                        <div className="space-y-6">
-                            <InteractiveRegionMap data={filtered} activeClients={allActiveClients} potentialClients={mapPotentialClients} onEditClient={setEditingClient} selectedRegions={filters.region} flyToClientKey={null} />
-                            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                                <div className="lg:col-span-1">
-                                    <Filters options={filterOptions} currentFilters={filters} onFilterChange={setFilters} onReset={() => setFilters({rm:'', brand:[], packaging:[], region:[]})} disabled={allData.length === 0} />
-                                </div>
-                                <div className="lg:col-span-3"><PotentialChart data={filtered} /></div>
-                            </div>
-                            <ResultsTable 
-                                data={filtered} 
-                                onRowClick={setSelectedDetailsRow} 
-                                unidentifiedRowsCount={unidentifiedRows.length} 
-                                onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)} 
-                                disabled={allData.length === 0} 
+                    <div className="mx-auto w-full max-w-[1320px] px-4 md:px-6 lg:px-8 py-6">
+                        {activeModule === 'adapta' && (
+                            <Adapta 
+                                processingState={processingState}
+                                onForceUpdate={handleForceUpdate}
+                                onFileProcessed={() => {}}
+                                onProcessingStateChange={() => {}}
+                                okbData={okbData}
+                                okbStatus={okbStatus}
+                                onOkbStatusChange={setOkbStatus}
+                                onOkbDataChange={setOkbData}
+                                disabled={processingState.isProcessing}
+                                unidentifiedCount={unidentifiedRows.length}
+                                onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
+                                activeClientsCount={allActiveClients.length}
+                                uploadedData={filtered} 
+                                dbStatus={dbStatus}
+                                onStartEdit={setEditingClient}
+                                startDate={filterStartDate} 
+                                endDate={filterEndDate}     
+                                onStartDateChange={setFilterStartDate} 
+                                onEndDateChange={setFilterEndDate}
+                                loadStartDate={loadStartDate}
+                                loadEndDate={loadEndDate}
+                                onLoadStartDateChange={setLoadStartDate}
+                                onLoadEndDateChange={setLoadEndDate}
                             />
-                        </div>
-                    )}
+                        )}
 
-                    {activeModule === 'dashboard' && (
-                        <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filtered} metrics={summaryMetrics} okbRegionCounts={okbRegionCounts} mode="page" okbData={okbData} okbStatus={okbStatus} onEditClient={setEditingClient} />
-                    )}
+                        {activeModule === 'amp' && (
+                            <div className="space-y-6">
+                                <InteractiveRegionMap data={filtered} activeClients={allActiveClients} potentialClients={mapPotentialClients} onEditClient={setEditingClient} selectedRegions={filters.region} flyToClientKey={null} />
+                                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                                    <div className="lg:col-span-1">
+                                        <Filters options={filterOptions} currentFilters={filters} onFilterChange={setFilters} onReset={() => setFilters({rm:'', brand:[], packaging:[], region:[]})} disabled={allData.length === 0} />
+                                    </div>
+                                    <div className="lg:col-span-3"><PotentialChart data={filtered} /></div>
+                                </div>
+                                <ResultsTable 
+                                    data={filtered} 
+                                    onRowClick={setSelectedDetailsRow} 
+                                    unidentifiedRowsCount={unidentifiedRows.length} 
+                                    onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)} 
+                                    disabled={allData.length === 0} 
+                                />
+                            </div>
+                        )}
 
-                    {activeModule === 'prophet' && <Prophet data={filtered} />}
-                    {activeModule === 'agile' && <AgileLearning data={filtered} />}
-                    {activeModule === 'roi-genome' && <RoiGenome data={filtered} />}
+                        {activeModule === 'dashboard' && (
+                            <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filtered} metrics={summaryMetrics} okbRegionCounts={okbRegionCounts} mode="page" okbData={okbData} okbStatus={okbStatus} onEditClient={setEditingClient} />
+                        )}
+
+                        {activeModule === 'prophet' && <Prophet data={filtered} />}
+                        {activeModule === 'agile' && <AgileLearning data={filtered} />}
+                        {activeModule === 'roi-genome' && <RoiGenome data={filtered} />}
                     </div>
+                </main>
+
+                <DataUpdateOverlay jobStatus={updateJobStatus} />
+
+                <div className="fixed bottom-6 right-6 flex flex-col gap-2 z-[100]">
+                    {notifications.map(n => <Notification key={n.id} message={n.message} type={n.type} />)}
                 </div>
-            </main>
 
-            <DataUpdateOverlay jobStatus={updateJobStatus} />
-
-            <div className="fixed bottom-6 right-6 flex flex-col gap-2 z-[100]">
-                {notifications.map(n => <Notification key={n.id} message={n.message} type={n.type} />)}
+                <Suspense fallback={null}>
+                    {selectedDetailsRow && <DetailsModal isOpen={!!selectedDetailsRow} onClose={() => setSelectedDetailsRow(null)} data={selectedDetailsRow} okbStatus={okbStatus} onStartEdit={setEditingClient} />}
+                    {isUnidentifiedModalOpen && <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={setEditingClient} />}
+                </Suspense>
+                
+                {editingClient && (
+                    <AddressEditModal 
+                        isOpen={!!editingClient} 
+                        onClose={() => setEditingClient(null)} 
+                        onBack={() => setEditingClient(null)} 
+                        data={editingClient} 
+                        onDataUpdate={handleDataUpdate}
+                        onStartPolling={handleStartPolling} 
+                        onDelete={handleDeleteClient}
+                        globalTheme="light" 
+                    />
+                )}
             </div>
-
-            <Suspense fallback={null}>
-                {selectedDetailsRow && <DetailsModal isOpen={!!selectedDetailsRow} onClose={() => setSelectedDetailsRow(null)} data={selectedDetailsRow} okbStatus={okbStatus} onStartEdit={setEditingClient} />}
-                {isUnidentifiedModalOpen && <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={setEditingClient} />}
-            </Suspense>
-            
-            {editingClient && (
-                <AddressEditModal 
-                    isOpen={!!editingClient} 
-                    onClose={() => setEditingClient(null)} 
-                    onBack={() => setEditingClient(null)} 
-                    data={editingClient} 
-                    onDataUpdate={handleDataUpdate} // Now handles queue
-                    onStartPolling={handleStartPolling} 
-                    onDelete={handleDeleteClient} // Now handles queue
-                    globalTheme="light" 
-                />
-            )}
         </div>
+    );
+};
+
+const App: React.FC = () => {
+    return (
+        <RoleProvider initialRole="manager">
+            <AppContent />
+        </RoleProvider>
     );
 };
 
