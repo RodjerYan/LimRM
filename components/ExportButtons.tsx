@@ -10,7 +10,7 @@ export default function ExportButtons() {
       <div className="flex items-center gap-2" data-tour="export">
         <button
           onClick={() => setOpen("excel")}
-          className="flex items-center gap-2 px-3 py-2 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-sm active:scale-95"
+          className="flex items-center gap-2 h-9 px-3 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-sm active:scale-95 whitespace-nowrap"
           title="Скачать данные в формате Excel"
         >
           <ExportIcon small />
@@ -18,7 +18,7 @@ export default function ExportButtons() {
         </button>
         <button
           onClick={() => setOpen("csv")}
-          className="hidden md:flex items-center gap-2 px-3 py-2 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-sm active:scale-95"
+          className="hidden md:flex items-center gap-2 h-9 px-3 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-sm active:scale-95 whitespace-nowrap"
           title="Скачать данные в формате CSV"
         >
           <span>CSV</span>

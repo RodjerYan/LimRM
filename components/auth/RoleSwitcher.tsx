@@ -6,7 +6,7 @@ export default function RoleSwitcher() {
   const { role, setRole } = useRole();
 
   return (
-    <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+    <div className="flex items-center gap-2 h-9 rounded-2xl border border-slate-200 bg-white px-3 shadow-sm">
       <span className="text-[10px] uppercase tracking-widest text-slate-500 font-black">Role</span>
       <select
         value={role}

@@ -34,7 +34,7 @@ export function CardHeader({
   return (
     <div className="px-6 pt-6 pb-4 flex items-start justify-between gap-4">
       <div>
-        <div className="text-base font-semibold text-slate-900 leading-tight tracking-tight">{title}</div>
+        <div className="text-sm font-semibold text-slate-900 leading-tight tracking-tight uppercase">{title}</div>
         {subtitle && <div className="text-xs text-slate-500 mt-1 font-normal">{subtitle}</div>}
       </div>
       {right}

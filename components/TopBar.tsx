@@ -46,7 +46,7 @@ const TopBar: React.FC<TopBarProps> = ({
         <div className="min-w-0">
           <div className="t-title">{title}</div>
           {subtitle && (
-            <div className="t-body text-slate-500 mt-1 truncate">
+            <div className="text-xs text-slate-500 mt-1 truncate max-w-md">
               {subtitle}
             </div>
           )}
@@ -54,7 +54,7 @@ const TopBar: React.FC<TopBarProps> = ({
 
         {/* Middle: Date range */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 t-label">
+          <div className="hidden sm:flex items-center gap-2 t-label">
             <CalendarIcon />
             Период
           </div>
@@ -63,20 +63,20 @@ const TopBar: React.FC<TopBarProps> = ({
             type="date"
             value={startDate}
             onChange={(e) => onStartDateChange(e.target.value)}
-            className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 shadow-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition outline-none"
+            className="h-9 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-900 shadow-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition outline-none"
           />
           <span className="text-slate-400 font-medium">—</span>
           <input
             type="date"
             value={endDate}
             onChange={(e) => onEndDateChange(e.target.value)}
-            className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 shadow-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition outline-none"
+            className="h-9 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-900 shadow-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition outline-none"
           />
 
           {onResetDates && (
             <button
               onClick={onResetDates}
-              className="p-2 rounded-xl border border-slate-200 bg-slate-900/5 text-slate-600 hover:bg-slate-900/10 transition"
+              className="h-9 w-9 flex items-center justify-center rounded-xl border border-slate-200 bg-slate-900/5 text-slate-600 hover:bg-slate-900/10 transition"
               title="Сбросить"
             >
               <RefreshIcon small />
@@ -85,9 +85,9 @@ const TopBar: React.FC<TopBarProps> = ({
         </div>
 
         {/* Right */}
-        <div className="flex items-center gap-4 ml-auto">
+        <div className="flex items-center gap-4 ml-auto overflow-x-auto max-w-full pb-1 xl:pb-0">
           {statusLabel && (
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-700 bg-slate-900/5 border border-slate-200 px-3 py-1.5 rounded-2xl">
+            <div className="flex items-center gap-2 h-9 px-3 rounded-2xl border border-slate-200 bg-slate-900/5 text-xs font-semibold text-slate-700 whitespace-nowrap">
               {isLoading ? (
                 <LoaderIcon className="w-3 h-3 animate-spin" />
               ) : (

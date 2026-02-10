@@ -4,9 +4,11 @@ import React from "react";
 export function Chip({
   children,
   tone = "neutral",
+  className = "",
 }: {
   children: React.ReactNode;
   tone?: "neutral" | "lime" | "blue" | "pink" | "red";
+  className?: string;
 }) {
   const map: Record<string, string> = {
     neutral: "bg-slate-900/5 text-slate-700 border-slate-200",
@@ -17,7 +19,7 @@ export function Chip({
   };
 
   return (
-    <span className={`inline-flex items-center rounded-xl border px-2.5 py-1 text-[11px] font-extrabold ${map[tone]}`}>
+    <span className={`inline-flex items-center justify-center h-6 rounded-xl border px-2 text-[10px] font-extrabold whitespace-nowrap ${map[tone]} ${className}`}>
       {children}
     </span>
   );

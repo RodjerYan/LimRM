@@ -40,7 +40,7 @@ export default function SavedViews({
     <div className="flex items-center gap-2">
       <button
         onClick={saveView}
-        className="flex items-center gap-2 px-3 py-2 rounded-2xl bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 hover:border-indigo-300 font-bold text-xs transition-all shadow-sm active:scale-95"
+        className="flex items-center gap-2 h-9 px-3 rounded-2xl bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 hover:border-indigo-300 font-bold text-xs transition-all shadow-sm active:scale-95 whitespace-nowrap"
         title="Сохранить текущие фильтры как пресет"
       >
         <SaveIcon small />
@@ -53,7 +53,7 @@ export default function SavedViews({
           if (view) onApply(view.payload);
           e.target.value = ""; // Reset selection
         }}
-        className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer hover:border-slate-300 transition-colors max-w-[140px]"
+        className="h-9 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer hover:border-slate-300 transition-colors max-w-[140px]"
       >
         <option value="">Загрузить вид…</option>
         {views.map((v) => (
