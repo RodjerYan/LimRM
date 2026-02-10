@@ -81,10 +81,10 @@ const App: React.FC = () => {
     }, []);
 
     return (
-        <div className="flex min-h-screen bg-primary-dark font-sans text-text-main overflow-hidden">
+        <div className="flex min-h-screen bg-gradient-to-b from-primary-dark via-primary-dark to-white font-sans text-text-main overflow-hidden">
             <Navigation activeTab={activeModule} onTabChange={setActiveModule} />
             
-            <main className="flex-1 ml-0 lg:ml-64 h-screen overflow-y-auto custom-scrollbar relative">
+            <main className="flex-1 ml-0 lg:ml-64 min-[1920px]:ml-72 min-[2560px]:ml-80 h-screen overflow-y-auto custom-scrollbar relative">
                 <AppHeader 
                     dbStatus={dbStatus}
                     isCloudSaving={isCloudSaving}
@@ -96,7 +96,13 @@ const App: React.FC = () => {
                     queueLength={queueLength} // Pass to header
                 />
 
-                <div className="py-8 px-4 lg:px-8">
+                {/*
+                  Ultra‑wide / 4K layout:
+                  - Keep lines readable by centering content and capping max width.
+                  - Add more breathing room on very large screens.
+                */}
+                <div className="py-8 px-4 lg:px-8 min-[1920px]:px-10 min-[2560px]:px-14">
+                    <div className="mx-auto w-full max-w-[1200px] min-[1280px]:max-w-[1320px] min-[1536px]:max-w-[1440px] min-[1920px]:max-w-[1680px] min-[2560px]:max-w-[1960px]">
                     {activeModule === 'adapta' && (
                         <Adapta 
                             processingState={processingState}
@@ -152,6 +158,7 @@ const App: React.FC = () => {
                     {activeModule === 'prophet' && <Prophet data={filtered} />}
                     {activeModule === 'agile' && <AgileLearning data={filtered} />}
                     {activeModule === 'roi-genome' && <RoiGenome data={filtered} />}
+                    </div>
                 </div>
             </main>
 
@@ -175,7 +182,7 @@ const App: React.FC = () => {
                     onDataUpdate={handleDataUpdate} // Now handles queue
                     onStartPolling={handleStartPolling} 
                     onDelete={handleDeleteClient} // Now handles queue
-                    globalTheme="dark" 
+                    globalTheme="light" 
                 />
             )}
         </div>

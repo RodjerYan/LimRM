@@ -18,13 +18,17 @@ export const useAnalytics = (
         
         // Date Filtering
         if (filterStartDate || filterEndDate) {
+            // FIX: Normalize to YYYY-MM to match monthlyFact keys
+            const fStart = filterStartDate ? filterStartDate.substring(0, 7) : null;
+            const fEnd = filterEndDate ? filterEndDate.substring(0, 7) : null;
+
             processedData = allData.map(row => {
                 if (!row.monthlyFact || Object.keys(row.monthlyFact).length === 0) return row; 
                 let newRowFact = 0;
                 Object.entries(row.monthlyFact).forEach(([dateKey, val]) => {
                     if (dateKey === 'unknown') return; 
-                    if (filterStartDate && dateKey < filterStartDate) return;
-                    if (filterEndDate && dateKey > filterEndDate) return;
+                    if (fStart && dateKey < fStart) return;
+                    if (fEnd && dateKey > fEnd) return;
                     newRowFact += val;
                 });
                 const activeClients = row.clients.map(client => {
@@ -32,14 +36,18 @@ export const useAnalytics = (
                     let clientSum = 0;
                     Object.entries(client.monthlyFact).forEach(([d, v]) => {
                         if (d === 'unknown') return;
-                        if (filterStartDate && d < filterStartDate) return;
-                        if (filterEndDate && d > filterEndDate) return;
+                        if (fStart && d < fStart) return;
+                        if (fEnd && d > fEnd) return;
                         clientSum += v;
                     });
+                    // Only update fact if we actually calculated a new sum based on dates.
+                    // If clientSum is 0 but we have filters, it means no sales in period -> fact becomes 0.
                     return { ...client, fact: clientSum };
                 }).filter(c => (c.fact || 0) > 0);
+                
+                // If row fact became 0 or no active clients left, this row will be filtered out later
                 return { ...row, fact: newRowFact, clients: activeClients };
-            }).filter(r => r.fact > 0); 
+            }).filter(r => r.fact > 0 && r.clients.length > 0); 
         }
 
         // Smart Planning

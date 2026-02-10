@@ -24,6 +24,22 @@ html {
   font-size: 12px;
 }
 
+/*
+  Ultra‑wide / 4K tuning:
+  - The app intentionally runs at ~75% scale (12px root) for dense analytics.
+  - On very large screens, slightly increase base font size to improve readability
+    while keeping the layout geometry (vh, fixed sidebars) stable.
+*/
+@media (min-width: 1920px) {
+  html { font-size: 13px; }
+}
+@media (min-width: 2560px) {
+  html { font-size: 14px; }
+}
+@media (min-width: 3200px) {
+  html { font-size: 15px; }
+}
+
 /* GLOBAL SCROLLBAR STYLING (Light & Sleek) */
 ::-webkit-scrollbar {
   width: 8px;

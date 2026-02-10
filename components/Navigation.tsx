@@ -18,7 +18,7 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
     ];
 
     return (
-        <nav className="hidden lg:flex flex-col w-64 bg-white border-r border-gray-200 h-screen fixed left-0 top-0 z-50 shadow-sm">
+        <nav className="hidden lg:flex flex-col w-64 min-[1920px]:w-72 min-[2560px]:w-80 bg-white border-r border-gray-200 h-screen fixed left-0 top-0 z-50 shadow-sm">
             <div className="p-6 flex items-center gap-3 border-b border-gray-100 shrink-0">
                 <div className="w-8 h-8 bg-yellow-400 rounded-lg flex items-center justify-center text-black font-bold shadow-sm">
                     L

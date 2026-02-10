@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { OkbDataRow, OkbStatus } from '../types';
 import { LoaderIcon, SuccessIcon, ErrorIcon } from './icons';
@@ -16,28 +15,28 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
     const handleFetchData = useCallback(async (forceUpdate = false) => {
         setIsFetching(true);
         onStatusChange({ status: 'loading', message: forceUpdate ? 'Обновление с сервера...' : 'Подключение к серверу...' });
-        
+
         try {
             // Updated Endpoint: /api/get-akb?mode=okb_data
             const url = `/api/get-akb?mode=okb_data&t=${Date.now()}`;
-            
+
             const response = await fetch(url);
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
                 throw new Error(errorData.details || errorData.error || `Ошибка сервера: ${response.status} ${response.statusText}`);
             }
             const data: OkbDataRow[] = await response.json();
-            
+
             onDataChange(data);
             onStatusChange({
                 status: 'ready',
                 message: `ОКБ Онлайн (v5 Live)`,
                 timestamp: new Date().toISOString(),
                 rowCount: data.length,
-                coordsCount: data.filter(d => d.lat && d.lon).length,
+                coordsCount: data.filter((d) => d.lat && d.lon).length,
             });
         } catch (error) {
-            console.error("OKB Load Error:", error);
+            console.error('OKB Load Error:', error);
             onStatusChange({ status: 'error', message: (error as Error).message });
         } finally {
             setIsFetching(false);
@@ -58,7 +57,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
         <div className="relative group">
             <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl blur opacity-10 group-hover:opacity-20 transition duration-1000"></div>
             <div className="relative bg-white p-6 rounded-2xl border border-gray-200 shadow-lg">
-                
+
                 {/* Header */}
                 <div className="flex items-center gap-4 mb-6">
                     <div className="flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-bold shadow-md shadow-indigo-500/30">
@@ -75,13 +74,13 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
 
                 {/* Status Banner */}
                 <div className={`mb-5 p-3 rounded-xl border flex items-center gap-3 transition-colors duration-300 ${
-                    isError ? 'bg-red-50 border-red-200 text-red-800' : 
-                    isReady ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 
+                    isError ? 'bg-red-50 border-red-200 text-red-800' :
+                    isReady ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
                     'bg-gray-50 border-gray-200 text-gray-700'
                 }`}>
                     <div className={`p-1.5 rounded-lg ${
-                        isError ? 'bg-red-100 text-red-600' : 
-                        isReady ? 'bg-emerald-100 text-emerald-600' : 
+                        isError ? 'bg-red-100 text-red-600' :
+                        isReady ? 'bg-emerald-100 text-emerald-600' :
                         'bg-gray-200 text-gray-500'
                     }`}>
                         {isLoading ? <LoaderIcon /> : isError ? <div className="w-4 h-4"><ErrorIcon /></div> : isReady ? <div className="w-4 h-4"><SuccessIcon /></div> : <div className="w-4 h-4 rounded-full bg-gray-400" />}
@@ -122,7 +121,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
                     <span className="relative z-10 flex items-center justify-center gap-2">
                         {isLoading ? (
                             <>
-                                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/>
+                                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                                 Загрузка...
                             </>
                         ) : (
