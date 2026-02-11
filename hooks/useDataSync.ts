@@ -1,6 +1,6 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { AggregatedDataRow, UnidentifiedRow, FileProcessingState, DeltaItem, CoordsCache, OkbStatus, OkbDataRow, WorkerMessage, MapPoint } from '../types';
+import { AggregatedDataRow, UnidentifiedRow, FileProcessingState, DeltaItem, CoordsCache, OkbStatus, OkbDataRow, WorkerMessage, MapPoint, WorkerResultPayload } from '../types';
 import { saveAnalyticsState, loadAnalyticsState } from '../utils/db';
 import { enrichWithAbcCategories } from '../utils/analytics';
 import { normalizeAddress, findAddressInRow, normalizeAggregatedToPeriod } from '../utils/dataUtils';
@@ -235,6 +235,7 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
             const total = fileList.length;
             let accumulatedRows: AggregatedDataRow[] = [];
             let loadedMeta: any = serverMeta || null;
+            let finalWorkerPayload: WorkerResultPayload | null = null;
             
             lastSavedChunksRef.current.clear();
 
@@ -257,6 +258,9 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                     } else if (msg.type === 'result_chunk_aggregated') {
                         // Incremental update
                     } else if (msg.type === 'result_finished') {
+                        console.log('[PARENT] worker payload keys:', Object.keys(msg.payload));
+                        console.log('[PARENT] payload aggregatedData len:', msg.payload.aggregatedData?.length);
+                        finalWorkerPayload = msg.payload;
                         accumulatedRows = msg.payload.aggregatedData;
                         setUnidentifiedRows(msg.payload.unidentifiedRows);
                         setOkbRegionCounts(msg.payload.okbRegionCounts);
@@ -293,7 +297,10 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                 else if (Array.isArray(chunkData.aggregatedData)) newRows = chunkData.aggregatedData;
                                 
                                 // DETECT IF THIS IS A SNAPSHOT (OBJECTS) OR RAW FILE (ARRAYS)
-                                const isSnapshotObject = newRows.length > 0 && !Array.isArray(newRows[0]);
+                                const isSnapshotObject = newRows.length > 0 && 
+                                    typeof newRows[0] === 'object' && 
+                                    !Array.isArray(newRows[0]) && 
+                                    'clients' in newRows[0];
 
                                 if (newRows.length > 0) {
                                     console.log(`Processing chunk ${item.file.name}: ${newRows.length} rows (${isSnapshotObject ? 'Snapshot' : 'Raw'})`);
@@ -389,8 +396,8 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
 
                 await saveAnalyticsState({
                     allData: finalData,
-                    unidentifiedRows: safeMeta.unidentifiedRows || [], 
-                    okbRegionCounts: safeMeta.okbRegionCounts || {},
+                    unidentifiedRows: finalWorkerPayload?.unidentifiedRows || safeMeta.unidentifiedRows || [], 
+                    okbRegionCounts: finalWorkerPayload?.okbRegionCounts || safeMeta.okbRegionCounts || {},
                     totalRowsProcessed: totalRowsProcessedRef.current,
                     versionHash: versionHash,
                     okbData: [], okbStatus: null

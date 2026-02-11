@@ -73,6 +73,19 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [channelSearchTerm, setChannelSearchTerm] = useState('');
 
+  // --- DEBUG LOGGING ---
+  useEffect(() => {
+    console.log('[ADAPTA] uploadedData len:', props.uploadedData?.length);
+    console.log('[ADAPTA] activeClientsCount:', props.activeClientsCount);
+    if (props.uploadedData?.length) {
+      console.log('[ADAPTA] sample row:', props.uploadedData[0]);
+      console.log('[ADAPTA] sample client:', props.uploadedData[0]?.clients?.[0]);
+    } else {
+      console.log('[ADAPTA] uploadedData is empty or undefined');
+    }
+  }, [props.uploadedData, props.activeClientsCount]);
+  // ---------------------
+
   // Handle external request to open a channel (e.g., from Global Search)
   useEffect(() => {
     if (props.openChannelRequest) {
@@ -489,7 +502,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                       />
                       <StatTile
                         label="Уникальных ТТ"
-                        value={props.activeClientsCount.toLocaleString('ru-RU')}
+                        value={(props.uploadedData ? baseClientKeys.size : props.activeClientsCount).toLocaleString('ru-RU')}
                         accent="lime"
                         footnote="Гео-объектов"
                       />

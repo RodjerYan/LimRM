@@ -162,7 +162,7 @@ const AppContent: React.FC = () => {
                                 unidentifiedCount={unidentifiedRows.length}
                                 onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
                                 activeClientsCount={allActiveClients.length}
-                                uploadedData={filtered} 
+                                uploadedData={allData} // PASS RAW DATA HERE TO FIX ZERO COUNT ISSUE
                                 dbStatus={dbStatus}
                                 onStartEdit={setEditingClient}
                                 startDate={filterStartDate} 
