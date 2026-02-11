@@ -77,37 +77,71 @@ export const useAppLogic = () => {
     }, [loadStartDate, loadEndDate, setFilterStartDate, setFilterEndDate]);
 
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
-        let newData = [...allData]; let newUnidentified = [...unidentifiedRows];
+        let newData = [...allData]; 
+        let newUnidentified = [...unidentifiedRows];
         if (newPoint.address) { manualUpdateTimestamps.current.set(normalizeAddress(newPoint.address), Date.now()); }
         
-        if (typeof originalIndex === 'number') {
+        // 1. Try to update EXISTING client in the active dataset first (Priority)
+        // This handles cases where we are updating coordinates for a client that was JUST moved from unidentified.
+        let itemFoundAndUpdated = false;
+
+        newData = newData.map(group => {
+            const clientIndex = group.clients.findIndex(c => c.key === oldKey);
+            if (clientIndex !== -1) { 
+                itemFoundAndUpdated = true;
+                const oldClient = group.clients[clientIndex];
+                // Preserve monthlyFact if newPoint doesn't have it (e.g. from editor)
+                const mergedClient = { 
+                    ...newPoint, 
+                    monthlyFact: newPoint.monthlyFact || oldClient.monthlyFact, 
+                    dailyFact: newPoint.dailyFact || oldClient.dailyFact,
+                    fact: newPoint.fact || oldClient.fact 
+                };
+                const updatedClients = [...group.clients]; 
+                updatedClients[clientIndex] = mergedClient; 
+                return { ...group, clients: updatedClients }; 
+            }
+            return group;
+        });
+
+        // 2. If NOT found in active data, it means it's a fresh migration from Unidentified Rows
+        if (!itemFoundAndUpdated && typeof originalIndex === 'number') {
             const rowIndex = newUnidentified.findIndex(r => r.originalIndex === originalIndex);
-            if (rowIndex !== -1) newUnidentified.splice(rowIndex, 1);
+            if (rowIndex !== -1) {
+                newUnidentified.splice(rowIndex, 1); // REMOVES from unidentified list
+            }
+            
             const groupKey = `${newPoint.region}-${newPoint.rm}-${newPoint.brand}-${newPoint.packaging}`.toLowerCase();
             const existingGroupIndex = newData.findIndex(g => g.key === groupKey);
+            
             if (existingGroupIndex !== -1) {
                 // Manually merge clients, normalization will fix sums
                 const updatedClients = [...newData[existingGroupIndex].clients, newPoint];
                 newData[existingGroupIndex] = { ...newData[existingGroupIndex], clients: updatedClients };
             } else {
                 // New group creation
-                newData.push({ __rowId: `row_${Date.now()}`, key: groupKey, rm: newPoint.rm, region: newPoint.region, city: newPoint.city, brand: newPoint.brand, packaging: newPoint.packaging, clientName: `${newPoint.region}: ${newPoint.brand}`, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0, clients: [newPoint] });
+                newData.push({ 
+                    __rowId: `row_${Date.now()}`, 
+                    key: groupKey, 
+                    rm: newPoint.rm, 
+                    region: newPoint.region, 
+                    city: newPoint.city, 
+                    brand: newPoint.brand, 
+                    packaging: newPoint.packaging, 
+                    clientName: `${newPoint.region}: ${newPoint.brand}`, 
+                    fact: 0, 
+                    potential: 0, 
+                    growthPotential: 0, 
+                    growthPercentage: 0, 
+                    clients: [newPoint] 
+                } as any);
             }
-        } else {
-            newData = newData.map(group => {
-                const clientIndex = group.clients.findIndex(c => c.key === oldKey);
-                if (clientIndex !== -1) { 
-                    const oldClient = group.clients[clientIndex];
-                    // Preserve monthlyFact if newPoint doesn't have it (e.g. from editor)
-                    const mergedClient = { ...newPoint, monthlyFact: newPoint.monthlyFact || oldClient.monthlyFact, fact: newPoint.fact || oldClient.fact };
-                    const updatedClients = [...group.clients]; 
-                    updatedClients[clientIndex] = mergedClient; 
-                    return { ...group, clients: updatedClients }; 
-                }
-                return group;
-            });
         }
-        if (editingClient && (editingClient as MapPoint).key === oldKey) { setEditingClient(prev => prev ? ({ ...prev, ...newPoint }) : null); }
+
+        // Update Editor State if open
+        if (editingClient && (editingClient as MapPoint).key === oldKey) { 
+            setEditingClient(prev => prev ? ({ ...prev, ...newPoint }) : null); 
+        }
         
         // --- NO NORMALIZATION HERE: Preserve raw state for view logic ---
         setAllData(newData); 
