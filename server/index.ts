@@ -205,4 +205,25 @@ app.get('*', (req: any, res: any) => {
 app.listen(PORT, () => {
     console.log(`[Server] Running on port ${PORT}`);
     console.log(`[Server] Health Check: OK`);
+
+    // --- SELF-PING MECHANISM FOR RENDER ---
+    // Prevent server from sleeping by pinging itself every 5 minutes
+    const SELF_PING_INTERVAL = 300000; // 5 minutes
+    const pingUrl = `http://localhost:${PORT}/api/keep-alive`;
+
+    console.log(`[Server] Starting self-ping loop to ${pingUrl} every 5 minutes...`);
+    
+    setInterval(() => {
+        fetch(pingUrl)
+            .then(res => {
+                if (res.ok) {
+                    // console.debug(`[Self-Ping] Success: ${res.status}`); // Uncomment for verbose logs
+                } else {
+                    console.warn(`[Self-Ping] Warning: Received status ${res.status}`);
+                }
+            })
+            .catch(err => {
+                console.error(`[Self-Ping] Error: ${err.message}`);
+            });
+    }, SELF_PING_INTERVAL);
 });

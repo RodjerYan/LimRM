@@ -115,6 +115,7 @@ const AppContent: React.FC = () => {
         return () => window.removeEventListener("keydown", onKey);
     }, []);
 
+    // --- KEEP ALIVE MECHANISM ---
     useEffect(() => {
         const pingServer = () => {
             fetch('/api/keep-alive', { method: 'GET', cache: 'no-store' })
@@ -124,7 +125,8 @@ const AppContent: React.FC = () => {
                 .catch(e => console.error('💓 [Keep-Alive] Ping failed:', e));
         };
         pingServer();
-        const intervalId = setInterval(pingServer, 840000); 
+        // Ping every 5 minutes (300000ms) to prevent Render sleep (15 min timeout)
+        const intervalId = setInterval(pingServer, 300000); 
         return () => clearInterval(intervalId);
     }, []);
 
