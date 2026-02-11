@@ -210,7 +210,9 @@ export type WorkerInputChunk = {
         rawData: any[]; // Changed from any[][] to any[] to support Array of Objects
         isFirstChunk: boolean;
         fileName?: string;
-        isObjectMode?: boolean; // NEW: Indicates rawData is array of objects, skip header mapping
+        // NEW: Discriminator for processing logic
+        objectKind?: 'POINT_SNAPSHOT' | 'RAW_ROWS'; 
+        isObjectMode?: boolean; // Legacy/Backup flag
     };
 };
 

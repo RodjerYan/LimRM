@@ -317,29 +317,44 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                     const firstRow = newRows[0];
 
                                     // Snapshot: Object with 'clients' property that IS an array
-                                    const isSnapshot = 
+                                    const isGroupSnapshot = 
                                         firstRow &&
                                         typeof firstRow === 'object' && 
                                         !Array.isArray(firstRow) && 
                                         Array.isArray((firstRow as any).clients);
 
+                                    // Point Snapshot: Array of objects that are NOT groups (no 'clients'), but have address/name
+                                    const isPointSnapshot =
+                                        firstRow &&
+                                        !isGroupSnapshot &&
+                                        typeof firstRow === 'object' &&
+                                        !Array.isArray(firstRow) &&
+                                        ('address' in firstRow) && 
+                                        ('name' in firstRow);
+
                                     // Raw Array: Array of values (Excel row)
                                     const isRawArray = Array.isArray(firstRow);
-
-                                    // Object Raw: Array of objects (key-value) but NOT snapshot
-                                    // Logic: It is an object, not an array, and NOT a snapshot structure
-                                    const isObjectRaw = 
-                                        firstRow && 
-                                        typeof firstRow === 'object' && 
-                                        !Array.isArray(firstRow) && 
-                                        !isSnapshot;
-
-                                    console.log(`Processing chunk ${item.file.name}: ${newRows.length} rows (${isSnapshot ? 'Snapshot' : isRawArray ? 'Raw' : isObjectRaw ? 'ObjectRaw' : 'Unknown'})`);
                                     
-                                    if (isSnapshot) {
+                                    // Object Raw: Array of objects (JSON export)
+                                    const isObjectRaw = !isGroupSnapshot && !isPointSnapshot && typeof firstRow === 'object' && !Array.isArray(firstRow);
+
+                                    console.log(`Processing chunk ${item.file.name}: ${newRows.length} rows (${isGroupSnapshot ? 'GroupSnapshot' : isPointSnapshot ? 'PointSnapshot' : isRawArray ? 'Raw' : isObjectRaw ? 'ObjectRaw' : 'Unknown'})`);
+                                    
+                                    if (isGroupSnapshot) {
                                         worker.postMessage({
                                             type: 'RESTORE_CHUNK',
                                             payload: { chunkData: newRows }
+                                        });
+                                    } else if (isPointSnapshot) {
+                                        // This handles the "flat list of points" format
+                                        console.log(`[Worker] Dispatching PointSnapshot chunk ${item.file.name}`);
+                                        worker.postMessage({
+                                            type: 'PROCESS_CHUNK',
+                                            payload: {
+                                                rawData: newRows,
+                                                isFirstChunk: item.index === 0,
+                                                objectKind: 'POINT_SNAPSHOT'
+                                            }
                                         });
                                     } else if (isRawArray) {
                                         worker.postMessage({
@@ -350,7 +365,7 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                             }
                                         });
                                     } else if (isObjectRaw) {
-                                        // HANDLE ARRAY OF OBJECTS (JSON export)
+                                        // HANDLE ARRAY OF OBJECTS (JSON export of sales lines)
                                         console.log(`[Worker] Dispatching ObjectRaw chunk ${item.file.name}`);
                                         worker.postMessage({
                                             type: 'PROCESS_CHUNK',

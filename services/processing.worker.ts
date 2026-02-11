@@ -354,10 +354,105 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
     }
 }
 
-function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName?: string, isObjectMode?: boolean }, postMessage: PostMessageFn) {
-    const { rawData, isFirstChunk, isObjectMode } = payload;
+function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName?: string, isObjectMode?: boolean, objectKind?: 'POINT_SNAPSHOT' | 'RAW_ROWS' }, postMessage: PostMessageFn) {
+    const { rawData, isFirstChunk, isObjectMode, objectKind } = payload;
     if (!rawData || rawData.length === 0) return;
     
+    // --- SPECIAL HANDLING FOR FLAT POINT SNAPSHOTS ---
+    if (objectKind === 'POINT_SNAPSHOT') {
+        const normCoord = (v: any): number | undefined => {
+            if (v === null || v === undefined) return undefined;
+            if (typeof v === 'string' && v.toLowerCase().includes('не найден')) return undefined;
+            const n = parseCleanFloat(v);
+            return (n !== 0) ? n : undefined;
+        };
+
+        const parseNum = (v: any): number => {
+            if (!v) return 0;
+            return parseCleanFloat(v);
+        };
+
+        for (const p of rawData) {
+            state_seenRowsCount++;
+            state_processedRowsCount++;
+
+            // Extract basic fields
+            const region = String(p.region ?? 'Регион не определен');
+            const rm = String(p.rm ?? 'Unknown_RM');
+            const brand = String(p.brand ?? 'Без бренда');
+            const packaging = String(p.packaging ?? 'Не указана'); 
+            const type = String(p.type ?? detectChannelByName(p.name || ''));
+            const city = String(p.city ?? 'Город не определен');
+
+            const groupKey = `${region}-${rm}-${brand}-${packaging}`.toLowerCase();
+
+            // Ensure group exists
+            if (!state_aggregatedData[groupKey]) {
+                state_aggregatedData[groupKey] = {
+                    __rowId: generateRowId(),
+                    key: groupKey, 
+                    clientName: `${region}: ${brand}`, 
+                    brand: brand, 
+                    packaging: packaging, 
+                    rm, 
+                    city: city, 
+                    region: region, 
+                    fact: 0,
+                    monthlyFact: {},
+                    dailyFact: {},
+                    potential: 0, 
+                    growthPotential: 0, 
+                    growthPercentage: 0, 
+                    clients: new Map(),
+                };
+            }
+
+            // Client data
+            const addrKey = String(p.key || p.address || '').trim(); // Fallback to address if key missing
+            if (!addrKey) continue;
+
+            const lat = normCoord(p.lat);
+            const lon = normCoord(p.lng ?? p.lon); // Handle lng/lon variance
+            const fact = parseNum(p.fact);
+
+            // Update Group Totals
+            const group = state_aggregatedData[groupKey];
+            group.fact += fact;
+
+            // Add client to map
+            group.clients.set(addrKey, {
+                key: addrKey,
+                name: String(p.name ?? 'ТТ'),
+                address: String(p.address ?? ''),
+                city,
+                region,
+                rm,
+                brand,
+                packaging,
+                type,
+                lat,
+                lon,
+                fact,
+                status: 'match',
+                originalRow: p,
+                monthlyFact: p.monthlyFact || {},
+                dailyFact: p.dailyFact || {},
+                abcCategory: 'C' // Will be re-calculated
+            });
+            
+            // Add to unique map for visualization
+            if (!state_uniquePlottableClients.has(addrKey)) {
+                state_uniquePlottableClients.set(addrKey, group.clients.get(addrKey)!);
+            }
+        }
+        
+        // Skip standard processing for this chunk
+        const currentProgress = Math.min(98, 10 + (state_seenRowsCount / 3500000) * 85); 
+        postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая обработка: ${state_processedRowsCount.toLocaleString()}...`, totalProcessed: state_processedRowsCount } });
+        return;
+    }
+    
+    // --- STANDARD PROCESSING (Raw Rows) ---
     let jsonData: any[] = [];
     let headerOffset = 0;
 
