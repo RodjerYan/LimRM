@@ -55,8 +55,6 @@ export const useAnalytics = (
             }
         } else if (rowHasMonthly) {
             // Fallback for legacy data (monthly only)
-            // Note: This logic remains "monthly precise", so selecting 11 days might still show full month if data is monthly.
-            // But if worker creates dailyFact, we won't hit this often.
             const startMonth = fStart ? fStart.slice(0, 7) : null;
             const endMonth = fEnd ? fEnd.slice(0, 7) : null;
             
@@ -73,7 +71,10 @@ export const useAnalytics = (
                 newRowFact += (val as number) || 0;
             }
         } else {
-            // No time data + Filter Active = 0 Fact
+            // CRITICAL FIX: If snapshot lacks ANY time data (flat snapshot), 
+            // we assume the total fact applies to the current context 
+            // instead of zeroing it out. This prevents data disappearance.
+            newRowFact = row.fact;
         }
 
         // 2) Clients Filtering
@@ -103,6 +104,9 @@ export const useAnalytics = (
                     if (endMonth && mk > endMonth) continue;
                     clientSum += (v as number) || 0;
                 }
+            } else {
+                // Same fallback for clients: if no time data, preserve existing fact
+                clientSum = client.fact || 0;
             }
 
             return { ...client, fact: clientSum };
