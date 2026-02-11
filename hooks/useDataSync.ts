@@ -326,12 +326,13 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                     // Raw Array: Array of values (Excel row)
                                     const isRawArray = Array.isArray(firstRow);
 
-                                    // Object Raw: Array of objects (key-value) but NOT snapshot (no clients array)
+                                    // Object Raw: Array of objects (key-value) but NOT snapshot
+                                    // Logic: It is an object, not an array, and NOT a snapshot structure
                                     const isObjectRaw = 
                                         firstRow && 
                                         typeof firstRow === 'object' && 
                                         !Array.isArray(firstRow) && 
-                                        !('clients' in firstRow);
+                                        !isSnapshot;
 
                                     console.log(`Processing chunk ${item.file.name}: ${newRows.length} rows (${isSnapshot ? 'Snapshot' : isRawArray ? 'Raw' : isObjectRaw ? 'ObjectRaw' : 'Unknown'})`);
                                     
@@ -350,6 +351,7 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                         });
                                     } else if (isObjectRaw) {
                                         // HANDLE ARRAY OF OBJECTS (JSON export)
+                                        console.log(`[Worker] Dispatching ObjectRaw chunk ${item.file.name}`);
                                         worker.postMessage({
                                             type: 'PROCESS_CHUNK',
                                             payload: {
