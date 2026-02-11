@@ -18,7 +18,6 @@ interface UnidentifiedRowsModalProps {
 }
 
 // --- Ultra-Robust Data Extractor ---
-// Цель: Показать пользователю ХОТЬ ЧТО-ТО, что есть в строке, если стандартные поля не найдены.
 const extractDisplayData = (row: UnidentifiedRow) => {
     const rawData = row.rowData || {};
     
@@ -27,7 +26,6 @@ const extractDisplayData = (row: UnidentifiedRow) => {
     let address = findAddressInRow(rawData) || findValueInRow(rawData, ['город', 'регион', 'city', 'region']);
 
     // 2. Если адрес пустой, берем ВСЕ значения из rawArray (если есть) или rowData
-    // Это гарантирует, что пользователь увидит текст из Excel, даже если заголовки "поехали"
     if (!address || address.length < 3 || address === '0' || address === 'undefined') {
         let valuesToJoin: any[] = [];
         
@@ -57,7 +55,7 @@ const extractDisplayData = (row: UnidentifiedRow) => {
 
     return {
         name: clientName,
-        address: address, // Теперь здесь всегда будет контент из ячеек
+        address: address, 
         raw: rawData
     };
 };
@@ -70,26 +68,26 @@ const UnidentifiedRowItem: React.FC<{
 }> = ({ data, index, style }) => {
     const row = data.rows[index];
     const { onEdit } = data;
-    const { name, address, raw } = extractDisplayData(row);
+    const { name, address } = extractDisplayData(row);
 
     return (
         <div style={style} 
              onClick={() => onEdit(row)}
-             className="flex items-center border-b border-gray-700/50 hover:bg-indigo-500/10 cursor-pointer transition-colors text-sm group"
+             className="flex items-center border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors text-sm group"
              title="Нажмите для ручного исправления"
         >
-            <div className="w-12 px-2 py-2 border-r border-gray-700/30 flex-shrink-0 text-gray-500 text-xs font-mono text-center">
+            <div className="w-12 px-2 py-2 border-r border-slate-100 flex-shrink-0 text-slate-400 text-xs font-mono text-center">
                 {index + 1}
             </div>
-            <div className="w-32 px-3 py-2 border-r border-gray-700/30 flex-shrink-0 font-bold text-indigo-300 truncate" title={row.rm}>
+            <div className="w-32 px-3 py-2 border-r border-slate-100 flex-shrink-0 font-bold text-indigo-600 truncate" title={row.rm}>
                 {row.rm || 'Не указан'}
             </div>
-            <div className="w-1/4 px-4 py-2 border-r border-gray-700/30 flex-shrink-0 truncate font-medium text-white" title={name}>
+            <div className="w-1/4 px-4 py-2 border-r border-slate-100 flex-shrink-0 truncate font-medium text-slate-900" title={name}>
                 {name}
             </div>
-            {/* Основное поле данных - показывает адрес ИЛИ сырые данные */}
-            <div className="flex-grow px-4 py-2 truncate text-gray-300 group-hover:text-white font-mono text-xs" title={address}>
-                <span className="text-gray-500 mr-2">📝</span>
+            {/* Основное поле данных */}
+            <div className="flex-grow px-4 py-2 truncate text-slate-600 group-hover:text-indigo-600 font-mono text-xs" title={address}>
+                <span className="text-slate-400 mr-2">📝</span>
                 {address}
             </div>
         </div>
@@ -106,12 +104,12 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Неопределенные адреса (${rows.length.toLocaleString()})`} maxWidth="max-w-[95vw]">
             <div className="flex flex-col h-[80vh]">
-                <div className="flex-shrink-0 space-y-4 mb-4 bg-gray-800/30 p-4 rounded-xl border border-gray-700">
+                <div className="flex-shrink-0 space-y-4 mb-4 bg-amber-50 p-4 rounded-xl border border-amber-200">
                     <div className="flex items-start gap-3">
-                        <div className="text-amber-400 mt-1"><WarningIcon /></div>
+                        <div className="text-amber-500 mt-1"><WarningIcon /></div>
                         <div>
-                            <h4 className="font-bold text-white text-sm">Требуется ручная привязка</h4>
-                            <p className="text-gray-400 text-sm mt-1 leading-relaxed">
+                            <h4 className="font-bold text-amber-800 text-sm">Требуется ручная привязка</h4>
+                            <p className="text-amber-700 text-xs mt-1 leading-relaxed">
                                 Ниже показано <strong>сырое содержимое</strong> строк (Raw Data), которые система не смогла распознать автоматически.
                                 Нажмите на строку, чтобы открыть форму и вручную ввести корректный адрес для поиска на карте.
                             </p>
@@ -120,14 +118,14 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
                 </div>
 
                 {rows.length === 0 ? (
-                    <div className="flex-grow flex items-center justify-center text-gray-500 flex-col gap-4">
-                        <div className="w-16 h-16 rounded-full bg-gray-800 flex items-center justify-center text-emerald-500 text-2xl">✔</div>
+                    <div className="flex-grow flex items-center justify-center text-slate-400 flex-col gap-4">
+                        <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-emerald-500 text-2xl">✔</div>
                         <p>Отличная работа! Все адреса по выбранному фильтру распознаны.</p>
                     </div>
                 ) : (
-                    <div className="flex-grow border border-gray-700 rounded-lg overflow-hidden flex flex-col bg-gray-900/30">
+                    <div className="flex-grow border border-slate-200 rounded-lg overflow-hidden flex flex-col bg-white">
                         {/* Header Row */}
-                        <div className="flex items-center bg-gray-800/90 border-b border-gray-700 text-xs font-bold text-gray-400 uppercase py-3">
+                        <div className="flex items-center bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase py-3">
                             <div className="w-12 px-2 text-center flex-shrink-0">#</div>
                             <div className="w-32 px-3 flex-shrink-0">РМ</div>
                             <div className="w-1/4 px-4 flex-shrink-0">Клиент</div>
@@ -153,7 +151,7 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
                     </div>
                 )}
                 
-                <div className="mt-2 text-xs text-gray-600 text-right px-2">
+                <div className="mt-2 text-xs text-slate-500 text-right px-2">
                     <span>Всего строк: {rows.length}</span>
                 </div>
             </div>

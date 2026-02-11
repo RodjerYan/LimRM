@@ -455,6 +455,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                           'rounded-3xl border border-slate-200/70 bg-white/70 p-5',
                           'shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all hover:bg-white hover:shadow-[0_18px_50px_rgba(15,23,42,0.10)]',
                           props.onUnidentifiedClick ? 'cursor-pointer active:scale-[0.98]' : '',
+                          'flex flex-col justify-between h-full'
                         ].join(' ')}
                       >
                         <div className="flex items-start justify-between">
@@ -467,15 +468,16 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                             </div>
                           )}
                         </div>
+                        
+                        {/* Applied specific styling for the metric value */}
                         <div
-                          className={[
-                            'mt-2 t-metric',
-                            props.unidentifiedCount > 0 ? 'text-amber-600' : 'text-emerald-600',
-                          ].join(' ')}
+                            className={`mt-1 font-semibold tabular-nums leading-none tracking-tight truncate ${props.unidentifiedCount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}
+                            style={{ fontSize: "clamp(18px, 1.8vw, 24px)" }}
                         >
                           {props.unidentifiedCount.toLocaleString('ru-RU')}
                         </div>
-                        <div className="mt-2 text-[11px] font-semibold uppercase tracking-[0.08em]">
+
+                        <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.08em]">
                           {props.unidentifiedCount > 0 ? (
                             <span className="text-amber-700">⚠️ Ошибка разбора</span>
                           ) : (

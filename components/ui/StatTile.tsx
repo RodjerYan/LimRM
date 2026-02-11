@@ -34,10 +34,10 @@ export function StatTile({
         {label}
       </div>
       
-      {/* Smart typography: clamps size between 20px and 28px depending on viewport, prevents overflow */}
+      {/* Smart typography: clamps size to prevent overflow. Reduced max size. */}
       <div 
         className="mt-1 font-semibold text-slate-900 tabular-nums leading-none tracking-tight truncate"
-        style={{ fontSize: "clamp(20px, 2.2vw, 28px)" }}
+        style={{ fontSize: "clamp(18px, 1.8vw, 24px)" }}
         title={value}
       >
         {value}
