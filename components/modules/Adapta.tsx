@@ -90,22 +90,39 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
   const healthTone = healthScore > 80 ? 'lime' : healthScore > 50 ? 'blue' : 'red';
 
-  // Helper for safe date normalization (Robust Regex Version with Range Check)
+  // Helper for safe date normalization (Universal Parser)
   const toMonthKey = (raw?: string | null): string | null => {
     if (!raw) return null;
     // Replace separators dots/slashes with dashes
     const s = String(raw).trim().replace(/[./]/g, '-');
-    // Match start with YYYY-M or YYYY-MM
-    const match = s.match(/^(\d{4})-(\d{1,2})/);
-    if (match) {
-        const year = match[1];
-        const month = parseInt(match[2], 10);
-        
-        // Strict month validation: reject invalid months like 13, 99, 0
-        if (month < 1 || month > 12) return null;
 
+    // 1) YYYY-MM / YYYY-M / YYYY-MM-DD
+    let m = s.match(/^(\d{4})-(\d{1,2})/);
+    if (m) {
+        const year = m[1];
+        const month = parseInt(m[2], 10);
+        if (month < 1 || month > 12) return null;
         return `${year}-${String(month).padStart(2, '0')}`;
     }
+
+    // 2) DD-MM-YYYY (take month and year)
+    m = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
+    if (m) {
+        const month = parseInt(m[2], 10);
+        const year = m[3];
+        if (month < 1 || month > 12) return null;
+        return `${year}-${String(month).padStart(2, '0')}`;
+    }
+
+    // 3) MM-YYYY
+    m = s.match(/^(\d{1,2})-(\d{4})$/);
+    if (m) {
+        const month = parseInt(m[1], 10);
+        const year = m[2];
+        if (month < 1 || month > 12) return null;
+        return `${year}-${String(month).padStart(2, '0')}`;
+    }
+
     return null;
   };
 
