@@ -90,6 +90,14 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
   const healthTone = healthScore > 80 ? 'lime' : healthScore > 50 ? 'blue' : 'red';
 
+  // Helper for safe date normalization
+  const toMonthKey = (raw?: string | null): string | null => {
+    if (!raw) return null;
+    const s = String(raw).trim().replace(/\./g, '-').replace(/\//g, '-');
+    const m = s.slice(0, 7);
+    return /^\d{4}-\d{2}$/.test(m) ? m : null;
+  };
+
   // Helper to get client fact for the selected period
   const getClientFact = (client: MapPoint) => {
     // If client has detailed monthly data, we MUST use it to respect the filter
@@ -103,11 +111,13 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       Object.entries(client.monthlyFact).forEach(([date, val]) => {
         if (date === 'unknown') return;
 
-        // Compare YYYY-MM strings
-        if (filterStart && date < filterStart) return;
-        if (filterEnd && date > filterEnd) return;
+        const mk = toMonthKey(date);
+        
+        // Strict filter: only if we successfully parsed the month key
+        if (filterStart && mk && mk < filterStart) return;
+        if (filterEnd && mk && mk > filterEnd) return;
 
-        sum += val;
+        sum += (val as number) || 0;
       });
       return sum;
     }
@@ -432,15 +442,15 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                       <StatTile
-                        label="Обработано записей"
+                        label={props.processingState.isProcessing ? "Обработано строк" : "Клиентов в периоде"}
                         value={rowsToDisplay}
                         accent="neutral"
                         footnote={
                           props.processingState.isProcessing
                             ? 'Чтение снимка…'
                             : props.startDate || props.endDate
-                            ? 'Отфильтровано'
-                            : 'Всего в системе'
+                            ? 'С продажами > 0'
+                            : 'Всего в выборке'
                         }
                       />
                       <StatTile
