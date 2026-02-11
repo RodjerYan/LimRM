@@ -37,6 +37,10 @@ let state_processedRowsCount = 0;
 let state_lastEmitCount = 0;
 let state_lastCheckpointCount = 0;
 
+// Filter State
+let state_filterStart: string | null = null; // YYYY-MM
+let state_filterEnd: string | null = null;   // YYYY-MM
+
 const CHECKPOINT_THRESHOLD = 50000; 
 const UI_UPDATE_THRESHOLD = 20000;
 
@@ -142,12 +146,14 @@ function performIncrementalAbc() {
     });
 }
 
-function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, restoredUnidentified }: { 
+function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, restoredUnidentified, startDate, endDate }: { 
     okbData: OkbDataRow[], 
     cacheData: CoordsCache, 
     totalRowsProcessed?: number,
     restoredData?: AggregatedDataRow[],
-    restoredUnidentified?: UnidentifiedRow[]
+    restoredUnidentified?: UnidentifiedRow[],
+    startDate?: string,
+    endDate?: string
 }, postMessage: PostMessageFn) {
     state_aggregatedData = {};
     state_uniquePlottableClients = new Map();
@@ -160,7 +166,11 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     state_okbByRegion = {};
     state_okbRegionCounts = {};
     
-    console.log(`[Worker] Init Stream. Full Load.`);
+    // Apply Filters
+    state_filterStart = startDate ? String(startDate).slice(0, 7) : null;
+    state_filterEnd = endDate ? String(endDate).slice(0, 7) : null;
+    
+    console.log(`[Worker] Init Stream. Full Load. Filter: ${state_filterStart} - ${state_filterEnd}`);
     
     if (okbData) {
         okbData.forEach(row => {
@@ -354,10 +364,14 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         
         const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
         let dateKey = parseDateKey(dateRaw);
-        
-        // --- NO DATE FILTERING IN WORKER ---
-        // We accept all rows. Date filtering happens in the UI.
         const finalDateKey = dateKey || 'unknown';
+
+        // --- STRICT DATE FILTERING ---
+        // Exclude rows outside the selected range
+        if (finalDateKey !== 'unknown') {
+            if (state_filterStart && finalDateKey < state_filterStart) continue;
+            if (state_filterEnd && finalDateKey > state_filterEnd) continue;
+        }
         
         const rawAddr = findAddressInRow(row);
         if (!rawAddr) continue;
@@ -416,7 +430,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                     brand: brand, 
                     packaging: packaging, 
                     rm, 
-                    city: parsed.city,
+                    city: parsed.city, 
                     region: reg, 
                     fact: 0,
                     monthlyFact: {},
