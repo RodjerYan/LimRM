@@ -22,8 +22,8 @@ export function StatTile({
   // Determine if value is numeric or text to adjust sizing/truncation behavior
   const isMostlyNumeric = useMemo(() => {
     const v = (value || "").trim();
-    // Allow digits, spaces, dots, commas, plus/minus, %, slashes
-    return /^[\d\s.,+-/%]+$/.test(v);
+    // Allow digits, spaces, dots, commas, plus/minus, %, slashes AND colons (for time)
+    return /^[\d\s.,+-/%:]+$/.test(v);
   }, [value]);
 
   const valueStyle = useMemo<React.CSSProperties>(() => {
@@ -50,6 +50,7 @@ export function StatTile({
         {label}
       </div>
       
+      {/* Remove truncate for numbers to avoid "11 3...", use whitespace-nowrap instead */}
       <div 
         className={[
           "mt-1 font-semibold text-slate-900 leading-none tracking-tight",
