@@ -14,7 +14,7 @@ interface FileUploadProps {
   okbStatus: OkbStatus | null;
   disabled: boolean;
 
-  // Date Filtering
+  // Date Filtering (Legacy props kept for interface compatibility, but UI removed)
   loadStartDate?: string;
   loadEndDate?: string;
   onLoadStartDateChange?: (date: string) => void;
@@ -26,10 +26,6 @@ const FileUpload: React.FC<FileUploadProps> = ({
   onForceUpdate,
   okbStatus,
   disabled,
-  loadStartDate,
-  loadEndDate,
-  onLoadStartDateChange,
-  onLoadEndDateChange,
 }) => {
   const { isProcessing, progress, message, fileName, backgroundMessage, startTime } = processingState;
   const isBlocked = disabled || !okbStatus || okbStatus.status !== 'ready';
@@ -107,32 +103,6 @@ const FileUpload: React.FC<FileUploadProps> = ({
               </div>
             ) : (
               <div className="relative z-10 flex flex-col gap-5">
-                {/* Date Filters */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-extrabold mb-2">
-                      С даты
-                    </label>
-                    <input
-                      type="date"
-                      value={loadStartDate || ''}
-                      onChange={(e) => onLoadStartDateChange?.(e.target.value)}
-                      className="w-full rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-extrabold mb-2">
-                      По дату
-                    </label>
-                    <input
-                      type="date"
-                      value={loadEndDate || ''}
-                      onChange={(e) => onLoadEndDateChange?.(e.target.value)}
-                      className="w-full rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition"
-                    />
-                  </div>
-                </div>
-
                 {/* Description row */}
                 <div className="flex items-center gap-4 rounded-3xl border border-slate-200/70 bg-white/70 p-4">
                   <div className="w-11 h-11 rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-700 flex items-center justify-center shadow-sm shrink-0">

@@ -499,53 +499,63 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             </Motion>
 
             <Motion delayMs={200}>
-                {/* NEW: Recharts based Channel Chart */}
-                <div data-tour="channels" className="h-full">
-                    {channelStats.length > 0 ? (
-                        <ChartCard
-                            title="Структура каналов сбыта"
-                            subtitle="Распределение уникальных торговых точек по каналам"
-                        >
-                            <ChannelBarChart data={channelStats.map(s => ({ name: s.name, count: s.count, volumeTons: s.volumeTons }))} />
-                        </ChartCard>
-                    ) : (
-                        <Card>
-                            <CardHeader
-                                title="Каналы продаж"
-                                subtitle="Распределение уникальных адресов по типам"
-                                right={<Chip tone="neutral">Нет данных</Chip>}
-                            />
-                            <CardBody>
-                                <EmptyState
-                                    kind="empty"
-                                    tone="neutral"
-                                    title="Нет данных для каналов"
-                                    description="Сначала синхронизируйте Cloud Snapshots (Шаг 2)."
-                                />
-                            </CardBody>
-                        </Card>
-                    )}
-                </div>
-            </Motion>
+              <div data-tour="channels">
+                {channelStats.length > 0 ? (
+                  <ChartCard
+                    title="Структура каналов сбыта"
+                    subtitle="Распределение уникальных торговых точек по каналам"
+                  >
+                    <div className="flex flex-col gap-4">
+                      {/* Chart Area - fixed height */}
+                      <div className="h-[320px] w-full">
+                        <ChannelBarChart
+                          data={channelStats.map(s => ({
+                            name: s.name,
+                            count: s.count,
+                            volumeTons: s.volumeTons,
+                          }))}
+                        />
+                      </div>
 
-            {/* List View of Channels (Keep legacy for detailed selection) */}
-            {channelStats.length > 0 && (
-                <Motion delayMs={220}>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {channelStats.slice(0, 6).map((stat, idx) => (
-                            <button
-                                key={stat.name}
-                                onClick={() => setSelectedChannel(stat.name)}
-                                className="text-left rounded-2xl border border-slate-200/70 bg-white/70 p-4 hover:bg-white hover:shadow-[0_14px_30px_rgba(15,23,42,0.06)] active:scale-[0.98] transition-all"
-                            >
-                                <div className="t-label mb-1">{stat.name}</div>
-                                <div className="text-xl font-semibold text-slate-900 tabular-nums tracking-tight">{stat.count.toLocaleString('ru-RU')}</div>
-                                <div className="t-muted mt-1">{stat.percentage.toFixed(1)}% от базы</div>
-                            </button>
+                      {/* List View inside the card */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 border-t border-slate-100 pt-6">
+                        {channelStats.slice(0, 6).map((stat) => (
+                          <button
+                            key={stat.name}
+                            onClick={() => setSelectedChannel(stat.name)}
+                            className="text-left rounded-2xl border border-slate-200/70 bg-white/50 p-4 hover:bg-white hover:shadow-[0_14px_30px_rgba(15,23,42,0.06)] active:scale-[0.98] transition-all"
+                          >
+                            <div className="t-label mb-1">{stat.name}</div>
+                            <div className="text-xl font-semibold text-slate-900 tabular-nums tracking-tight">
+                              {stat.count.toLocaleString('ru-RU')}
+                            </div>
+                            <div className="t-muted mt-1">
+                              {stat.percentage.toFixed(1)}% от базы
+                            </div>
+                          </button>
                         ))}
+                      </div>
                     </div>
-                </Motion>
-            )}
+                  </ChartCard>
+                ) : (
+                  <Card>
+                    <CardHeader
+                      title="Каналы продаж"
+                      subtitle="Распределение уникальных адресов по типам"
+                      right={<Chip tone="neutral">Нет данных</Chip>}
+                    />
+                    <CardBody>
+                      <EmptyState
+                        kind="empty"
+                        tone="neutral"
+                        title="Нет данных для каналов"
+                        description="Сначала синхронизируйте Cloud Snapshots (Шаг 2)."
+                      />
+                    </CardBody>
+                  </Card>
+                )}
+              </div>
+            </Motion>
 
             <Motion delayMs={250}>
               {/* Info callout */}
