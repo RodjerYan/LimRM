@@ -354,40 +354,62 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
     }
 }
 
-function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileName?: string }, postMessage: PostMessageFn) {
-    const { rawData, isFirstChunk } = payload;
+function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName?: string, isObjectMode?: boolean }, postMessage: PostMessageFn) {
+    const { rawData, isFirstChunk, isObjectMode } = payload;
     if (!rawData || rawData.length === 0) return;
     
     let jsonData: any[] = [];
     let headerOffset = 0;
 
-    if (isFirstChunk || state_headers.length === 0) {
-        const hRow = rawData.findIndex(row => Array.isArray(row) && row.some(cell => String(cell || '').toLowerCase().includes('адрес')));
-        const actualHRow = hRow === -1 ? 0 : hRow;
-        if (!rawData[actualHRow]) return;
+    if (isObjectMode) {
+        // Direct object array (already parsed JSON)
+        jsonData = rawData;
 
-        headerOffset = actualHRow + 1;
-        state_headers = rawData[actualHRow].map(h => String(h || '').trim());
-        jsonData = rawData.slice(actualHRow + 1).map(row => {
-            const obj: any = {};
-            state_headers.forEach((h, i) => { if (h) obj[h] = row[i]; });
-            return obj;
-        });
-        
-        const normHeaders = state_headers.map(h => ({ original: h, norm: normalizeHeaderKey(h) }));
-        const clientHeader = normHeaders.find(h => h.norm.includes('названиеклиента') || h.norm.includes('наименованиеклиента') || h.norm.includes('клиент') || h.norm.includes('контрагент') || h.norm.includes('партнер'));
-        
-        if (clientHeader) state_clientNameHeader = clientHeader.original;
-        else {
-            const nameHeader = normHeaders.find(h => h.norm.includes('наименование') && !h.norm.includes('товар') && !h.norm.includes('продук'));
-            state_clientNameHeader = nameHeader ? nameHeader.original : undefined;
+        // Try to infer headers from the first valid object for robust key lookup later
+        if (jsonData.length > 0 && state_headers.length === 0) {
+             const firstObj = jsonData[0];
+             if (typeof firstObj === 'object') {
+                 state_headers = Object.keys(firstObj);
+                 const normHeaders = state_headers.map(h => ({ original: h, norm: normalizeHeaderKey(h) }));
+                 const clientHeader = normHeaders.find(h => h.norm.includes('названиеклиента') || h.norm.includes('наименованиеклиента') || h.norm.includes('клиент') || h.norm.includes('контрагент') || h.norm.includes('партнер'));
+                 
+                 if (clientHeader) state_clientNameHeader = clientHeader.original;
+                 else {
+                     const nameHeader = normHeaders.find(h => h.norm.includes('наименование') && !h.norm.includes('товар') && !h.norm.includes('продук'));
+                     state_clientNameHeader = nameHeader ? nameHeader.original : undefined;
+                 }
+             }
         }
     } else {
-        jsonData = rawData.map(row => {
-            const obj: any = {};
-            state_headers.forEach((h, i) => { if (h) obj[h] = row[i]; });
-            return obj;
-        });
+        // Standard Array-of-Arrays (Excel Row) processing
+        if (isFirstChunk || state_headers.length === 0) {
+            const hRow = rawData.findIndex(row => Array.isArray(row) && row.some((cell: any) => String(cell || '').toLowerCase().includes('адрес')));
+            const actualHRow = hRow === -1 ? 0 : hRow;
+            if (!rawData[actualHRow]) return;
+
+            headerOffset = actualHRow + 1;
+            state_headers = rawData[actualHRow].map((h: any) => String(h || '').trim());
+            jsonData = rawData.slice(actualHRow + 1).map(row => {
+                const obj: any = {};
+                state_headers.forEach((h, i) => { if (h) obj[h] = row[i]; });
+                return obj;
+            });
+            
+            const normHeaders = state_headers.map(h => ({ original: h, norm: normalizeHeaderKey(h) }));
+            const clientHeader = normHeaders.find(h => h.norm.includes('названиеклиента') || h.norm.includes('наименованиеклиента') || h.norm.includes('клиент') || h.norm.includes('контрагент') || h.norm.includes('партнер'));
+            
+            if (clientHeader) state_clientNameHeader = clientHeader.original;
+            else {
+                const nameHeader = normHeaders.find(h => h.norm.includes('наименование') && !h.norm.includes('товар') && !h.norm.includes('продук'));
+                state_clientNameHeader = nameHeader ? nameHeader.original : undefined;
+            }
+        } else {
+            jsonData = rawData.map(row => {
+                const obj: any = {};
+                state_headers.forEach((h, i) => { if (h) obj[h] = row[i]; });
+                return obj;
+            });
+        }
     }
 
     for (let i = 0; i < jsonData.length; i++) {
@@ -436,7 +458,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         if (!channel || channel.length < 2) channel = detectChannelByName(clientName);
 
         const rawBrand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
-        const brands = rawBrand.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
+        const brands = rawBrand.split(/[,;|\r\n]+/).map((b: string) => b.trim()).filter((b: string) => b.length > 0);
         const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
         
         const isCityFound = parsed.city !== 'Город не определен';
@@ -444,9 +466,9 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const isRegionFound = reg !== 'Регион не определен';
 
         if (!isCityFound && !isRegionFound && !cacheEntry) {
-            const rawRowIndex = isFirstChunk ? (i + headerOffset) : i;
-            const rawArray = rawData[rawRowIndex] || [];
-            state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_seenRowsCount, rawArray: rawArray });
+            // For Object Mode, rawData[i] IS the object. For Array mode, rawData[i] is array, we might need headerOffset.
+            // Simplified: Store the computed object 'row' which is standardized.
+            state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_seenRowsCount, rawArray: isObjectMode ? [] : (rawData[i + headerOffset] || []) });
         }
 
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);

@@ -301,7 +301,6 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                   console.log(`[DEBUG ${item.file.name}] chunk keys:`, Object.keys(chunkData));
                                   console.log(`[DEBUG ${item.file.name}] typeof rows:`, typeof chunkData.rows, 'isArray:', Array.isArray(chunkData.rows));
                                   console.log(`[DEBUG ${item.file.name}] typeof aggregatedData:`, typeof chunkData.aggregatedData, 'isArray:', Array.isArray(chunkData.aggregatedData));
-                                  console.log(`[DEBUG ${item.file.name}] rows snippet:`, chunkData.rows ? JSON.stringify(chunkData.rows).slice(0, 200) : 'no rows');
                                 }
                                 
                                 let newRows: any[] = [];
@@ -314,11 +313,9 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                     } else {
                                         console.warn(`Empty chunk skipped: ${item.file.name}`);
                                     }
-                                    // Chunk is technically processed (skipped), continue loop
                                 } else {
                                     const firstRow = newRows[0];
 
-                                    // STRICT TYPE GUARDS
                                     // Snapshot: Object with 'clients' property that IS an array
                                     const isSnapshot = 
                                         firstRow &&
@@ -329,7 +326,14 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                     // Raw Array: Array of values (Excel row)
                                     const isRawArray = Array.isArray(firstRow);
 
-                                    console.log(`Processing chunk ${item.file.name}: ${newRows.length} rows (${isSnapshot ? 'Snapshot' : isRawArray ? 'Raw' : 'Unknown/ObjectRaw'})`);
+                                    // Object Raw: Array of objects (key-value) but NOT snapshot (no clients array)
+                                    const isObjectRaw = 
+                                        firstRow && 
+                                        typeof firstRow === 'object' && 
+                                        !Array.isArray(firstRow) && 
+                                        !('clients' in firstRow);
+
+                                    console.log(`Processing chunk ${item.file.name}: ${newRows.length} rows (${isSnapshot ? 'Snapshot' : isRawArray ? 'Raw' : isObjectRaw ? 'ObjectRaw' : 'Unknown'})`);
                                     
                                     if (isSnapshot) {
                                         worker.postMessage({
@@ -344,9 +348,18 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                                 isFirstChunk: item.index === 0
                                             }
                                         });
+                                    } else if (isObjectRaw) {
+                                        // HANDLE ARRAY OF OBJECTS (JSON export)
+                                        worker.postMessage({
+                                            type: 'PROCESS_CHUNK',
+                                            payload: {
+                                                rawData: newRows,
+                                                isFirstChunk: item.index === 0,
+                                                isObjectMode: true // Flag to tell worker to skip array index mapping
+                                            }
+                                        });
                                     } else {
-                                        // PROTECT AGAINST WORKER CRASH: Array of Objects that are NOT snapshots
-                                        console.warn(`❌ SKIPPING chunk ${item.file.name} to avoid worker crash. Unknown format (Array of Objects?). First row:`, firstRow);
+                                        console.warn(`❌ SKIPPING chunk ${item.file.name} to avoid worker crash. Unknown format. First row:`, firstRow);
                                     }
                                 }
 

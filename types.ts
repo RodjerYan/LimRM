@@ -207,9 +207,10 @@ export type WorkerInputInit = {
 export type WorkerInputChunk = {
     type: 'PROCESS_CHUNK';
     payload: {
-        rawData: any[][];
+        rawData: any[]; // Changed from any[][] to any[] to support Array of Objects
         isFirstChunk: boolean;
         fileName?: string;
+        isObjectMode?: boolean; // NEW: Indicates rawData is array of objects, skip header mapping
     };
 };
 
@@ -241,7 +242,10 @@ export type WorkerMessage =
     | WorkerStreamChunk
     | WorkerStreamCheckpoint
     | WorkerStreamFinish
-    | WorkerInputFile; // Added here
+    | WorkerInputFile
+    | WorkerInputChunk
+    | WorkerInputInit
+    | WorkerInputFinalize;
 
 export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string; coordStatus?: string }[]>;
 
