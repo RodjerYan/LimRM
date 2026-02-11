@@ -469,10 +469,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                           )}
                         </div>
                         
-                        {/* Applied specific styling for the metric value */}
+                        {/* Improved styling for the metric value (using clamp 15-20px) */}
                         <div
-                            className={`mt-1 font-semibold tabular-nums leading-none tracking-tight truncate ${props.unidentifiedCount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}
-                            style={{ fontSize: "clamp(18px, 1.8vw, 24px)" }}
+                            className={`mt-1 font-semibold tabular-nums leading-none tracking-tight whitespace-nowrap ${props.unidentifiedCount > 0 ? 'text-amber-700' : 'text-emerald-700'}`}
+                            style={{ fontSize: "clamp(15px, 1.35vw, 20px)" }}
+                            title={props.unidentifiedCount.toLocaleString('ru-RU')}
                         >
                           {props.unidentifiedCount.toLocaleString('ru-RU')}
                         </div>
