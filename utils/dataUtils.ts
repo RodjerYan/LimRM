@@ -221,6 +221,31 @@ export function normalizeAddress(address: string | null | undefined, options: { 
     return parts.join(' ').trim();
 }
 
+/**
+ * Standardizes a string to YYYY-MM-DD format if possible.
+ */
+export const toDayKey = (raw?: string | null): string | null => {
+  if (!raw) return null;
+  const s = String(raw).trim();
+
+  // If already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  // Try parsing DD.MM.YYYY
+  const m = s.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})$/);
+  if (m) {
+      return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  }
+  
+  // Try converting Date object if passed as string (less common here)
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) {
+      return d.toISOString().split('T')[0];
+  }
+
+  return null;
+};
+
 // --- NORMALIZATION UTILS (Single Source of Truth) ---
 
 export const sumMonthlyInRange = (mf: Record<string, number> | undefined, startYM: string | null, endYM: string | null, strictUnknown = true): number => {
@@ -256,6 +281,7 @@ export const filterMonthlyMap = (mf: Record<string, number> | undefined, startYM
  * Safely handles missing monthlyFact for legacy or manual data by preserving total Fact if in doubt.
  */
 export const normalizeAggregatedToPeriod = (data: AggregatedDataRow[], startYM: string | null, endYM: string | null): AggregatedDataRow[] => {
+    // If no filter, return data as is
     if (!startYM && !endYM) return data;
 
     const out: AggregatedDataRow[] = [];
@@ -264,13 +290,30 @@ export const normalizeAggregatedToPeriod = (data: AggregatedDataRow[], startYM: 
         const clientsFiltered = (group.clients || []).map((c) => {
             let fact = 0;
             const hasMonthly = c.monthlyFact && Object.keys(c.monthlyFact).length > 0;
+            const hasDaily = c.dailyFact && Object.keys(c.dailyFact).length > 0;
             
-            if (hasMonthly) {
-                // Strict recalc if data is available
-                fact = sumMonthlyInRange(c.monthlyFact, startYM, endYM, true);
+            // Prefer Daily for precision
+            if (hasDaily) {
+                let dailySum = 0;
+                for (const [day, val] of Object.entries(c.dailyFact!)) {
+                    if (startYM && day < startYM) continue;
+                    if (endYM && day > endYM) continue;
+                    dailySum += val;
+                }
+                fact = dailySum;
+            } 
+            // Fallback to Monthly
+            else if (hasMonthly) {
+                // If filtering by specific DAYS, monthly might be inaccurate but it's the best we have
+                // Note: startYM/endYM passed here are likely YYYY-MM-DD if toDayKey is used upstream, 
+                // but sumMonthlyInRange expects YYYY-MM. 
+                // We need to check format.
+                const startMonth = startYM ? startYM.slice(0, 7) : null;
+                const endMonth = endYM ? endYM.slice(0, 7) : null;
+                fact = sumMonthlyInRange(c.monthlyFact, startMonth, endMonth, true);
             } else {
                 // STRICT MODE: If a date range is set, we CANNOT assume c.fact belongs to this period.
-                // If we don't know the date, we must treat it as 0 in this filtered view to avoid "ghost" points.
+                // If we don't know the date, we must treat it as 0 in this filtered view.
                 fact = 0; 
             }
             
@@ -279,13 +322,17 @@ export const normalizeAggregatedToPeriod = (data: AggregatedDataRow[], startYM: 
             return {
                 ...c,
                 fact,
-                monthlyFact: hasMonthly ? filterMonthlyMap(c.monthlyFact, startYM, endYM) : c.monthlyFact,
+                // Preserve detailed facts for drill-down even if subset is shown
+                monthlyFact: c.monthlyFact,
+                dailyFact: c.dailyFact
             };
         }).filter(Boolean) as MapPoint[];
 
         if (clientsFiltered.length === 0) continue;
 
         const groupFact = clientsFiltered.reduce((s, c) => s + (c.fact || 0), 0);
+        
+        // Re-aggregate monthly for group consistency (optional but good for charts)
         const groupMonthly: Record<string, number> = {};
         clientsFiltered.forEach(c => {
             if (c.monthlyFact) {

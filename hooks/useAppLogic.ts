@@ -67,6 +67,15 @@ export const useAppLogic = () => {
     // --- 3. ANALYTICS HOOK (Moved up to access filter dates) ---
     const { filters, setFilters, filterStartDate, setFilterStartDate, filterEndDate, setFilterEndDate, filtered, allActiveClients, mapPotentialClients, filterOptions, summaryMetrics } = useAnalytics(allData, okbData, okbRegionCounts);
 
+    // --- SYNC FILTER DATES WITH LOAD DATES ---
+    // When the user selects a range for loading in Adapta, we automatically
+    // apply that range to the analytics view so they see what they just loaded.
+    // Also handles resetting (clearing) values symmetrically.
+    useEffect(() => {
+        setFilterStartDate(loadStartDate);
+        setFilterEndDate(loadEndDate);
+    }, [loadStartDate, loadEndDate, setFilterStartDate, setFilterEndDate]);
+
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         let newData = [...allData]; let newUnidentified = [...unidentifiedRows];
         if (newPoint.address) { manualUpdateTimestamps.current.set(normalizeAddress(newPoint.address), Date.now()); }

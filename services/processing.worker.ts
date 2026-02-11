@@ -40,9 +40,9 @@ let state_processedRowsCount = 0; // Total clients/rows actually added to aggreg
 let state_lastEmitCount = 0;
 let state_lastCheckpointCount = 0;
 
-// Filter State
-let state_filterStart: string | null = null; // YYYY-MM
-let state_filterEnd: string | null = null;   // YYYY-MM
+// Filter State - Now using Day Granularity (YYYY-MM-DD)
+let state_filterStart: string | null = null; 
+let state_filterEnd: string | null = null;
 
 const CHECKPOINT_THRESHOLD = 50000; 
 const UI_UPDATE_THRESHOLD = 20000;
@@ -91,22 +91,37 @@ const parseCleanFloat = (val: any): number => {
     return isNaN(floatVal) ? 0 : floatVal;
 };
 
-const parseDateKey = (val: any): string | null => {
+// --- UPDATED DATE PARSER (YYYY-MM-DD) ---
+const parseDayKey = (val: any): string | null => {
     if (!val) return null;
+    
+    // Excel Serial Number
     if (typeof val === 'number') {
         if (val > 20000 && val < 60000) { 
              const dateObj = new Date(Math.round((val - 25569) * 86400 * 1000));
-             const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-             return `${dateObj.getFullYear()}-${month}`;
+             const y = dateObj.getFullYear();
+             const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+             const d = String(dateObj.getDate()).padStart(2, '0');
+             return `${y}-${m}-${d}`;
         }
         return null;
     }
     const str = String(val).trim();
-    let match = str.match(/^(\d{4})[\.\-/](\d{2})/);
-    if (match) return `${match[1]}-${match[2]}`;
+    
+    // Matches YYYY-MM-DD or YYYY.MM.DD
+    let match = str.match(/^(\d{4})[\.\-/](\d{2})[\.\-/](\d{2})/);
+    if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+    
+    // Matches DD.MM.YYYY
     match = str.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})/);
-    if (match) return `${match[3]}-${match[2].padStart(2, '0')}`;
+    if (match) return `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`;
+    
     return null;
+};
+
+// Helper to extract YYYY-MM from YYYY-MM-DD
+const getMonthFromDay = (dayKey: string): string => {
+    return dayKey.slice(0, 7);
 };
 
 const getCanonicalRegion = (row: any): string => {
@@ -170,11 +185,11 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     state_okbByRegion = {};
     state_okbRegionCounts = {};
     
-    // Apply Filters
-    state_filterStart = startDate ? String(startDate).slice(0, 7) : null;
-    state_filterEnd = endDate ? String(endDate).slice(0, 7) : null;
+    // Apply Filters - Expecting YYYY-MM-DD
+    state_filterStart = startDate || null;
+    state_filterEnd = endDate || null;
     
-    console.log(`[Worker] Init Stream. Full Load. Filter: ${state_filterStart} - ${state_filterEnd}`);
+    console.log(`[Worker] Init Stream. Full Load. Filter (Daily): ${state_filterStart} - ${state_filterEnd}`);
     
     if (okbData) {
         okbData.forEach(row => {
@@ -241,7 +256,7 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
         else clientsToProcess = [item];
 
         clientsToProcess.forEach(client => {
-            restoredClientsCount++; // Track actual clients processed
+            restoredClientsCount++; 
             
             let clientFact = typeof client.fact === 'number' ? client.fact : 0;
             
@@ -254,6 +269,7 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
                 safeKey = `${normAddr}#${normName}`;
             }
             
+            // Preserve dailyFact if present, otherwise rely on monthlyFact or just fact
             const filteredClient = { ...client, key: safeKey, fact: clientFact };
             
             const reg = filteredClient.region || 'Не определен';
@@ -271,17 +287,17 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
                     city: filteredClient.city || 'Не определен',
                     fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0, 
                     monthlyFact: {},
+                    dailyFact: {},
                     clients: new Map()
                 };
             }
 
             const group = state_aggregatedData[groupKey];
             
-            // IDEMPOTENT UPDATE: Set the client (replace if exists)
+            // IDEMPOTENT UPDATE
             group.clients.set(safeKey, filteredClient);
             state_uniquePlottableClients.set(safeKey, filteredClient);
             
-            // Mark group for recalculation
             dirtyGroups.add(groupKey);
         });
     });
@@ -293,13 +309,26 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
 
         let newFact = 0;
         const newMonthly: Record<string, number> = {};
+        const newDaily: Record<string, number> = {};
 
         grp.clients.forEach(c => {
             newFact += (c.fact || 0);
-            if (c.monthlyFact) {
+            
+            // Re-aggregate Daily Facts
+            if (c.dailyFact) {
+                Object.entries(c.dailyFact).forEach(([day, v]) => {
+                    const normDay = parseDayKey(day) || day; // Ensure standardized YYYY-MM-DD
+                    newDaily[normDay] = (newDaily[normDay] || 0) + (v as number);
+                    
+                    // Also populate monthly for compatibility
+                    const monthKey = getMonthFromDay(normDay);
+                    newMonthly[monthKey] = (newMonthly[monthKey] || 0) + (v as number);
+                });
+            } 
+            // Fallback: If only Monthly Fact exists (legacy snapshots)
+            else if (c.monthlyFact) {
                 Object.entries(c.monthlyFact).forEach(([m, v]) => {
-                    // CRITICAL: Normalize date keys to prevent "YYYY-MM" vs "45200" mismatch
-                    const normKey = parseDateKey(m) || m; 
+                    const normKey = m.length > 7 ? getMonthFromDay(m) : m; // Basic normalization
                     newMonthly[normKey] = (newMonthly[normKey] || 0) + (v as number);
                 });
             }
@@ -307,16 +336,16 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
 
         grp.fact = newFact;
         grp.monthlyFact = newMonthly;
+        grp.dailyFact = newDaily;
         grp.potential = newFact * 1.15;
         grp.growthPotential = Math.max(0, grp.potential - newFact);
     });
 
-    state_seenRowsCount += rows.length; // Count groups/chunks seen
-    state_processedRowsCount += restoredClientsCount; // Count actual clients added
+    state_seenRowsCount += rows.length; 
+    state_processedRowsCount += restoredClientsCount; 
     
     if (state_seenRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
         state_lastEmitCount = state_seenRowsCount;
-        // Progress bar logic remains approximate but responsive
         const currentProgress = Math.min(98, 10 + (state_seenRowsCount / 200000) * 85); 
         postMessage({ 
             type: 'progress', 
@@ -363,16 +392,18 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
-        state_seenRowsCount++; // Track total rows seen for progress consistency
+        state_seenRowsCount++; 
         
         const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
-        let dateKey = parseDateKey(dateRaw);
-        const finalDateKey = dateKey || 'unknown';
+        
+        // PARSE DAY KEY (YYYY-MM-DD)
+        let dayKey = parseDayKey(dateRaw);
+        const finalDayKey = dayKey || 'unknown';
 
-        // STRICT DATE FILTERING
-        if (finalDateKey !== 'unknown') {
-            if (state_filterStart && finalDateKey < state_filterStart) continue;
-            if (state_filterEnd && finalDateKey > state_filterEnd) continue;
+        // STRICT DATE FILTERING (DAILY PRECISION)
+        if (finalDayKey !== 'unknown') {
+            if (state_filterStart && finalDayKey < state_filterStart) continue;
+            if (state_filterEnd && finalDayKey > state_filterEnd) continue;
         }
         
         const rawAddr = findAddressInRow(row);
@@ -439,6 +470,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                     region: reg, 
                     fact: 0,
                     monthlyFact: {},
+                    dailyFact: {},
                     potential: 0, 
                     growthPotential: 0, 
                     growthPercentage: 0, 
@@ -446,9 +478,17 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 };
             }
 
+            // ACCUMULATE
             state_aggregatedData[groupKey].fact += weightPerBrand;
+            
+            // Daily Fact
+            if (!state_aggregatedData[groupKey].dailyFact) state_aggregatedData[groupKey].dailyFact = {};
+            state_aggregatedData[groupKey].dailyFact[finalDayKey] = (state_aggregatedData[groupKey].dailyFact[finalDayKey] || 0) + weightPerBrand;
+            
+            // Monthly Fact (Legacy/Overview support)
+            const monthKey = getMonthFromDay(finalDayKey);
             if (!state_aggregatedData[groupKey].monthlyFact) state_aggregatedData[groupKey].monthlyFact = {};
-            state_aggregatedData[groupKey].monthlyFact[finalDateKey] = (state_aggregatedData[groupKey].monthlyFact[finalDateKey] || 0) + weightPerBrand;
+            state_aggregatedData[groupKey].monthlyFact[monthKey] = (state_aggregatedData[groupKey].monthlyFact[monthKey] || 0) + weightPerBrand;
 
             if (!state_uniquePlottableClients.has(uniqueClientKey)) {
                 const okb = state_okbCoordIndex.get(normAddr);
@@ -475,6 +515,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                     originalRow: row, 
                     fact: 0,
                     monthlyFact: {},
+                    dailyFact: {},
                     abcCategory: 'C'
                 });
             }
@@ -482,8 +523,15 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             const pt = state_uniquePlottableClients.get(uniqueClientKey);
             if (pt) {
                 pt.fact = (pt.fact || 0) + weightPerBrand;
+                
+                // Client Level Daily
+                if (!pt.dailyFact) pt.dailyFact = {};
+                pt.dailyFact[finalDayKey] = (pt.dailyFact[finalDayKey] || 0) + weightPerBrand;
+                
+                // Client Level Monthly
                 if (!pt.monthlyFact) pt.monthlyFact = {};
-                pt.monthlyFact[finalDateKey] = (pt.monthlyFact[finalDateKey] || 0) + weightPerBrand;
+                pt.monthlyFact[monthKey] = (pt.monthlyFact[monthKey] || 0) + weightPerBrand;
+                
                 state_aggregatedData[groupKey].clients.set(uniqueClientKey, pt);
             }
         }
@@ -529,7 +577,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         });
     }
 
-    // Progress percentage based on roughly 3.5M rows total estimate
+    // Progress percentage
     const currentProgress = Math.min(98, 10 + (state_seenRowsCount / 3500000) * 85); 
     postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая обработка: ${state_processedRowsCount.toLocaleString()}...`, totalProcessed: state_processedRowsCount } });
 }

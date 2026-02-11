@@ -48,11 +48,11 @@ interface AdaptaProps {
   onStartDateChange: (date: string) => void;
   onEndDateChange: (date: string) => void;
 
-  // Load Props (Sync)
-  loadStartDate?: string;
-  loadEndDate?: string;
-  onLoadStartDateChange?: (date: string) => void;
-  onLoadEndDateChange?: (date: string) => void;
+  // Load Props (Sync) - Now Mandatory for strict control
+  loadStartDate: string;
+  loadEndDate: string;
+  onLoadStartDateChange: (date: string) => void;
+  onLoadEndDateChange: (date: string) => void;
 
   // Navigation & Search Integration
   openChannelRequest?: string | null;
@@ -239,10 +239,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             <TopBar
                 title="ADAPTA"
                 subtitle="Live Data Ingestion & Quality Control"
-                startDate={props.startDate}
-                endDate={props.endDate}
-                onStartDateChange={props.onStartDateChange}
-                onEndDateChange={props.onEndDateChange}
+                // STRICT BINDING: Use load dates for the main controls
+                startDate={props.loadStartDate}
+                endDate={props.loadEndDate}
+                onStartDateChange={props.onLoadStartDateChange}
+                onEndDateChange={props.onLoadEndDateChange}
                 isLoading={props.processingState.isProcessing}
                 onCloudSync={() => {
                     setActiveTab('ingest');
@@ -283,7 +284,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             description="Расширьте диапазон дат или сбросьте фильтры."
             action={
               <button
-                onClick={() => { props.onStartDateChange(''); props.onEndDateChange(''); }}
+                // CORRECT FIX: Reset the LOAD dates, not the filter dates directly
+                onClick={() => { 
+                    props.onLoadStartDateChange(''); 
+                    props.onLoadEndDateChange(''); 
+                }}
                 className="rounded-2xl px-4 py-2.5 text-sm font-semibold bg-gradient-to-r from-indigo-600 to-sky-500 text-white shadow-[0_14px_40px_rgba(99,102,241,0.22)] hover:from-indigo-500 hover:to-sky-400 transition-all"
               >
                 Сбросить период

@@ -7,23 +7,11 @@ import {
   calculateSummaryMetrics,
   findAddressInRow,
   findValueInRow,
-  normalizeAddress
+  normalizeAddress,
+  toDayKey
 } from '../utils/dataUtils';
 import { enrichDataWithSmartPlan } from '../services/planning/integration';
 import { enrichWithAbcCategories } from '../utils/analytics';
-
-// Приводим "YYYY-MM-DD" / "YYYY-MM" / "YYYY.MM.DD" -> "YYYY-MM".
-// Если не похоже на дату — возвращаем null.
-const toMonthKey = (raw?: string | null): string | null => {
-  if (!raw) return null;
-  const s = String(raw).trim();
-  // Быстрая нормализация разделителей
-  const norm = s.replace(/\./g, '-').replace(/\//g, '-');
-  // Берём первые 7 символов, если похоже на YYYY-MM
-  const m = norm.slice(0, 7);
-  if (/^\d{4}-\d{2}$/.test(m)) return m;
-  return null;
-};
 
 export const useAnalytics = (
   allData: AggregatedDataRow[],
@@ -37,79 +25,89 @@ export const useAnalytics = (
   const filtered = useMemo(() => {
     let processedData = allData;
 
-    // Date Filtering
-    const fStart = toMonthKey(filterStartDate);
-    const fEnd = toMonthKey(filterEndDate);
+    // Standardize to YYYY-MM-DD
+    const fStart = toDayKey(filterStartDate);
+    const fEnd = toDayKey(filterEndDate);
     const hasDateFilter = Boolean(fStart || fEnd);
 
     if (hasDateFilter) {
       processedData = allData.map(row => {
-        const rowHasMonthly = row.monthlyFact && Object.keys(row.monthlyFact).length > 0;
+        // We prefer dailyFact if available for precise filtering
+        const rowHasDaily = row.dailyFact && Object.keys(row.dailyFact).length > 0;
+        const rowHasMonthly = !rowHasDaily && row.monthlyFact && Object.keys(row.monthlyFact).length > 0;
 
-        // STRICT FILTERING LOGIC
-        // If we have a date filter active, we CANNOT rely on the total 'fact' if 'monthlyFact' is missing.
-        // Doing so results in showing 2 years of sales for an 11-day period.
-        // Therefore, if monthlyFact is missing, we assume 0 for the selected period (Strict Mode).
-        
-        let newRowFact = 0; // Default to 0 in strict mode
+        let newRowFact = 0; 
 
-        if (rowHasMonthly) {
-          for (const [dateKey, val] of Object.entries(row.monthlyFact!)) {
-            if (dateKey === 'unknown') {
-              // unknown still included to catch data errors, but it's debatable.
-              newRowFact += (val as number) || 0;
-              continue;
+        if (rowHasDaily) {
+            for (const [dayKey, val] of Object.entries(row.dailyFact!)) {
+                if (dayKey === 'unknown') {
+                    newRowFact += (val as number) || 0;
+                    continue;
+                }
+                const dk = toDayKey(dayKey);
+                if (!dk) {
+                    newRowFact += (val as number) || 0;
+                    continue;
+                }
+                if (fStart && dk < fStart) continue;
+                if (fEnd && dk > fEnd) continue;
+                newRowFact += (val as number) || 0;
             }
-
-            const mk = toMonthKey(dateKey);
-            if (!mk) {
-              newRowFact += (val as number) || 0;
-              continue;
+        } else if (rowHasMonthly) {
+            // Fallback for legacy data (monthly only)
+            // Note: This logic remains "monthly precise", so selecting 11 days might still show full month if data is monthly.
+            // But if worker creates dailyFact, we won't hit this often.
+            const startMonth = fStart ? fStart.slice(0, 7) : null;
+            const endMonth = fEnd ? fEnd.slice(0, 7) : null;
+            
+            for (const [monthKey, val] of Object.entries(row.monthlyFact!)) {
+                if (monthKey === 'unknown') {
+                    newRowFact += (val as number) || 0;
+                    continue;
+                }
+                // Normalize legacy keys
+                const mk = monthKey.length > 7 ? monthKey.slice(0, 7) : monthKey;
+                
+                if (startMonth && mk < startMonth) continue;
+                if (endMonth && mk > endMonth) continue;
+                newRowFact += (val as number) || 0;
             }
-
-            if (fStart && mk < fStart) continue;
-            if (fEnd && mk > fEnd) continue;
-
-            newRowFact += (val as number) || 0;
-          }
         } else {
-            // Row has NO monthly data. 
-            // In strict mode with active date filter, this means we can't attribute ANY sales to this period.
-            // So newRowFact remains 0.
+            // No time data + Filter Active = 0 Fact
         }
 
         // 2) Clients Filtering
         const activeClients = (row.clients || [])
           .map(client => {
-            const cHasMonthly = client.monthlyFact && Object.keys(client.monthlyFact).length > 0;
+            const cHasDaily = client.dailyFact && Object.keys(client.dailyFact).length > 0;
+            const cHasMonthly = !cHasDaily && client.monthlyFact && Object.keys(client.monthlyFact).length > 0;
             
-            // If client has no monthly data, strict mode applies: fact = 0
-            if (!cHasMonthly) {
-                return { ...client, fact: 0 };
-            }
-
             let clientSum = 0;
-            for (const [d, v] of Object.entries(client.monthlyFact!)) {
-              if (d === 'unknown') {
-                clientSum += (v as number) || 0;
-                continue;
-              }
 
-              const mk = toMonthKey(d);
-              if (!mk) {
-                clientSum += (v as number) || 0;
-                continue;
-              }
-
-              if (fStart && mk < fStart) continue;
-              if (fEnd && mk > fEnd) continue;
-
-              clientSum += (v as number) || 0;
+            if (cHasDaily) {
+                for (const [d, v] of Object.entries(client.dailyFact!)) {
+                    if (d === 'unknown') { clientSum += (v as number) || 0; continue; }
+                    const dk = toDayKey(d);
+                    if (!dk) { clientSum += (v as number) || 0; continue; }
+                    if (fStart && dk < fStart) continue;
+                    if (fEnd && dk > fEnd) continue;
+                    clientSum += (v as number) || 0;
+                }
+            } else if (cHasMonthly) {
+                const startMonth = fStart ? fStart.slice(0, 7) : null;
+                const endMonth = fEnd ? fEnd.slice(0, 7) : null;
+                for (const [m, v] of Object.entries(client.monthlyFact!)) {
+                    if (m === 'unknown') { clientSum += (v as number) || 0; continue; }
+                    const mk = m.length > 7 ? m.slice(0, 7) : m;
+                    if (startMonth && mk < startMonth) continue;
+                    if (endMonth && mk > endMonth) continue;
+                    clientSum += (v as number) || 0;
+                }
             }
 
             return { ...client, fact: clientSum };
           })
-          .filter(c => (c.fact || 0) > 0); // Remove zero-fact clients in this view
+          .filter(c => (c.fact || 0) > 0); 
 
         // RECALCULATE DERIVED METRICS FOR CONSISTENCY
         const newPotential = newRowFact * 1.15;
