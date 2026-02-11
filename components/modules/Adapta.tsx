@@ -115,9 +115,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     if (client.monthlyFact && Object.keys(client.monthlyFact).length > 0) {
       let sum = 0;
 
-      // Normalize filter inputs to YYYY-MM for comparison with keys
-      const filterStart = props.startDate ? props.startDate.substring(0, 7) : null;
-      const filterEnd = props.endDate ? props.endDate.substring(0, 7) : null;
+      // Normalize filter inputs using the same robust helper as keys
+      const filterStart = toMonthKey(props.startDate);
+      const filterEnd = toMonthKey(props.endDate);
       const hasFilter = Boolean(filterStart || filterEnd);
 
       Object.entries(client.monthlyFact).forEach(([date, val]) => {
