@@ -3,7 +3,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { AggregatedDataRow, UnidentifiedRow, FileProcessingState, DeltaItem, CoordsCache, OkbStatus, OkbDataRow, WorkerMessage, MapPoint } from '../types';
 import { saveAnalyticsState, loadAnalyticsState } from '../utils/db';
 import { enrichWithAbcCategories } from '../utils/analytics';
-import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
+import { normalizeAddress, findAddressInRow, normalizeAggregatedToPeriod } from '../utils/dataUtils';
 
 const MAX_CHUNK_SIZE_BYTES = 850 * 1024;
 
@@ -348,6 +348,39 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                     }
                 } catch (e) { console.error("Failed to fetch/apply deltas:", e); }
 
+                // --- NEW: FETCH AND APPLY CACHE HERE (For Immediate Consistency) ---
+                try {
+                    console.log('5b. [Sync] Fetching coordinate cache...');
+                    const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+                    if (cacheRes.ok) {
+                        const cacheData = await cacheRes.json();
+                        if (cacheData) {
+                             console.info(`   [Sync] Applying cache...`);
+                             finalData = applyCacheToData(finalData, cacheData);
+                        }
+                    }
+                } catch (e) { console.error("Failed to fetch/apply cache:", e); }
+
+                // --- CRITICAL FIX: POST-DELTA NORMALIZATION ---
+                const startYM = startDate ? startDate.slice(0, 7) : null;
+                const endYM = endDate ? endDate.slice(0, 7) : null;
+                
+                if (startYM || endYM) {
+                    // CONDITIONAL CHECK: Do we have monthlyFact?
+                    const hasMonthlyData = finalData.some(g => 
+                        (g.monthlyFact && Object.keys(g.monthlyFact).length > 0) || 
+                        g.clients.some(c => c.monthlyFact && Object.keys(c.monthlyFact).length > 0)
+                    );
+
+                    if (hasMonthlyData) {
+                        console.info(`6. [Sync] Normalizing data to period: ${startYM || 'start'} -> ${endYM || 'end'}`);
+                        finalData = normalizeAggregatedToPeriod(finalData, startYM, endYM);
+                        console.info(`   [Sync] Normalized count: ${finalData.length}`);
+                    } else {
+                        console.warn('[Sync] Snapshot lacks monthly details. Skipping period normalization to preserve data.');
+                    }
+                }
+
                 enrichWithAbcCategories(finalData);
                 setAllData(finalData);
                 
@@ -375,7 +408,7 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
             return false;
         }
-    }, [addNotification, applyDeltasToData]);
+    }, [addNotification, applyDeltasToData, applyCacheToData]);
 
     return {
         allData, setAllData,

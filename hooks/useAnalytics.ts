@@ -46,21 +46,22 @@ export const useAnalytics = (
       processedData = allData.map(row => {
         const rowHasMonthly = row.monthlyFact && Object.keys(row.monthlyFact).length > 0;
 
-        // 1) Считаем row.fact по месяцам, если monthlyFact есть.
-        // Если monthlyFact нет — оставляем row.fact как был, чтобы не пропадали строки/точки.
-        let newRowFact = row.fact ?? 0;
+        // STRICT FILTERING LOGIC
+        // If we have a date filter active, we CANNOT rely on the total 'fact' if 'monthlyFact' is missing.
+        // Doing so results in showing 2 years of sales for an 11-day period.
+        // Therefore, if monthlyFact is missing, we assume 0 for the selected period (Strict Mode).
+        
+        let newRowFact = 0; // Default to 0 in strict mode
 
         if (rowHasMonthly) {
-          newRowFact = 0;
           for (const [dateKey, val] of Object.entries(row.monthlyFact!)) {
             if (dateKey === 'unknown') {
-              // unknown включаем всегда, иначе будут "пропадающие" клиенты/точки
+              // unknown still included to catch data errors, but it's debatable.
               newRowFact += (val as number) || 0;
               continue;
             }
 
             const mk = toMonthKey(dateKey);
-            // если ключ не распознан — считаем как unknown (лучше так, чем потерять)
             if (!mk) {
               newRowFact += (val as number) || 0;
               continue;
@@ -71,15 +72,21 @@ export const useAnalytics = (
 
             newRowFact += (val as number) || 0;
           }
+        } else {
+            // Row has NO monthly data. 
+            // In strict mode with active date filter, this means we can't attribute ANY sales to this period.
+            // So newRowFact remains 0.
         }
 
-        // 2) Клиенты
+        // 2) Clients Filtering
         const activeClients = (row.clients || [])
           .map(client => {
             const cHasMonthly = client.monthlyFact && Object.keys(client.monthlyFact).length > 0;
-
-            // Если детализации нет — не зануляем, иначе потеряем точку.
-            if (!cHasMonthly) return client;
+            
+            // If client has no monthly data, strict mode applies: fact = 0
+            if (!cHasMonthly) {
+                return { ...client, fact: 0 };
+            }
 
             let clientSum = 0;
             for (const [d, v] of Object.entries(client.monthlyFact!)) {
@@ -102,13 +109,7 @@ export const useAnalytics = (
 
             return { ...client, fact: clientSum };
           })
-          // ВАЖНО: фильтруем только тех, у кого monthlyFact есть и факт реально 0.
-          // Клиенты без monthlyFact не удаляются.
-          .filter(c => {
-            const hasMonthly = c.monthlyFact && Object.keys(c.monthlyFact).length > 0;
-            if (!hasMonthly) return true;
-            return (c.fact || 0) > 0;
-          });
+          .filter(c => (c.fact || 0) > 0); // Remove zero-fact clients in this view
 
         // RECALCULATE DERIVED METRICS FOR CONSISTENCY
         const newPotential = newRowFact * 1.15;
@@ -123,13 +124,8 @@ export const useAnalytics = (
             clients: activeClients 
         };
       })
-      // И тут тоже: не выкидываем строки только из-за того, что факт = 0,
-      // если у них нет monthlyFact (иначе точки пропадут).
-      .filter(r => {
-        const rowHasMonthly = r.monthlyFact && Object.keys(r.monthlyFact).length > 0;
-        if (!rowHasMonthly) return true;
-        return (r.fact || 0) > 0;
-      });
+      // Remove rows that became empty due to filtering
+      .filter(r => (r.fact || 0) > 0);
     }
 
     // Smart Planning
@@ -137,7 +133,6 @@ export const useAnalytics = (
     const filteredSmart = applyFilters(smart, filters);
     
     // Apply ABC classification on the FILTERED view
-    // This ensures that "Category A" reflects the top performers *in the selected period*
     return enrichWithAbcCategories(filteredSmart);
   }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
 

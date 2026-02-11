@@ -33,7 +33,10 @@ let state_okbCoordIndex: OkbCoordIndex = new Map();
 let state_okbByRegion: Record<string, OkbDataRow[]> = {};
 let state_okbRegionCounts: { [key: string]: number } = {};
 let state_cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string; isInvalid?: boolean; comment?: string; isDeleted?: boolean; }>();
-let state_processedRowsCount = 0;
+
+// Counters
+let state_seenRowsCount = 0;      // Total items (groups/rows) iterated from source
+let state_processedRowsCount = 0; // Total clients/rows actually added to aggregation
 let state_lastEmitCount = 0;
 let state_lastCheckpointCount = 0;
 
@@ -160,8 +163,9 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     state_unidentifiedRows = [];
     state_headers = [];
     state_processedRowsCount = totalRowsProcessed || 0;
-    state_lastEmitCount = state_processedRowsCount;
-    state_lastCheckpointCount = state_processedRowsCount;
+    state_seenRowsCount = totalRowsProcessed || 0;
+    state_lastEmitCount = state_seenRowsCount;
+    state_lastCheckpointCount = state_seenRowsCount;
     state_okbCoordIndex = createOkbCoordIndex(okbData);
     state_okbByRegion = {};
     state_okbRegionCounts = {};
@@ -228,18 +232,17 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
         return;
     }
 
+    const dirtyGroups = new Set<string>();
+    let restoredClientsCount = 0;
+
     rows.forEach(item => {
         let clientsToProcess: any[] = [];
-        
-        if (item.clients && Array.isArray(item.clients)) {
-            clientsToProcess = item.clients;
-        } else {
-            clientsToProcess = [item];
-        }
+        if (item.clients && Array.isArray(item.clients)) clientsToProcess = item.clients;
+        else clientsToProcess = [item];
 
         clientsToProcess.forEach(client => {
-            // Restore Raw Data. Do NOT filter by date here.
-            // The UI will filter based on monthlyFact.
+            restoredClientsCount++; // Track actual clients processed
+            
             let clientFact = typeof client.fact === 'number' ? client.fact : 0;
             
             let safeKey = client.key;
@@ -257,7 +260,6 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
             const rm = filteredClient.rm || 'Не указан';
             const brand = filteredClient.brand || 'Без бренда';
             const packaging = filteredClient.packaging || 'Не указана';
-            
             const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
 
             if (!state_aggregatedData[groupKey]) {
@@ -265,50 +267,57 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
                     __rowId: generateRowId(),
                     key: groupKey,
                     clientName: `${reg}: ${brand}`,
-                    brand, 
-                    packaging, 
-                    rm, 
-                    region: reg, 
+                    brand, packaging, rm, region: reg, 
                     city: filteredClient.city || 'Не определен',
-                    fact: 0,
-                    potential: 0, 
-                    growthPotential: 0, 
-                    growthPercentage: 0, 
+                    fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0, 
+                    monthlyFact: {},
                     clients: new Map()
                 };
             }
 
             const group = state_aggregatedData[groupKey];
             
-            if (group.clients.has(safeKey)) {
-                const existing = group.clients.get(safeKey)!;
-                // Merge Facts
-                existing.fact = (existing.fact || 0) + clientFact;
-                // Merge Monthly Facts
-                if (filteredClient.monthlyFact) {
-                    if (!existing.monthlyFact) existing.monthlyFact = {};
-                    Object.entries(filteredClient.monthlyFact).forEach(([k, v]) => {
-                        existing.monthlyFact![k] = (existing.monthlyFact![k] || 0) + (v as number);
-                    });
-                }
-            } else {
-                group.clients.set(safeKey, filteredClient);
-            }
+            // IDEMPOTENT UPDATE: Set the client (replace if exists)
+            group.clients.set(safeKey, filteredClient);
+            state_uniquePlottableClients.set(safeKey, filteredClient);
             
-            group.fact += clientFact;
-            group.potential = group.fact * 1.15; 
-
-            if (!state_uniquePlottableClients.has(safeKey)) {
-                state_uniquePlottableClients.set(safeKey, filteredClient);
-            }
+            // Mark group for recalculation
+            dirtyGroups.add(groupKey);
         });
     });
 
-    state_processedRowsCount += rows.length;
+    // RECALCULATE DIRTY GROUPS TO PREVENT DOUBLE COUNTING
+    dirtyGroups.forEach(gKey => {
+        const grp = state_aggregatedData[gKey];
+        if (!grp) return;
+
+        let newFact = 0;
+        const newMonthly: Record<string, number> = {};
+
+        grp.clients.forEach(c => {
+            newFact += (c.fact || 0);
+            if (c.monthlyFact) {
+                Object.entries(c.monthlyFact).forEach(([m, v]) => {
+                    // CRITICAL: Normalize date keys to prevent "YYYY-MM" vs "45200" mismatch
+                    const normKey = parseDateKey(m) || m; 
+                    newMonthly[normKey] = (newMonthly[normKey] || 0) + (v as number);
+                });
+            }
+        });
+
+        grp.fact = newFact;
+        grp.monthlyFact = newMonthly;
+        grp.potential = newFact * 1.15;
+        grp.growthPotential = Math.max(0, grp.potential - newFact);
+    });
+
+    state_seenRowsCount += rows.length; // Count groups/chunks seen
+    state_processedRowsCount += restoredClientsCount; // Count actual clients added
     
-    if (state_processedRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
-        state_lastEmitCount = state_processedRowsCount;
-        const currentProgress = Math.min(98, 10 + (state_processedRowsCount / 200000) * 85); 
+    if (state_seenRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
+        state_lastEmitCount = state_seenRowsCount;
+        // Progress bar logic remains approximate but responsive
+        const currentProgress = Math.min(98, 10 + (state_seenRowsCount / 200000) * 85); 
         postMessage({ 
             type: 'progress', 
             payload: { percentage: currentProgress, message: `Синхронизация снимка: ${state_processedRowsCount.toLocaleString()}...`, totalProcessed: state_processedRowsCount } 
@@ -326,11 +335,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     if (isFirstChunk || state_headers.length === 0) {
         const hRow = rawData.findIndex(row => Array.isArray(row) && row.some(cell => String(cell || '').toLowerCase().includes('адрес')));
         const actualHRow = hRow === -1 ? 0 : hRow;
-        
-        if (!rawData[actualHRow]) {
-            console.warn("Skipping chunk: Header row not found or chunk is malformed.");
-            return;
-        }
+        if (!rawData[actualHRow]) return;
 
         headerOffset = actualHRow + 1;
         state_headers = rawData[actualHRow].map(h => String(h || '').trim());
@@ -343,13 +348,11 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const normHeaders = state_headers.map(h => ({ original: h, norm: normalizeHeaderKey(h) }));
         const clientHeader = normHeaders.find(h => h.norm.includes('названиеклиента') || h.norm.includes('наименованиеклиента') || h.norm.includes('клиент') || h.norm.includes('контрагент') || h.norm.includes('партнер'));
         
-        if (clientHeader) {
-            state_clientNameHeader = clientHeader.original;
-        } else {
+        if (clientHeader) state_clientNameHeader = clientHeader.original;
+        else {
             const nameHeader = normHeaders.find(h => h.norm.includes('наименование') && !h.norm.includes('товар') && !h.norm.includes('продук'));
             state_clientNameHeader = nameHeader ? nameHeader.original : undefined;
         }
-        
     } else {
         jsonData = rawData.map(row => {
             const obj: any = {};
@@ -360,14 +363,13 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
-        state_processedRowsCount++;
+        state_seenRowsCount++; // Track total rows seen for progress consistency
         
         const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
         let dateKey = parseDateKey(dateRaw);
         const finalDateKey = dateKey || 'unknown';
 
-        // --- STRICT DATE FILTERING ---
-        // Exclude rows outside the selected range
+        // STRICT DATE FILTERING
         if (finalDateKey !== 'unknown') {
             if (state_filterStart && finalDateKey < state_filterStart) continue;
             if (state_filterEnd && finalDateKey > state_filterEnd) continue;
@@ -380,6 +382,9 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         if (/^[-.,\s0-9]+$/.test(cleanAddr)) continue;
         const lowerAddr = cleanAddr.toLowerCase();
         if (['нет', 'не указан', 'неизвестно', 'unknown', 'none', 'пусто'].includes(lowerAddr)) continue;
+
+        // Passed filters -> Increment processed count
+        state_processedRowsCount++;
 
         let clientName = String(row[state_clientNameHeader || ''] || '').trim();
         if (!clientName || clientName.length < 2) clientName = cleanAddr || 'Без названия';
@@ -410,7 +415,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         if (!isCityFound && !isRegionFound && !cacheEntry) {
             const rawRowIndex = isFirstChunk ? (i + headerOffset) : i;
             const rawArray = rawData[rawRowIndex] || [];
-            state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_processedRowsCount, rawArray: rawArray });
+            state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_seenRowsCount, rawArray: rawArray });
         }
 
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
@@ -484,10 +489,11 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         }
     }
     
-    if (state_processedRowsCount % 10000 === 0) console.log(`⚙️ [Worker] Processed ${state_processedRowsCount} rows...`);
+    if (state_seenRowsCount % 10000 === 0) console.log(`⚙️ [Worker] Seen ${state_seenRowsCount} rows, Processed ${state_processedRowsCount}...`);
     
-    if (state_processedRowsCount - state_lastCheckpointCount >= CHECKPOINT_THRESHOLD) {
-        state_lastCheckpointCount = state_processedRowsCount;
+    // Checkpoints based on SEEN count to ensure consistent UI updates
+    if (state_seenRowsCount - state_lastCheckpointCount >= CHECKPOINT_THRESHOLD) {
+        state_lastCheckpointCount = state_seenRowsCount;
         performIncrementalAbc();
         const checkpointData = Object.values(state_aggregatedData).map(item => ({
             ...item,
@@ -505,10 +511,10 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 totalRowsProcessed: state_processedRowsCount
             }
         });
-        state_lastEmitCount = state_processedRowsCount;
+        state_lastEmitCount = state_seenRowsCount;
     }
-    else if (state_processedRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
-        state_lastEmitCount = state_processedRowsCount;
+    else if (state_seenRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
+        state_lastEmitCount = state_seenRowsCount;
         performIncrementalAbc();
         const partialData = Object.values(state_aggregatedData).map(item => ({
             ...item,
@@ -523,7 +529,8 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         });
     }
 
-    const currentProgress = Math.min(98, 10 + (state_processedRowsCount / 3500000) * 85); 
+    // Progress percentage based on roughly 3.5M rows total estimate
+    const currentProgress = Math.min(98, 10 + (state_seenRowsCount / 3500000) * 85); 
     postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая обработка: ${state_processedRowsCount.toLocaleString()}...`, totalProcessed: state_processedRowsCount } });
 }
 
@@ -538,7 +545,7 @@ async function finalizeStream(postMessage: PostMessageFn) {
         clients: Array.from(item.clients.values())
     }));
 
-    console.log(`[Worker] Finalize. Aggregated Groups: ${finalData.length}, Total Clients: ${state_uniquePlottableClients.size}`);
+    console.log(`[Worker] Finalize. Aggregated Groups: ${finalData.length}, Total Clients: ${state_uniquePlottableClients.size}, Seen: ${state_seenRowsCount}`);
 
     postMessage({ 
         type: 'result_finished', 
