@@ -1,27 +1,13 @@
 
-// ... existing imports ...
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { AggregatedDataRow, UnidentifiedRow, FileProcessingState, DeltaItem, CoordsCache, OkbStatus, OkbDataRow, WorkerMessage } from '../types';
+import { AggregatedDataRow, UnidentifiedRow, FileProcessingState, DeltaItem, CoordsCache, OkbStatus, OkbDataRow, WorkerMessage, MapPoint } from '../types';
 import { saveAnalyticsState, loadAnalyticsState } from '../utils/db';
 import { enrichWithAbcCategories } from '../utils/analytics';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 
 const MAX_CHUNK_SIZE_BYTES = 850 * 1024;
 
-const normalize = (rows: any[]): AggregatedDataRow[] => {
-    if (!Array.isArray(rows)) return [];
-    return rows.map(row => ({
-        ...row,
-        clients: Array.isArray(row.clients) ? row.clients : [],
-        fact: typeof row.fact === 'number' ? row.fact : 0,
-        potential: typeof row.potential === 'number' ? row.potential : 0,
-        growthPotential: typeof row.growthPotential === 'number' ? row.growthPotential : 0,
-        growthPercentage: typeof row.growthPercentage === 'number' ? row.growthPercentage : 0,
-    }));
-};
-
 export const useDataSync = (addNotification: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void) => {
-    // ... existing state ...
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
     const [unidentifiedRows, setUnidentifiedRows] = useState<UnidentifiedRow[]>([]);
     const [isCloudSaving, setIsCloudSaving] = useState(false);
@@ -77,19 +63,30 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                 if (relevantDelta.type === 'delete') { groupModified = true; return acc; }
                 if (relevantDelta.type === 'update' && relevantDelta.payload) {
                     groupModified = true;
-                    const payload = relevantDelta.payload;
+                    
+                    // PROTECT: Remove fact/metrics/monthlyFact from payload to prevent overwriting with stale/aggregate values
+                    const payload = { ...relevantDelta.payload };
+                    delete (payload as any).fact;
+                    delete (payload as any).potential;
+                    delete (payload as any).growthPotential;
+                    delete (payload as any).growthPercentage;
+                    delete (payload as any).monthlyFact;
+
                     const isAddressChanged = payload.address && (normalizeAddress(payload.address) !== normalizeAddress(client.address));
                     const hasNewCoords = payload.lat !== undefined && payload.lon !== undefined;
+                    
                     const mergedClient = { ...client, ...payload, status: (payload.lat && payload.lon) ? 'match' : client.status };
+                    
                     if (isAddressChanged && !hasNewCoords) { mergedClient.lat = undefined; mergedClient.lon = undefined; }
                     acc.push(mergedClient);
                     return acc;
                 }
                 acc.push(client); return acc;
             }, [] as any[]);
+            
             if (groupModified) {
-                const newFact = activeClients.reduce((sum: number, c: any) => sum + (c.fact || 0), 0);
-                return { ...group, clients: activeClients, fact: newFact, potential: newFact * 1.15 };
+                // Return group without manual fact sum. Normalization handles the rest.
+                return { ...group, clients: activeClients };
             }
             return group;
         }).filter(g => g.clients.length > 0);
@@ -111,9 +108,9 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                 }
                 acc.push(client); return acc;
             }, [] as any[]);
+            
             if (modified) {
-                const newFact = newClients.reduce((s: number, c: any) => s + (c.fact || 0), 0);
-                return { ...group, clients: newClients, fact: newFact, potential: newFact * 1.15 };
+                return { ...group, clients: newClients };
             }
             return group;
         }).filter(g => g.clients.length > 0);

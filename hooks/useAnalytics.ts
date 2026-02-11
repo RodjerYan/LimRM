@@ -1,3 +1,4 @@
+
 import { useState, useMemo } from 'react';
 import { AggregatedDataRow, FilterState, MapPoint, OkbDataRow } from '../types';
 import {
@@ -9,6 +10,7 @@ import {
   normalizeAddress
 } from '../utils/dataUtils';
 import { enrichDataWithSmartPlan } from '../services/planning/integration';
+import { enrichWithAbcCategories } from '../utils/analytics';
 
 // Приводим "YYYY-MM-DD" / "YYYY-MM" / "YYYY.MM.DD" -> "YYYY-MM".
 // Если не похоже на дату — возвращаем null.
@@ -108,7 +110,18 @@ export const useAnalytics = (
             return (c.fact || 0) > 0;
           });
 
-        return { ...row, fact: newRowFact, clients: activeClients };
+        // RECALCULATE DERIVED METRICS FOR CONSISTENCY
+        const newPotential = newRowFact * 1.15;
+        const newGrowthPotential = Math.max(0, newPotential - newRowFact);
+
+        return { 
+            ...row, 
+            fact: newRowFact, 
+            potential: newPotential,
+            growthPotential: newGrowthPotential,
+            growthPercentage: 15,
+            clients: activeClients 
+        };
       })
       // И тут тоже: не выкидываем строки только из-за того, что факт = 0,
       // если у них нет monthlyFact (иначе точки пропадут).
@@ -121,7 +134,11 @@ export const useAnalytics = (
 
     // Smart Planning
     const smart = enrichDataWithSmartPlan(processedData, okbRegionCounts, 15, new Set());
-    return applyFilters(smart, filters);
+    const filteredSmart = applyFilters(smart, filters);
+    
+    // Apply ABC classification on the FILTERED view
+    // This ensures that "Category A" reflects the top performers *in the selected period*
+    return enrichWithAbcCategories(filteredSmart);
   }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
 
   const allActiveClients = useMemo(() => {

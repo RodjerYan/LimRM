@@ -34,7 +34,7 @@ export const useAppLogic = () => {
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null);
 
     const lastCacheSizeRef = useRef<number>(0);
-    const lastSavedChunksRef = useRef<Map<number, string>>(new Map());
+    const lastDeltaTsRef = useRef<number>(0);
     const isSyncingRef = useRef(false);
 
     // --- NOTIFICATIONS ---
@@ -64,76 +64,8 @@ export const useAppLogic = () => {
         return originalDownloadSnapshot(serverMeta, loadStartDate, loadEndDate);
     }, [originalDownloadSnapshot, loadStartDate, loadEndDate]);
 
-    // --- NORMALIZE HELPER ---
-    const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
-        if (!Array.isArray(rows)) return [];
-        const result: AggregatedDataRow[] = [];
-        const safeFloat = (v: any) => {
-            if (typeof v === 'number') return v;
-            if (typeof v === 'string') {
-                const f = parseFloat(v.replace(',', '.'));
-                return isNaN(f) ? undefined : f;
-            }
-            return undefined;
-        };
-        const isValidCoord = (n: any) => typeof n === 'number' && !isNaN(n) && n !== 0;
-
-        rows.forEach((row, index) => {
-            if (!row) return;
-            const brandRaw = String(row.brand || '').trim();
-            const hasMultipleBrands = brandRaw.length > 2 && /[,;|\r\n]/.test(brandRaw);
-            const generateStableKey = (base: any, suffix: string | number) => {
-                const baseStr = base.key || base.address || `idx_${index}`;
-                return `${baseStr}_${suffix}`.replace(/\s+/g, '_');
-            };
-            const normalizeClient = (c: any, cIdx: number) => {
-                const clientObj = { ...c };
-                const original = c.originalRow || {}; 
-                if (c.lng !== undefined) clientObj.lon = safeFloat(c.lng);
-                if (c.lat !== undefined) clientObj.lat = safeFloat(c.lat);
-                if (!isValidCoord(clientObj.lat)) {
-                    clientObj.lat = safeFloat(c.latitude) || safeFloat(c.geo_lat) || safeFloat(c.y) || safeFloat(c.Lat) || safeFloat(original.lat) || safeFloat(original.latitude);
-                }
-                if (!isValidCoord(clientObj.lon)) {
-                    clientObj.lon = safeFloat(c.longitude) || safeFloat(c.geo_lon) || safeFloat(c.x) || safeFloat(c.Lng) || safeFloat(original.lon) || safeFloat(original.lng);
-                }
-                if (!clientObj.key) {
-                    clientObj.key = generateStableKey(row, `cli_${cIdx}`);
-                }
-                return clientObj;
-            };
-
-            if (hasMultipleBrands) {
-                const parts = brandRaw.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
-                if (parts.length > 1) {
-                    const splitFactor = 1 / parts.length;
-                    parts.forEach((brandPart, idx) => {
-                        const regionName = row.region || 'Неизвестный регион';
-                        result.push({
-                            ...row,
-                            _chunkIndex: row._chunkIndex,
-                            key: generateStableKey(row, `spl_${idx}`),
-                            brand: brandPart,
-                            clientName: `${regionName}: ${brandPart}`,
-                            fact: (row.fact || 0) * splitFactor,
-                            potential: (row.potential || 0) * splitFactor,
-                            growthPotential: (row.growthPotential || 0) * splitFactor,
-                            clients: Array.isArray(row.clients) ? row.clients.map(normalizeClient) : []
-                        });
-                    });
-                    return;
-                }
-            }
-            let clientSource = row.clients;
-            if (!Array.isArray(clientSource) || clientSource.length === 0) { clientSource = [row]; }
-            const normalizedClients = clientSource.map(normalizeClient);
-            const regionName = row.region || 'Неизвестный регион';
-            const brandName = row.brand || 'Без бренда';
-            const finalClientName = row.clientName || `${regionName}: ${brandName}`;
-            result.push({ ...row, _chunkIndex: row._chunkIndex, key: row.key || generateStableKey(row, 'm'), clientName: finalClientName, clients: normalizedClients });
-        });
-        return result;
-    }, []);
+    // --- 3. ANALYTICS HOOK (Moved up to access filter dates) ---
+    const { filters, setFilters, filterStartDate, setFilterStartDate, filterEndDate, setFilterEndDate, filtered, allActiveClients, mapPotentialClients, filterOptions, summaryMetrics } = useAnalytics(allData, okbData, okbRegionCounts);
 
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         let newData = [...allData]; let newUnidentified = [...unidentifiedRows];
@@ -145,23 +77,37 @@ export const useAppLogic = () => {
             const groupKey = `${newPoint.region}-${newPoint.rm}-${newPoint.brand}-${newPoint.packaging}`.toLowerCase();
             const existingGroupIndex = newData.findIndex(g => g.key === groupKey);
             if (existingGroupIndex !== -1) {
-                newData[existingGroupIndex] = { ...newData[existingGroupIndex], fact: newData[existingGroupIndex].fact + (newPoint.fact || 0), clients: [...newData[existingGroupIndex].clients, newPoint] };
+                // Manually merge clients, normalization will fix sums
+                const updatedClients = [...newData[existingGroupIndex].clients, newPoint];
+                newData[existingGroupIndex] = { ...newData[existingGroupIndex], clients: updatedClients };
             } else {
-                newData.push({ __rowId: `row_${Date.now()}`, key: groupKey, rm: newPoint.rm, region: newPoint.region, city: newPoint.city, brand: newPoint.brand, packaging: newPoint.packaging, clientName: `${newPoint.region}: ${newPoint.brand}`, fact: newPoint.fact || 0, potential: (newPoint.fact || 0) * 1.15, growthPotential: 0, growthPercentage: 0, clients: [newPoint] });
+                // New group creation
+                newData.push({ __rowId: `row_${Date.now()}`, key: groupKey, rm: newPoint.rm, region: newPoint.region, city: newPoint.city, brand: newPoint.brand, packaging: newPoint.packaging, clientName: `${newPoint.region}: ${newPoint.brand}`, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0, clients: [newPoint] });
             }
         } else {
             newData = newData.map(group => {
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
-                if (clientIndex !== -1) { const updatedClients = [...group.clients]; updatedClients[clientIndex] = newPoint; return { ...group, clients: updatedClients }; }
+                if (clientIndex !== -1) { 
+                    const oldClient = group.clients[clientIndex];
+                    // Preserve monthlyFact if newPoint doesn't have it (e.g. from editor)
+                    const mergedClient = { ...newPoint, monthlyFact: newPoint.monthlyFact || oldClient.monthlyFact, fact: newPoint.fact || oldClient.fact };
+                    const updatedClients = [...group.clients]; 
+                    updatedClients[clientIndex] = mergedClient; 
+                    return { ...group, clients: updatedClients }; 
+                }
                 return group;
             });
         }
         if (editingClient && (editingClient as MapPoint).key === oldKey) { setEditingClient(prev => prev ? ({ ...prev, ...newPoint }) : null); }
-        enrichWithAbcCategories(newData); setAllData(newData); setUnidentifiedRows(newUnidentified);
+        
+        // --- NO NORMALIZATION HERE: Preserve raw state for view logic ---
+        setAllData(newData); 
+        setUnidentifiedRows(newUnidentified);
+        
         if (!newPoint.isGeocoding && newPoint.lat && newPoint.lon) {
             saveDeltaToCloud({ type: 'update', key: oldKey, rm: newPoint.rm, payload: newPoint, timestamp: Date.now() });
         }
-    }, [allData, unidentifiedRows, editingClient, setAllData, setUnidentifiedRows, saveDeltaToCloud]);
+    }, [allData, unidentifiedRows, editingClient, setAllData, setUnidentifiedRows, saveDeltaToCloud, loadStartDate, loadEndDate]);
 
     const handleDeleteClientLocal = useCallback((rmName: string, address: string) => {
         const normAddress = normalizeAddress(address);
@@ -171,23 +117,22 @@ export const useAppLogic = () => {
             if (group.rm !== rmName) return group;
             const originalClientCount = group.clients.length;
             const newClients = group.clients.filter(c => { const isMatch = normalizeAddress(c.address) === normAddress; if (isMatch) deletedKey = c.key; return !isMatch; });
-            if (newClients.length !== originalClientCount) { wasModified = true; const newFact = newClients.reduce((sum, c) => sum + (c.fact || 0), 0); return { ...group, clients: newClients, fact: newFact, potential: newFact * 1.15 }; }
+            if (newClients.length !== originalClientCount) { wasModified = true; return { ...group, clients: newClients }; }
             return group;
         }).filter(group => group.clients.length > 0);
         const initialUnidentifiedCount = newUnidentified.length;
         newUnidentified = newUnidentified.filter(row => !(row.rm === rmName && normalizeAddress(findAddressInRow(row.rowData)) === normAddress));
         if (newUnidentified.length !== initialUnidentifiedCount) wasModified = true;
         if (wasModified) {
-            enrichWithAbcCategories(newData); setAllData(newData); setUnidentifiedRows(newUnidentified);
+            // --- NO NORMALIZATION HERE ---
+            setAllData(newData); 
+            setUnidentifiedRows(newUnidentified);
             saveDeltaToCloud({ type: 'delete', key: deletedKey || normalizeAddress(address), rm: rmName, timestamp: Date.now() });
         }
-    }, [allData, unidentifiedRows, setAllData, setUnidentifiedRows, saveDeltaToCloud]);
+    }, [allData, unidentifiedRows, setAllData, setUnidentifiedRows, saveDeltaToCloud, loadStartDate, loadEndDate]);
 
     // --- 2. GEOCODING HOOK ---
     const { pendingGeocoding, actionQueue, handleStartPolling, handleQueuedUpdate, handleQueuedDelete } = useGeocoding(addNotification, handleDataUpdate, handleDeleteClientLocal);
-
-    // --- 3. ANALYTICS HOOK ---
-    const { filters, setFilters, filterStartDate, setFilterStartDate, filterEndDate, setFilterEndDate, filtered, allActiveClients, mapPotentialClients, filterOptions, summaryMetrics } = useAnalytics(allData, okbData, okbRegionCounts);
 
     // --- LIVE SYNC ---
     useEffect(() => {
@@ -195,57 +140,52 @@ export const useAppLogic = () => {
             if (allData.length === 0 || processingState.isProcessing || isSyncingRef.current) return;
             isSyncingRef.current = true;
             try {
-                await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
+                // Fetch Deltas
+                const deltasRes = await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
+                const deltas = deltasRes.ok ? await deltasRes.json() : [];
+
+                // Fetch Cache
                 const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
                 if (!res.ok) return;
                 const cacheData = await res.json();
+                
                 const currentCacheSize = Object.keys(cacheData).length + Object.values(cacheData).flat().length;
-                if (currentCacheSize === lastCacheSizeRef.current) return;
-                lastCacheSizeRef.current = currentCacheSize;
-                const freshData = applyCacheToData(allData, cacheData);
-                const currentTotalFact = allData.reduce((sum, r) => sum + r.fact, 0);
-                const freshTotalFact = freshData.reduce((sum, r) => sum + r.fact, 0);
-                if (freshData.length !== allData.length || Math.abs(currentTotalFact - freshTotalFact) > 0.01) {
-                    enrichWithAbcCategories(freshData); setAllData(freshData); addNotification("Данные обновлены из облака", "info");
+                
+                const newestTs = Array.isArray(deltas) && deltas.length > 0
+                    ? Math.max(...deltas.map((d: any) => Number(d.timestamp) || 0))
+                    : 0;
+                
+                const hasNewDeltas = newestTs > lastDeltaTsRef.current;
+                const hasCacheChanges = currentCacheSize !== lastCacheSizeRef.current;
+                
+                if (hasNewDeltas || hasCacheChanges) {
+                    if (hasNewDeltas) lastDeltaTsRef.current = newestTs;
+                    lastCacheSizeRef.current = currentCacheSize;
+
+                    // 1. Apply Deltas
+                    let freshData = applyDeltasToData(allData, deltas);
+                    
+                    // 2. Apply Cache
+                    freshData = applyCacheToData(freshData, cacheData);
+                    
+                    setAllData(freshData); 
+                    addNotification("Данные обновлены из облака", "info");
                 }
             } catch (e) { console.error("Auto-sync failed", e); } finally { isSyncingRef.current = false; }
         };
         const intervalId = setInterval(syncData, 45000);
         return () => clearInterval(intervalId);
-    }, [allData, processingState.isProcessing, applyCacheToData, setAllData, addNotification]);
+    }, [allData, processingState.isProcessing, applyCacheToData, applyDeltasToData, setAllData, addNotification]);
 
     // --- INIT ---
     useEffect(() => {
         const init = async () => {
             setDbStatus('loading');
-            
-            // DISABLED AUTO-RESTORE: Force fresh start on reload as requested.
-            // To restore persistence, uncomment the logic below.
-            
-            /*
-            const local = await loadAnalyticsState();
-            if (local?.allData?.length > 0) {
-                let validatedLocal = normalize(local.allData); enrichWithAbcCategories(validatedLocal);
-                setAllData(validatedLocal); setUnidentifiedRows(local.unidentifiedRows || []); setOkbRegionCounts(local.okbRegionCounts || {}); setDbStatus('ready');
-            }
-            try {
-                const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
-                if (metaRes.ok) {
-                    const serverMeta = await metaRes.json();
-                    const hasLocalData = local?.allData?.length > 0;
-                    const isNewVersion = serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash;
-                    if (serverMeta?.versionHash && (!hasLocalData || isNewVersion)) { await handleDownloadSnapshot(serverMeta); }
-                    setDbStatus('ready');
-                }
-            } catch (e) { setDbStatus('ready'); }
-            */
-
-            // Immediate ready state with empty data
             setDbStatus('ready');
         };
         init();
         return () => { if (updatePollingInterval.current) clearInterval(updatePollingInterval.current); };
-    }, [handleDownloadSnapshot, normalize, setAllData, setUnidentifiedRows, setOkbRegionCounts]);
+    }, [handleDownloadSnapshot, setAllData, setUnidentifiedRows, setOkbRegionCounts]);
 
     const handleForceUpdate = useCallback(async () => {
         if (processingState.isProcessing) return;
