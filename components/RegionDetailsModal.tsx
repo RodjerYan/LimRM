@@ -36,26 +36,26 @@ const ClientTable: React.FC<{
     }, [data, search]);
 
     const isGreen = type === 'active';
-    const headerColor = isGreen ? 'text-emerald-400' : 'text-blue-400';
-    const bgColor = isGreen ? 'bg-emerald-500/10' : 'bg-blue-500/10';
-    const borderColor = isGreen ? 'border-emerald-500/20' : 'border-blue-500/20';
+    const headerColor = isGreen ? 'text-emerald-700' : 'text-indigo-700';
+    const bgColor = isGreen ? 'bg-emerald-50' : 'bg-indigo-50';
+    const borderColor = isGreen ? 'border-emerald-100' : 'border-indigo-100';
 
     return (
-        <div className={`flex flex-col h-full bg-gray-900/50 rounded-xl border ${borderColor} overflow-hidden`}>
-            <div className={`p-4 border-b ${borderColor} ${bgColor}`}>
+        <div className={`flex flex-col h-full bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm`}>
+            <div className={`p-5 border-b ${borderColor} ${bgColor}`}>
                 <div className="flex justify-between items-center mb-2">
-                    <h3 className={`font-bold text-lg flex items-center gap-2 ${headerColor}`}>
+                    <h3 className={`font-black text-lg flex items-center gap-2 ${headerColor}`}>
                         {isGreen ? <FactIcon small /> : <PotentialIcon small />}
                         {title}
                     </h3>
                     <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono bg-gray-900 px-2 py-1 rounded text-gray-300">
+                        <span className="text-xs font-bold bg-white border border-slate-200 px-2.5 py-1 rounded-xl text-slate-600 shadow-sm">
                             {count} ТТ
                         </span>
                         {onExport && (
                             <button 
                                 onClick={onExport} 
-                                className="p-1.5 bg-gray-900 rounded-lg text-gray-400 hover:text-white transition-colors border border-gray-700 hover:border-gray-500"
+                                className="p-1.5 bg-white rounded-xl text-slate-500 hover:text-indigo-600 transition-colors border border-slate-200 hover:border-indigo-300 shadow-sm"
                                 title="Скачать список (XLSX)"
                             >
                                 <ExportIcon small />
@@ -64,8 +64,8 @@ const ClientTable: React.FC<{
                     </div>
                 </div>
                 {isGreen && totalVolume !== undefined && (
-                    <div className="text-sm text-gray-400 mb-3">
-                        Общий объем: <span className="text-white font-bold">{new Intl.NumberFormat('ru-RU').format(totalVolume)} кг</span>
+                    <div className="text-sm text-slate-600 mb-4 font-medium">
+                        Общий объем: <span className="text-emerald-700 font-black font-mono">{new Intl.NumberFormat('ru-RU').format(totalVolume)} кг</span>
                     </div>
                 )}
                 <div className="relative">
@@ -74,49 +74,49 @@ const ClientTable: React.FC<{
                         placeholder="Поиск..." 
                         value={search}
                         onChange={e => setSearch(e.target.value)}
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg py-1.5 pl-8 pr-2 text-xs text-white focus:ring-1 focus:ring-indigo-500"
+                        className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-9 pr-3 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-300 outline-none transition-all"
                     />
-                    <div className="absolute left-2.5 top-1.5 text-gray-500"><SearchIcon /></div>
+                    <div className="absolute left-3 top-2 text-slate-400"><SearchIcon /></div>
                 </div>
             </div>
             
-            <div className="flex-grow overflow-y-auto custom-scrollbar p-0">
+            <div className="flex-grow overflow-y-auto custom-scrollbar p-0 bg-white">
                 <table className="w-full text-left text-xs">
-                    <thead className="bg-gray-800/50 text-gray-400 sticky top-0 backdrop-blur-sm">
+                    <thead className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider sticky top-0 z-10 border-b border-slate-100">
                         <tr>
-                            <th className="px-4 py-2">Наименование</th>
-                            <th className="px-4 py-2">Адрес</th>
-                            {isGreen && <th className="px-4 py-2 text-center">Канал продаж</th>}
-                            <th className="px-4 py-2 text-right">{isGreen ? 'Факт (кг)' : 'Тип'}</th>
+                            <th className="px-5 py-3">Наименование</th>
+                            <th className="px-5 py-3">Адрес</th>
+                            {isGreen && <th className="px-5 py-3 text-center">Канал</th>}
+                            <th className="px-5 py-3 text-right">{isGreen ? 'Факт (кг)' : 'Тип'}</th>
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-800">
+                    <tbody className="divide-y divide-slate-100">
                         {filteredData.length > 0 ? (
                             filteredData.map((item, idx) => (
                                 <tr 
                                     key={idx} 
-                                    className={`hover:bg-white/5 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
+                                    className={`hover:bg-slate-50 transition-colors group ${onRowClick ? 'cursor-pointer' : ''}`}
                                     onClick={() => onRowClick && onRowClick(item)}
                                 >
-                                    <td className="px-4 py-2 font-medium text-gray-300 max-w-[220px] truncate" title={item.name}>
+                                    <td className="px-5 py-3 font-bold text-slate-900 max-w-[200px] truncate group-hover:text-indigo-700 transition-colors" title={item.name}>
                                         {item.name}
                                     </td>
-                                    <td className="px-4 py-2 text-gray-500 max-w-[350px] truncate" title={item.address}>
+                                    <td className="px-5 py-3 text-slate-500 font-medium max-w-[280px] truncate" title={item.address}>
                                         {item.address}
                                     </td>
                                     {isGreen && (
-                                        <td className="px-4 py-2 text-center text-gray-400 text-[10px] uppercase tracking-wider truncate max-w-[150px]" title={item.type}>
+                                        <td className="px-5 py-3 text-center text-slate-400 font-bold text-[9px] uppercase tracking-wider truncate max-w-[120px]" title={item.type}>
                                             {item.type || '—'}
                                         </td>
                                     )}
-                                    <td className={`px-4 py-2 text-right font-mono ${isGreen ? 'text-emerald-300' : 'text-gray-400'}`}>
+                                    <td className={`px-5 py-3 text-right font-mono font-bold ${isGreen ? 'text-emerald-600' : 'text-slate-400'}`}>
                                         {isGreen ? new Intl.NumberFormat('ru-RU').format(item.fact || 0) : (item.type || 'н/д')}
                                     </td>
                                 </tr>
                             ))
                         ) : (
                             <tr>
-                                <td colSpan={isGreen ? 4 : 3} className="text-center py-8 text-gray-500">
+                                <td colSpan={isGreen ? 4 : 3} className="text-center py-10 text-slate-400 font-medium">
                                     Нет данных
                                 </td>
                             </tr>
@@ -131,42 +131,20 @@ const ClientTable: React.FC<{
 const RegionDetailsModal: React.FC<RegionDetailsModalProps> = ({ isOpen, onClose, rmName, regionName, activeClients, potentialClients, onEditClient }) => {
     
     const totalActiveVolume = activeClients.reduce((sum, c) => sum + (c.fact || 0), 0);
-
-    // Sort active by Fact descending
     const sortedActive = [...activeClients].sort((a, b) => (b.fact || 0) - (a.fact || 0));
-    // Sort potential by Name
     const sortedPotential = [...potentialClients].sort((a, b) => a.name.localeCompare(b.name));
 
     const totalUniverse = sortedActive.length + sortedPotential.length;
     const coveragePct = totalUniverse > 0 ? (sortedActive.length / totalUniverse) * 100 : 0;
 
     const handleExport = (data: any[], filenamePrefix: string) => {
-        // Определяем, являются ли данные списком потенциальных клиентов
         const isPotential = filenamePrefix.includes("Uncovered");
-
         let exportData;
-
         if (isPotential) {
-            // Для потенциальных клиентов убираем колонку с фактом
-            exportData = data.map(item => ({
-                'Наименование': item.name,
-                'Адрес': item.address,
-                'Тип/Канал': item.type,
-                'Регион': regionName,
-                'Менеджер': rmName
-            }));
+            exportData = data.map(item => ({ 'Наименование': item.name, 'Адрес': item.address, 'Тип/Канал': item.type, 'Регион': regionName, 'Менеджер': rmName }));
         } else {
-            // Для активных клиентов оставляем все как есть
-            exportData = data.map(item => ({
-                'Наименование': item.name,
-                'Адрес': item.address,
-                'Тип/Канал': item.type,
-                'Факт (кг)': item.fact || 0,
-                'Регион': regionName,
-                'Менеджер': rmName
-            }));
+            exportData = data.map(item => ({ 'Наименование': item.name, 'Адрес': item.address, 'Тип/Канал': item.type, 'Факт (кг)': item.fact || 0, 'Регион': regionName, 'Менеджер': rmName }));
         }
-        
         const ws = XLSX.utils.json_to_sheet(exportData);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Data");
@@ -181,15 +159,15 @@ const RegionDetailsModal: React.FC<RegionDetailsModalProps> = ({ isOpen, onClose
                 <div className="flex flex-col w-full pr-12">
                     <div className="flex justify-between items-start">
                         <div>
-                            <span className="text-xl font-bold">Детализация: {regionName}</span>
-                            <span className="text-sm text-indigo-400 font-normal mt-1 block">Менеджер: {rmName}</span>
+                            <span className="text-xl font-black text-slate-900 tracking-tight">Детализация: {regionName}</span>
+                            <span className="text-sm text-indigo-600 font-bold mt-1 block">Менеджер: {rmName}</span>
                         </div>
                         {/* Coverage Badge */}
                         <div className="text-right">
-                            <div className="text-xs text-gray-500 uppercase font-bold tracking-wider">Покрытие</div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-2xl font-mono font-bold text-white">{coveragePct.toFixed(1)}%</span>
-                                <div className="text-[10px] text-gray-400 flex flex-col items-end leading-tight">
+                            <div className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Покрытие</div>
+                            <div className="flex items-center gap-3">
+                                <span className="text-3xl font-mono font-black text-slate-900 tracking-tighter">{coveragePct.toFixed(1)}%</span>
+                                <div className="text-[10px] text-slate-500 font-bold flex flex-col items-end leading-tight bg-slate-100 px-2 py-1 rounded-lg border border-slate-200">
                                     <span>{sortedActive.length} из {totalUniverse}</span>
                                     <span>точек</span>
                                 </div>
@@ -197,9 +175,9 @@ const RegionDetailsModal: React.FC<RegionDetailsModalProps> = ({ isOpen, onClose
                         </div>
                     </div>
                     {/* Visual Progress Bar */}
-                    <div className="w-full h-1.5 bg-gray-800 rounded-full mt-3 overflow-hidden flex">
-                        <div className="bg-emerald-500 h-full" style={{ width: `${coveragePct}%` }} title="Активные"></div>
-                        <div className="bg-blue-500/50 h-full" style={{ width: `${100 - coveragePct}%` }} title="Свободный потенциал"></div>
+                    <div className="w-full h-2 bg-slate-200 rounded-full mt-4 overflow-hidden flex shadow-inner">
+                        <div className="bg-emerald-500 h-full shadow-[0_0_10px_rgba(16,185,129,0.4)]" style={{ width: `${coveragePct}%` }} title="Активные"></div>
+                        <div className="bg-indigo-200/50 h-full" style={{ width: `${100 - coveragePct}%` }} title="Свободный потенциал"></div>
                     </div>
                 </div>
             }

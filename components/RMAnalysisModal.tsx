@@ -12,7 +12,7 @@ interface RMAnalysisModalProps {
     onClose: () => void;
     rmData: RMMetrics | null;
     baseRate: number;
-    dateRange?: string; // New Prop
+    dateRange?: string;
 }
 
 const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmData, baseRate, dateRange }) => {
@@ -25,7 +25,6 @@ const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmDa
         if (isOpen && rmData) {
             fetchAnalysis();
         } else {
-            // Cleanup when closed
             setAnalysis('');
             setError(null);
             setIsLoading(false);
@@ -35,11 +34,7 @@ const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmDa
 
     const fetchAnalysis = () => {
         if (!rmData) return;
-
-        // Cancel previous request if any
-        if (abortControllerRef.current) {
-            abortControllerRef.current.abort();
-        }
+        if (abortControllerRef.current) abortControllerRef.current.abort();
         abortControllerRef.current = new AbortController();
 
         setIsLoading(true);
@@ -57,10 +52,8 @@ const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmDa
                 setIsLoading(false);
             },
             abortControllerRef.current.signal,
-            dateRange // Pass the date range
-        ).finally(() => {
-            setIsLoading(false);
-        });
+            dateRange
+        ).finally(() => setIsLoading(false));
     };
 
     if (!rmData) return null;
@@ -68,38 +61,38 @@ const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmDa
     const sanitizedHtml = DOMPurify.sanitize(marked.parse(analysis) as string);
     const isHighGrowth = rmData.recommendedGrowthPct > baseRate;
     
-    const headerColor = isHighGrowth ? 'text-emerald-400' : (rmData.recommendedGrowthPct < baseRate ? 'text-amber-400' : 'text-indigo-400');
+    const headerColor = isHighGrowth ? 'text-emerald-600' : (rmData.recommendedGrowthPct < baseRate ? 'text-amber-500' : 'text-indigo-600');
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Анализ плана: ${rmData.rmName}`} maxWidth="max-w-5xl">
             <div className="space-y-6">
                 {/* Key Metrics Header */}
-                <div className="grid grid-cols-3 gap-4 bg-gray-900/50 p-4 rounded-xl border border-gray-700">
-                    <div className="text-center border-r border-gray-700">
-                        <div className="text-xs text-gray-400 mb-1">Доля рынка</div>
-                        <div className="text-xl font-bold text-white">{rmData.marketShare.toFixed(1)}%</div>
+                <div className="grid grid-cols-3 gap-4 bg-slate-50 p-6 rounded-2xl border border-slate-200">
+                    <div className="text-center border-r border-slate-200">
+                        <div className="text-xs text-slate-500 mb-1 font-bold uppercase tracking-wider">Доля рынка</div>
+                        <div className="text-2xl font-black text-slate-900">{rmData.marketShare.toFixed(1)}%</div>
                     </div>
-                    <div className="text-center border-r border-gray-700">
-                        <div className="text-xs text-gray-400 mb-1">Базовый план</div>
-                        <div className="text-xl font-bold text-gray-300">{baseRate}%</div>
+                    <div className="text-center border-r border-slate-200">
+                        <div className="text-xs text-slate-500 mb-1 font-bold uppercase tracking-wider">Базовый план</div>
+                        <div className="text-2xl font-black text-slate-700">{baseRate}%</div>
                     </div>
                     <div className="text-center">
-                        <div className="text-xs text-gray-400 mb-1">Индивидуальный план</div>
-                        <div className={`text-2xl font-bold ${headerColor}`}>
+                        <div className="text-xs text-slate-500 mb-1 font-bold uppercase tracking-wider">Индивидуальный</div>
+                        <div className={`text-2xl font-black ${headerColor}`}>
                             {rmData.recommendedGrowthPct > 0 ? '+' : ''}{rmData.recommendedGrowthPct.toFixed(1)}%
                         </div>
                     </div>
                 </div>
 
                 {/* AI Analysis Content */}
-                <div className="bg-card-bg/50 p-6 rounded-xl border border-indigo-500/20 min-h-[200px] relative">
-                    <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-3">
-                        <h3 className="text-lg font-bold text-indigo-300 flex items-center gap-2">
-                            <div className="p-1 bg-indigo-500/20 rounded-lg"><TrendingUpIcon /></div>
+                <div className="bg-white p-8 rounded-3xl border border-indigo-100 shadow-lg min-h-[200px] relative">
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+                        <h3 className="text-lg font-bold text-indigo-700 flex items-center gap-3">
+                            <div className="p-2 bg-indigo-50 rounded-xl"><TrendingUpIcon /></div>
                             AI Анализ Рынка (Google Grounding)
                         </h3>
                         {isLoading && (
-                            <div className="flex items-center gap-2 text-xs text-cyan-400 animate-pulse">
+                            <div className="flex items-center gap-2 text-xs text-indigo-500 font-bold animate-pulse">
                                 <SearchIcon small />
                                 <span>
                                     {dateRange 
@@ -112,19 +105,19 @@ const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmDa
 
                     {error ? (
                         <div className="text-center py-8">
-                            <p className="text-danger mb-4">{error}</p>
-                            <button onClick={fetchAnalysis} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-white text-sm">
+                            <p className="text-red-600 mb-4 font-bold">{error}</p>
+                            <button onClick={fetchAnalysis} className="bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-xl text-slate-700 text-sm font-bold transition-colors">
                                 Повторить
                             </button>
                         </div>
                     ) : (
-                        <div className="prose prose-invert prose-sm max-w-none text-gray-300 leading-relaxed">
+                        <div className="prose prose-slate prose-sm max-w-none text-slate-700 leading-relaxed font-medium">
                             {!analysis && isLoading ? (
-                                <div className="space-y-3 animate-pulse">
-                                    <div className="h-4 bg-gray-700 rounded w-3/4"></div>
-                                    <div className="h-4 bg-gray-700 rounded w-full"></div>
-                                    <div className="h-4 bg-gray-700 rounded w-5/6"></div>
-                                    <div className="text-xs text-gray-500 pt-2">Анализ конкурентов...</div>
+                                <div className="space-y-4 animate-pulse">
+                                    <div className="h-4 bg-slate-200 rounded w-3/4"></div>
+                                    <div className="h-4 bg-slate-200 rounded w-full"></div>
+                                    <div className="h-4 bg-slate-200 rounded w-5/6"></div>
+                                    <div className="text-xs text-slate-400 pt-2 font-bold uppercase">Анализ конкурентов...</div>
                                 </div>
                             ) : (
                                 <div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
@@ -133,11 +126,11 @@ const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmDa
                     )}
                 </div>
                 
-                <div className="bg-yellow-500/10 border border-yellow-500/20 p-4 rounded-lg flex items-start gap-3">
-                    <div className="text-yellow-500 mt-1"><TargetIcon small/></div>
-                    <div className="text-xs text-gray-300">
-                        <strong className="text-yellow-400 block mb-1">Как читать это обоснование:</strong>
-                        Алгоритм учитывает эффект "низкой базы" и реальные рыночные тренды, найденные через Google Search. Если доля рынка мала, потенциал роста огромен, и стандартных {baseRate}% недостаточно.
+                <div className="bg-amber-50 border border-amber-100 p-5 rounded-2xl flex items-start gap-3">
+                    <div className="text-amber-500 mt-1"><TargetIcon small/></div>
+                    <div className="text-xs text-amber-900 leading-relaxed">
+                        <strong className="text-amber-700 block mb-1 uppercase tracking-wide">Как читать это обоснование:</strong>
+                        Алгоритм учитывает эффект "низкой базы" и реальные рыночные тренды, найденные через Google Search. Если доля рынка мала, потенциал роста огромный, и стандартных {baseRate}% недостаточно.
                     </div>
                 </div>
             </div>
