@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import FileUpload from '../FileUpload';
 import OKBManagement from '../OKBManagement';
 import OutlierDetailsModal from '../OutlierDetailsModal';
@@ -73,15 +73,35 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [channelSearchTerm, setChannelSearchTerm] = useState('');
 
+  // Determine Effective Period: Prefer load dates (sync scope) if available, falling back to analysis dates
+  const effectiveStart = props.loadStartDate || props.startDate;
+  const effectiveEnd = props.loadEndDate || props.endDate;
+
   // --- DEBUG LOGGING ---
   useEffect(() => {
-    // console.log('[ADAPTA] uploadedData len:', props.uploadedData?.length);
-    // console.log('[ADAPTA] activeClientsCount (prop):', props.activeClientsCount);
+    console.log('[ADAPTA] uploadedData len:', props.uploadedData?.length);
+    console.log('[ADAPTA] effective dates:', effectiveStart, effectiveEnd);
+    
     if (props.uploadedData?.length) {
-       // console.log('[ADAPTA] sample row fact:', props.uploadedData[0].fact);
+        const sampleRow = props.uploadedData[0];
+        const sampleClient = sampleRow.clients?.[0];
+        console.log('[ADAPTA] sample client:', {
+             key: sampleClient?.key,
+             fact: sampleClient?.fact,
+             hasMonthly: !!sampleClient?.monthlyFact && Object.keys(sampleClient.monthlyFact).length > 0
+        });
     }
-  }, [props.uploadedData, props.activeClientsCount]);
+  }, [props.uploadedData, effectiveStart, effectiveEnd]);
   // ---------------------
+
+  // Detect if we actually have temporal data to filter
+  const hasMonthlyData = useMemo(() => {
+      if (!props.uploadedData || props.uploadedData.length === 0) return false;
+      // Check first 20 rows as a heuristic
+      return props.uploadedData.slice(0, 20).some(row => 
+          row.clients.some(c => c.monthlyFact && Object.keys(c.monthlyFact).length > 0)
+      );
+  }, [props.uploadedData]);
 
   // Handle external request to open a channel (e.g., from Global Search)
   useEffect(() => {
@@ -91,54 +111,25 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     }
   }, [props.openChannelRequest, props.onConsumeOpenChannelRequest]);
 
-  // Determine Effective Period: Prefer load dates (sync scope) if available, falling back to analysis dates
-  const effectiveStart = props.loadStartDate || props.startDate;
-  const effectiveEnd = props.loadEndDate || props.endDate;
-
   // Helper for safe date normalization (Universal Parser)
-  const toMonthKey = (raw?: string | null): string | null => {
+  // Memoized or moved outside to be stable
+  const toMonthKey = useCallback((raw?: string | null): string | null => {
     if (!raw) return null;
-    // Replace separators dots/slashes with dashes
     const s = String(raw).trim().replace(/[./]/g, '-');
-
-    // 1) YYYY-MM / YYYY-M / YYYY-MM-DD
     let m = s.match(/^(\d{4})-(\d{1,2})/);
-    if (m) {
-        const year = m[1];
-        const month = parseInt(m[2], 10);
-        if (month < 1 || month > 12) return null;
-        return `${year}-${String(month).padStart(2, '0')}`;
-    }
-
-    // 2) DD-MM-YYYY (take month and year)
+    if (m) return `${m[1]}-${String(parseInt(m[2], 10)).padStart(2, '0')}`;
     m = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
-    if (m) {
-        const month = parseInt(m[2], 10);
-        const year = m[3];
-        if (month < 1 || month > 12) return null;
-        return `${year}-${String(month).padStart(2, '0')}`;
-    }
-
-    // 3) MM-YYYY
+    if (m) return `${m[3]}-${String(parseInt(m[2], 10)).padStart(2, '0')}`;
     m = s.match(/^(\d{1,2})-(\d{4})$/);
-    if (m) {
-        const month = parseInt(m[1], 10);
-        const year = m[2];
-        if (month < 1 || month > 12) return null;
-        return `${year}-${String(month).padStart(2, '0')}`;
-    }
-
+    if (m) return `${m[2]}-${String(parseInt(m[1], 10)).padStart(2, '0')}`;
     return null;
-  };
+  }, []);
 
   // Helper to get client fact for the selected period
-  const getClientFact = (client: MapPoint) => {
+  const getClientFact = useCallback((client: MapPoint) => {
     // If client has detailed monthly data, we MUST use it to respect the filter
     if (client.monthlyFact && Object.keys(client.monthlyFact).length > 0) {
       let sum = 0;
-
-      // Normalize filter inputs using the same robust helper as keys
-      // USE EFFECTIVE DATES HERE
       const filterStart = toMonthKey(effectiveStart);
       const filterEnd = toMonthKey(effectiveEnd);
       const hasFilter = Boolean(filterStart || filterEnd);
@@ -146,15 +137,12 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       Object.entries(client.monthlyFact).forEach(([date, val]) => {
         if (date === 'unknown') return;
 
-        const mk = toMonthKey(date);
-        
-        // Strict filter logic: 
-        // If a filter is active, ignore keys that don't parse to a valid date.
-        // This prevents garbage data from leaking into specific time windows.
+        // If filtering is active, enforce it.
         if (hasFilter) {
-            if (!mk) return; 
-            if (filterStart && mk < filterStart) return;
-            if (filterEnd && mk > filterEnd) return;
+             const mk = toMonthKey(date);
+             if (!mk) return; 
+             if (filterStart && mk < filterStart) return;
+             if (filterEnd && mk > filterEnd) return;
         }
 
         sum += (val as number) || 0;
@@ -162,8 +150,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       return sum;
     }
 
+    // Fallback: If no monthly breakdown exists, return total fact.
+    // NOTE: This means date filtering is effectively IGNORED for this client.
     return client.fact || 0;
-  };
+  }, [effectiveStart, effectiveEnd, toMonthKey]);
 
   // Fixed Universe of Clients (Base Clients) based on CURRENT/EFFECTIVE filter
   const baseClientKeys = useMemo(() => {
@@ -172,12 +162,13 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       props.uploadedData.forEach((row) => {
         row.clients.forEach((c) => {
           const fact = getClientFact(c);
+          // Only count client if it has volume in the selected period (or total if no period data)
           if (fact > 0.001) set.add(c.key);
         });
       });
     }
     return set;
-  }, [props.uploadedData, effectiveStart, effectiveEnd]);
+  }, [props.uploadedData, getClientFact]);
 
   // Use internal calculation for UI consistency instead of prop from parent (which might be filtered differently)
   const displayActiveCount = props.uploadedData ? baseClientKeys.size : props.activeClientsCount;
@@ -214,7 +205,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       .filter((row) => row.fact > 0);
 
     return detectOutliers(relevantData);
-  }, [props.uploadedData, effectiveStart, effectiveEnd]);
+  }, [props.uploadedData, getClientFact]);
 
   const channelStats = useMemo(() => {
     if (!props.uploadedData || props.uploadedData.length === 0) return [];
@@ -244,7 +235,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         percentage: totalUniqueCount > 0 ? (data.uniqueKeys.size / totalUniqueCount) * 100 : 0,
       }))
       .sort((a, b) => b.count - a.count);
-  }, [props.uploadedData, effectiveStart, effectiveEnd, baseClientKeys]);
+  }, [props.uploadedData, getClientFact, baseClientKeys]);
 
   const groupedChannelData = useMemo(() => {
     if (!selectedChannel || !props.uploadedData) return null;
@@ -284,7 +275,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       hierarchy[rm][city].push(c);
     });
     return hierarchy;
-  }, [selectedChannel, props.uploadedData, channelSearchTerm, effectiveStart, effectiveEnd, baseClientKeys]);
+  }, [selectedChannel, props.uploadedData, channelSearchTerm, getClientFact, baseClientKeys]);
 
   const rowsToDisplay = useMemo(() => {
     if (props.processingState.isProcessing) {
@@ -494,15 +485,15 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                       <StatTile
-                        label={props.processingState.isProcessing ? "Обработано строк" : "Клиентов в периоде"}
+                        label={props.processingState.isProcessing ? "Обработано строк" : "Клиентов"}
                         value={rowsToDisplay}
                         accent="neutral"
                         footnote={
                           props.processingState.isProcessing
                             ? 'Чтение снимка…'
-                            : props.startDate || props.endDate
-                            ? 'С продажами > 0'
-                            : 'Всего в выборке'
+                            : hasMonthlyData 
+                                ? ((effectiveStart || effectiveEnd) ? 'В выбранном периоде' : 'Весь период')
+                                : 'Всего в базе (нет дат)'
                         }
                       />
                       <StatTile

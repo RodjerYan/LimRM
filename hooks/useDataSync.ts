@@ -292,24 +292,51 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                 lastSavedChunksRef.current.set(item.index, text);
                                 const chunkData = JSON.parse(text);
                                 
-                                let newRows = [];
+                                // --- DEEP DEBUG LOGGING FOR SPECIFIC FILES ---
+                                const debugThis =
+                                  item.file.name?.includes('snapshot38') ||
+                                  item.file.name?.includes('snapshot42');
+
+                                if (debugThis) {
+                                  console.log(`[DEBUG ${item.file.name}] chunk keys:`, Object.keys(chunkData));
+                                  console.log(`[DEBUG ${item.file.name}] typeof rows:`, typeof chunkData.rows, 'isArray:', Array.isArray(chunkData.rows));
+                                  console.log(`[DEBUG ${item.file.name}] typeof aggregatedData:`, typeof chunkData.aggregatedData, 'isArray:', Array.isArray(chunkData.aggregatedData));
+                                  console.log(`[DEBUG ${item.file.name}] rows snippet:`, chunkData.rows ? JSON.stringify(chunkData.rows).slice(0, 200) : 'no rows');
+                                }
+                                
+                                let newRows: any[] = [];
                                 if (Array.isArray(chunkData.rows)) newRows = chunkData.rows;
                                 else if (Array.isArray(chunkData.aggregatedData)) newRows = chunkData.aggregatedData;
                                 
-                                // DETECT IF THIS IS A SNAPSHOT (OBJECTS) OR RAW FILE (ARRAYS)
-                                const isSnapshotObject = newRows.length > 0 && 
-                                    typeof newRows[0] === 'object' && 
-                                    !Array.isArray(newRows[0]) && 
-                                    'clients' in newRows[0];
+                                if (!Array.isArray(newRows) || newRows.length === 0) {
+                                    if (chunkData.rows || chunkData.aggregatedData) {
+                                        console.warn(`⚠️ ${item.file.name}: rows/aggregatedData is not an array. Skipping until converter available.`);
+                                    } else {
+                                        console.warn(`Empty chunk skipped: ${item.file.name}`);
+                                    }
+                                    // Chunk is technically processed (skipped), continue loop
+                                } else {
+                                    const firstRow = newRows[0];
 
-                                if (newRows.length > 0) {
-                                    console.log(`Processing chunk ${item.file.name}: ${newRows.length} rows (${isSnapshotObject ? 'Snapshot' : 'Raw'})`);
-                                    if (isSnapshotObject) {
+                                    // STRICT TYPE GUARDS
+                                    // Snapshot: Object with 'clients' property that IS an array
+                                    const isSnapshot = 
+                                        firstRow &&
+                                        typeof firstRow === 'object' && 
+                                        !Array.isArray(firstRow) && 
+                                        Array.isArray((firstRow as any).clients);
+
+                                    // Raw Array: Array of values (Excel row)
+                                    const isRawArray = Array.isArray(firstRow);
+
+                                    console.log(`Processing chunk ${item.file.name}: ${newRows.length} rows (${isSnapshot ? 'Snapshot' : isRawArray ? 'Raw' : 'Unknown/ObjectRaw'})`);
+                                    
+                                    if (isSnapshot) {
                                         worker.postMessage({
                                             type: 'RESTORE_CHUNK',
                                             payload: { chunkData: newRows }
                                         });
-                                    } else {
+                                    } else if (isRawArray) {
                                         worker.postMessage({
                                             type: 'PROCESS_CHUNK',
                                             payload: {
@@ -317,9 +344,10 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                                 isFirstChunk: item.index === 0
                                             }
                                         });
+                                    } else {
+                                        // PROTECT AGAINST WORKER CRASH: Array of Objects that are NOT snapshots
+                                        console.warn(`❌ SKIPPING chunk ${item.file.name} to avoid worker crash. Unknown format (Array of Objects?). First row:`, firstRow);
                                     }
-                                } else {
-                                    console.warn(`Empty chunk skipped: ${item.file.name}`);
                                 }
 
                                 if (chunkData.meta && !loadedMeta) loadedMeta = chunkData.meta;
@@ -387,6 +415,18 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                         console.warn('[Sync] Snapshot lacks monthly details. Skipping period normalization to preserve data.');
                     }
                 }
+
+                // --- DEBUG INSPECTION ---
+                if (finalData.length > 0) {
+                    const sample = finalData[0]?.clients?.slice(0, 5).map(c => ({
+                        key: c.key,
+                        fact: c.fact,
+                        hasMonthly: !!c.monthlyFact,
+                        monthlyLen: c.monthlyFact ? Object.keys(c.monthlyFact).length : 0
+                    })) || [];
+                    console.log('[SYNC] FINAL DATA SAMPLE:', sample);
+                }
+                // -----------------------
 
                 enrichWithAbcCategories(finalData);
                 setAllData(finalData);
