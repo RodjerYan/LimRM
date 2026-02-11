@@ -15,7 +15,6 @@ import {
   AlertIcon,
   InfoIcon,
   SuccessIcon,
-  ChannelIcon,
   LoaderIcon,
   SearchIcon,
   UsersIcon,
@@ -452,14 +451,14 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         tabIndex={props.onUnidentifiedClick ? 0 : -1}
                         onClick={props.onUnidentifiedClick}
                         className={[
-                          'rounded-3xl border border-slate-200/70 bg-white/70 p-5',
+                          'rounded-3xl border border-slate-200/70 bg-white/70 p-3.5',
                           'shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all hover:bg-white hover:shadow-[0_18px_50px_rgba(15,23,42,0.10)]',
                           props.onUnidentifiedClick ? 'cursor-pointer active:scale-[0.98]' : '',
                           'flex flex-col justify-between h-full'
                         ].join(' ')}
                       >
                         <div className="flex items-start justify-between">
-                          <div className="t-label">
+                          <div className="text-[10px] uppercase tracking-[0.18em] text-slate-600 font-bold truncate">
                             Неопознанные
                           </div>
                           {props.onUnidentifiedClick && (
@@ -469,10 +468,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                           )}
                         </div>
                         
-                        {/* Improved styling for the metric value (using clamp 15-20px) */}
+                        {/* Improved styling for the metric value (using clamp 13-18px) */}
                         <div
-                            className={`mt-1 font-semibold tabular-nums leading-none tracking-tight whitespace-nowrap ${props.unidentifiedCount > 0 ? 'text-amber-700' : 'text-emerald-700'}`}
-                            style={{ fontSize: "clamp(15px, 1.35vw, 20px)" }}
+                            className={`mt-1 font-semibold tabular-nums break-words leading-none tracking-tight ${props.unidentifiedCount > 0 ? 'text-amber-700' : 'text-emerald-700'}`}
+                            style={{ fontSize: "clamp(13px, 1.15vw, 18px)" }}
                             title={props.unidentifiedCount.toLocaleString('ru-RU')}
                         >
                           {props.unidentifiedCount.toLocaleString('ru-RU')}

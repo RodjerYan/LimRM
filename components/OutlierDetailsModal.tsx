@@ -2,7 +2,7 @@
 import React, { useMemo } from 'react';
 import Modal from './Modal';
 import { AggregatedDataRow } from '../types';
-import { AlertIcon, CheckIcon, FactIcon } from './icons';
+import { AlertIcon, FactIcon } from './icons';
 
 interface OutlierItem {
     row: AggregatedDataRow;
@@ -32,16 +32,16 @@ const OutlierDetailsModal: React.FC<OutlierDetailsModalProps> = ({ isOpen, onClo
             const contribution = totalFact > 0 ? (clientFact / totalFact) * 100 : 0;
             
             let diagnosis = '';
-            let statusColor = 'text-gray-400';
+            let statusColor = 'text-slate-400';
 
             if (zScore > 0) {
                 // Context: High Sales Anomaly
                 if (contribution > 50) {
                     diagnosis = 'Основной драйвер аномалии (Доминант)';
-                    statusColor = 'text-red-400 font-bold';
+                    statusColor = 'text-rose-600 font-bold';
                 } else if (contribution > 20) {
                     diagnosis = 'Значительный вклад в сверх-продажи';
-                    statusColor = 'text-amber-400';
+                    statusColor = 'text-amber-600';
                 } else {
                     diagnosis = 'Стандартный объем';
                 }
@@ -49,10 +49,10 @@ const OutlierDetailsModal: React.FC<OutlierDetailsModalProps> = ({ isOpen, onClo
                 // Context: Low Sales Anomaly
                 if (clientFact === 0) {
                     diagnosis = 'Нулевые продажи (Критично)';
-                    statusColor = 'text-red-500 font-bold';
+                    statusColor = 'text-red-600 font-bold';
                 } else if (contribution < 5) {
                     diagnosis = 'Крайне низкая эффективность';
-                    statusColor = 'text-orange-400';
+                    statusColor = 'text-orange-500';
                 } else {
                     diagnosis = 'Низкий объем';
                 }
@@ -68,9 +68,10 @@ const OutlierDetailsModal: React.FC<OutlierDetailsModalProps> = ({ isOpen, onClo
     }, [row, zScore]);
 
     const isPositive = zScore > 0;
-    const colorClass = isPositive ? 'text-emerald-400' : 'text-red-400';
-    const borderClass = isPositive ? 'border-emerald-500/30' : 'border-red-500/30';
-    const bgClass = isPositive ? 'bg-emerald-500/10' : 'bg-red-500/10';
+    const colorClass = isPositive ? 'text-emerald-600' : 'text-rose-600';
+    const borderClass = isPositive ? 'border-emerald-200' : 'border-rose-200';
+    const bgClass = isPositive ? 'bg-emerald-50' : 'bg-rose-50';
+    const iconBgClass = isPositive ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600';
 
     return (
         <Modal 
@@ -81,16 +82,16 @@ const OutlierDetailsModal: React.FC<OutlierDetailsModalProps> = ({ isOpen, onClo
         >
             <div className="space-y-6">
                 {/* Header Summary */}
-                <div className={`p-4 rounded-xl border ${borderClass} ${bgClass} flex items-start gap-4`}>
-                    <div className={`p-2 rounded-lg bg-gray-900/50 ${colorClass}`}>
+                <div className={`p-4 rounded-2xl border ${borderClass} ${bgClass} flex items-start gap-4`}>
+                    <div className={`p-2 rounded-xl ${iconBgClass}`}>
                         <AlertIcon />
                     </div>
                     <div>
                         <h4 className={`text-lg font-bold ${colorClass} mb-1`}>
                             {isPositive ? 'Сверх-высокие показатели' : 'Критические отклонения'} (Z-Score: {zScore.toFixed(2)})
                         </h4>
-                        <p className="text-sm text-gray-300">{reason}</p>
-                        <div className="mt-2 text-xs text-gray-400">
+                        <p className="text-sm text-slate-700 font-medium">{reason}</p>
+                        <div className="mt-2 text-xs text-slate-500">
                             Группа отклоняется от нормы на <strong>{Math.abs(zScore).toFixed(1)}</strong> стандартных отклонений. 
                             {isPositive 
                                 ? ' Рекомендуется проверить данные на дублирование или оптовые отгрузки.' 
@@ -100,41 +101,41 @@ const OutlierDetailsModal: React.FC<OutlierDetailsModalProps> = ({ isOpen, onClo
                 </div>
 
                 {/* Clients Breakdown */}
-                <div className="bg-gray-900/50 rounded-xl border border-gray-700 overflow-hidden">
-                    <div className="p-3 border-b border-gray-700 bg-gray-800/50 flex justify-between items-center">
-                        <h5 className="font-bold text-gray-200 flex items-center gap-2">
+                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                    <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
+                        <h5 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
                             <FactIcon small /> Вклад клиентов в аномалию
                         </h5>
-                        <span className="text-xs text-gray-500">Всего ТТ: {analyzedClients.length}</span>
+                        <span className="text-xs text-slate-500 bg-white border border-slate-200 px-2 py-1 rounded-lg">Всего ТТ: {analyzedClients.length}</span>
                     </div>
                     
                     <div className="max-h-[50vh] overflow-y-auto custom-scrollbar">
                         <table className="w-full text-sm text-left">
-                            <thead className="text-xs text-gray-500 bg-gray-800/80 sticky top-0">
+                            <thead className="text-xs text-slate-500 bg-slate-50 sticky top-0 uppercase tracking-wider font-bold">
                                 <tr>
-                                    <th className="px-4 py-2">Клиент</th>
-                                    <th className="px-4 py-2">Адрес</th>
-                                    <th className="px-4 py-2 text-right">Факт</th>
-                                    <th className="px-4 py-2 text-right">Вклад</th>
-                                    <th className="px-4 py-2">Диагноз системы</th>
+                                    <th className="px-6 py-3">Клиент</th>
+                                    <th className="px-6 py-3">Адрес</th>
+                                    <th className="px-6 py-3 text-right">Факт</th>
+                                    <th className="px-6 py-3 text-right">Вклад</th>
+                                    <th className="px-6 py-3">Диагноз системы</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-gray-800">
+                            <tbody className="divide-y divide-slate-100">
                                 {analyzedClients.map((client) => (
-                                    <tr key={client.key} className="hover:bg-white/5 transition-colors">
-                                        <td className="px-4 py-3 font-medium text-white max-w-[200px] truncate" title={client.name}>
+                                    <tr key={client.key} className="hover:bg-slate-50 transition-colors">
+                                        <td className="px-6 py-3 font-bold text-slate-900 max-w-[200px] truncate" title={client.name}>
                                             {client.name}
                                         </td>
-                                        <td className="px-4 py-3 text-gray-400 max-w-[250px] truncate" title={client.address}>
+                                        <td className="px-6 py-3 text-slate-500 max-w-[250px] truncate font-medium" title={client.address}>
                                             {client.address}
                                         </td>
-                                        <td className="px-4 py-3 text-right font-mono text-white">
+                                        <td className="px-6 py-3 text-right font-mono text-slate-900 font-bold">
                                             {new Intl.NumberFormat('ru-RU').format(client.fact || 0)}
                                         </td>
-                                        <td className="px-4 py-3 text-right font-mono text-gray-400">
+                                        <td className="px-6 py-3 text-right font-mono text-slate-500">
                                             {client.contribution.toFixed(1)}%
                                         </td>
-                                        <td className={`px-4 py-3 text-xs ${client.statusColor}`}>
+                                        <td className={`px-6 py-3 text-xs font-semibold ${client.statusColor}`}>
                                             {client.diagnosis}
                                         </td>
                                     </tr>

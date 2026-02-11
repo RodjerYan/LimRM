@@ -28,10 +28,11 @@ export function StatTile({
 
   const valueStyle = useMemo<React.CSSProperties>(() => {
     // Reduced sizing to prevent overflow and "shouting" UI
+    // Logic: Smaller start point (13px) and smaller growth factor
     return {
       fontSize: isMostlyNumeric
-        ? "clamp(15px, 1.35vw, 20px)"
-        : "clamp(14px, 1.2vw, 18px)",
+        ? "clamp(13px, 1.15vw, 18px)"
+        : "clamp(13px, 1.05vw, 17px)",
     };
   }, [isMostlyNumeric]);
 
@@ -39,7 +40,7 @@ export function StatTile({
     <div
       className={
         `rounded-3xl border border-slate-200/70 bg-gradient-to-br ${a[accent]} ` +
-        "p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] " +
+        "p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] " +
         "hover:shadow-[0_18px_50px_rgba(15,23,42,0.10)] transition-all h-full flex flex-col justify-between min-w-0"
       }
     >
@@ -50,11 +51,11 @@ export function StatTile({
         {label}
       </div>
       
-      {/* Remove truncate for numbers to avoid "11 3...", use whitespace-nowrap instead */}
+      {/* Changed whitespace-nowrap to break-words to allow wrapping if container is too narrow */}
       <div 
         className={[
           "mt-1 font-semibold text-slate-900 leading-none tracking-tight",
-          isMostlyNumeric ? "tabular-nums whitespace-nowrap" : "truncate"
+          isMostlyNumeric ? "tabular-nums break-words" : "truncate"
         ].join(" ")}
         style={valueStyle}
         title={value}

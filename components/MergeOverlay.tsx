@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { CheckIcon, DataIcon, TrashIcon } from './icons';
 
 interface MergeOverlayProps {
@@ -68,32 +68,32 @@ const MergeOverlay: React.FC<MergeOverlayProps> = ({ isOpen, initialCount, final
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md animate-fade-in">
-            <div className="relative w-full max-w-md bg-gray-900 border border-indigo-500/30 rounded-3xl p-8 shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/70 backdrop-blur-md animate-fade-in">
+            <div className="relative w-full max-w-md bg-white border border-slate-200 rounded-3xl p-8 shadow-[0_30px_80px_rgba(15,23,42,0.18)] overflow-hidden">
                 
-                {/* Background Decor */}
+                {/* Background Decor (Light) */}
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500 animate-shimmer"></div>
-                <div className="absolute -top-20 -right-20 w-60 h-60 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none"></div>
+                <div className="absolute -top-20 -right-20 w-60 h-60 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none"></div>
                 
                 {phase === 'confirm' && (
                     <div className="text-center space-y-6 animate-scale-in">
-                        <div className="w-20 h-20 bg-indigo-500/10 rounded-full flex items-center justify-center mx-auto border border-indigo-500/30 text-indigo-400">
+                        <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mx-auto border border-indigo-100 text-indigo-500">
                             <DataIcon />
                         </div>
                         
                         <div>
-                            <h3 className="text-2xl font-bold text-white mb-2">Оптимизация Базы</h3>
-                            <p className="text-gray-400 text-sm">
+                            <h3 className="text-2xl font-bold text-slate-900 mb-2">Оптимизация Базы</h3>
+                            <p className="text-slate-500 text-sm">
                                 Система проанализировала <strong>{initialCount.toLocaleString()}</strong> записей.
                                 <br/>Найдено дубликатов по адресу и каналу:
                             </p>
                         </div>
 
-                        <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
-                            <div className="text-4xl font-black text-white font-mono mb-1">
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                            <div className="text-4xl font-black text-slate-900 font-mono mb-1">
                                 {duplicatesCount.toLocaleString()}
                             </div>
-                            <div className="text-xs text-red-400 font-bold uppercase tracking-widest flex items-center justify-center gap-2">
+                            <div className="text-xs text-rose-500 font-bold uppercase tracking-widest flex items-center justify-center gap-2">
                                 <TrashIcon className="w-3 h-3"/> Лишние записи
                             </div>
                         </div>
@@ -101,13 +101,13 @@ const MergeOverlay: React.FC<MergeOverlayProps> = ({ isOpen, initialCount, final
                         <div className="grid grid-cols-2 gap-4">
                             <button 
                                 onClick={onCancel}
-                                className="py-3 px-4 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold text-sm transition-all"
+                                className="py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-sm transition-all"
                             >
                                 Отмена
                             </button>
                             <button 
                                 onClick={startMerge}
-                                className="py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm transition-all shadow-lg shadow-indigo-900/50"
+                                className="py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm transition-all shadow-lg shadow-indigo-500/30"
                             >
                                 Объединить
                             </button>
@@ -119,24 +119,24 @@ const MergeOverlay: React.FC<MergeOverlayProps> = ({ isOpen, initialCount, final
                     <div className="text-center space-y-8 animate-fade-in">
                         <div className="relative w-32 h-32 mx-auto">
                             {/* Spinning Rings */}
-                            <div className="absolute inset-0 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
-                            <div className="absolute inset-2 border-4 border-purple-500/20 border-b-purple-500 rounded-full animate-spin-slow"></div>
+                            <div className="absolute inset-0 border-4 border-indigo-100 border-t-indigo-500 rounded-full animate-spin"></div>
+                            <div className="absolute inset-2 border-4 border-purple-100 border-b-purple-500 rounded-full animate-spin-slow"></div>
                             
                             {/* Center Number */}
                             <div className="absolute inset-0 flex items-center justify-center flex-col">
-                                <span className="text-2xl font-black text-white font-mono tabular-nums">
+                                <span className="text-2xl font-black text-slate-900 font-mono tabular-nums">
                                     {currentCount.toLocaleString()}
                                 </span>
                             </div>
                         </div>
 
                         <div>
-                            <h3 className="text-lg font-bold text-indigo-300 animate-pulse">Сжатие данных...</h3>
-                            <p className="text-xs text-gray-500 mt-2">Объединение объемов продаж и истории</p>
+                            <h3 className="text-lg font-bold text-indigo-600 animate-pulse">Сжатие данных...</h3>
+                            <p className="text-xs text-slate-500 mt-2">Объединение объемов продаж и истории</p>
                         </div>
 
                         {/* Progress Bar */}
-                        <div className="w-full bg-gray-800 h-2 rounded-full overflow-hidden">
+                        <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
                             <div 
                                 className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-100 ease-out"
                                 style={{ width: `${progress}%` }}
@@ -147,25 +147,25 @@ const MergeOverlay: React.FC<MergeOverlayProps> = ({ isOpen, initialCount, final
 
                 {phase === 'success' && (
                     <div className="text-center space-y-6 animate-scale-in">
-                        <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto border border-emerald-500/30 text-emerald-400">
+                        <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mx-auto border border-emerald-100 text-emerald-500">
                             <CheckIcon />
                         </div>
                         
                         <div>
-                            <h3 className="text-2xl font-bold text-white mb-2">Готово!</h3>
-                            <p className="text-emerald-400 text-sm font-medium">
+                            <h3 className="text-2xl font-bold text-slate-900 mb-2">Готово!</h3>
+                            <p className="text-emerald-600 text-sm font-medium">
                                 База оптимизирована успешно.
                             </p>
                         </div>
 
-                        <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700 grid grid-cols-2 divide-x divide-gray-700">
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 grid grid-cols-2 divide-x divide-slate-200">
                             <div>
-                                <div className="text-xs text-gray-500 uppercase">Было</div>
-                                <div className="text-lg font-bold text-gray-400 line-through">{initialCount.toLocaleString()}</div>
+                                <div className="text-xs text-slate-400 uppercase">Было</div>
+                                <div className="text-lg font-bold text-slate-400 line-through">{initialCount.toLocaleString()}</div>
                             </div>
                             <div>
-                                <div className="text-xs text-emerald-500 uppercase font-bold">Стало</div>
-                                <div className="text-xl font-bold text-white">{finalCount.toLocaleString()}</div>
+                                <div className="text-xs text-emerald-600 uppercase font-bold">Стало</div>
+                                <div className="text-xl font-bold text-slate-900">{finalCount.toLocaleString()}</div>
                             </div>
                         </div>
                     </div>
