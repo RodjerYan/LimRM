@@ -90,12 +90,19 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
   const healthTone = healthScore > 80 ? 'lime' : healthScore > 50 ? 'blue' : 'red';
 
-  // Helper for safe date normalization
+  // Helper for safe date normalization (Robust Regex Version)
   const toMonthKey = (raw?: string | null): string | null => {
     if (!raw) return null;
-    const s = String(raw).trim().replace(/\./g, '-').replace(/\//g, '-');
-    const m = s.slice(0, 7);
-    return /^\d{4}-\d{2}$/.test(m) ? m : null;
+    // Replace separators dots/slashes with dashes
+    const s = String(raw).trim().replace(/[./]/g, '-');
+    // Match start with YYYY-M or YYYY-MM
+    const match = s.match(/^(\d{4})-(\d{1,2})/);
+    if (match) {
+        const year = match[1];
+        const month = match[2].padStart(2, '0'); // Ensure '05' instead of '5'
+        return `${year}-${month}`;
+    }
+    return null;
   };
 
   // Helper to get client fact for the selected period
