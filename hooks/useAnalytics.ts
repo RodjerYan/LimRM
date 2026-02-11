@@ -32,7 +32,7 @@ export const useAnalytics = (
 
     if (hasDateFilter) {
       processedData = allData.map(row => {
-        // We prefer dailyFact if available for precise filtering
+        // Check if row has ANY temporal breakdown
         const rowHasDaily = row.dailyFact && Object.keys(row.dailyFact).length > 0;
         const rowHasMonthly = !rowHasDaily && row.monthlyFact && Object.keys(row.monthlyFact).length > 0;
 

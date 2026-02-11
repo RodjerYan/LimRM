@@ -154,6 +154,7 @@ export const useGeocoding = (
                                 lastUpdated: Date.now()
                             };
 
+                            // Use oldKey (which here is the tracking key) to update the existing placeholder
                             onDataUpdateRef.current(item.oldKey, newPoint, item.originalIndex);
                             
                             processedKeys.add(item.oldKey);
@@ -228,23 +229,31 @@ export const useGeocoding = (
             retryCount: 0
         }]);
 
+        // CRITICAL: Determine tracking key. If basePoint has a new key (e.g. from Unidentified row conversion), use that.
+        // Otherwise fallback to oldKey. This ensures subsequent updates find the correct item in allData.
+        const trackingKey = basePoint.key || oldKey;
+
         // Local state update: show spinner, clear coords
         const tempPoint: MapPoint = { 
             ...basePoint, 
+            key: trackingKey,
             address, 
             isGeocoding: true, 
             lat: undefined, 
             lon: undefined 
         };
+        
+        // Update local data with the placeholder (moves from Unidentified to Active if originalIndex provided)
         onDataUpdateRef.current(oldKey, tempPoint, originalIndex);
 
         setPendingGeocoding(prev => {
-            const filtered = prev.filter(p => p.oldKey !== oldKey);
+            // Remove any existing pending item for this key to avoid duplicates
+            const filtered = prev.filter(p => p.oldKey !== trackingKey);
             return [...filtered, {
                 rm: rmName,
                 address,
-                oldKey,
-                basePoint,
+                oldKey: trackingKey, // Use the new tracking key for future updates
+                basePoint: tempPoint,
                 originalIndex,
                 attempts: 0,
                 // CRITICAL FIX: Add delay before first poll to prevent race condition 

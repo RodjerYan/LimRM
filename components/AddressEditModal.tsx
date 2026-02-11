@@ -23,6 +23,7 @@ import {
   SyncIcon,
 } from './icons';
 
+// ... (keep all imports and helper components same up to AddressEditModal) ...
 // --- Fix Leaflet default icons ---
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -95,6 +96,7 @@ const getRmName = (data: EditableData | null): string => {
   return findValueInRow(row, ['рм', 'региональный менеджер', 'менеджер', 'manager', 'ответственный']) || '';
 };
 
+// ... (Keep Glow, Card, Chip, Btn, SinglePointMap same) ...
 // --- Premium light helpers ---
 const Glow = () => (
   <div
@@ -527,8 +529,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     const distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
     const parsed = parseRussianAddress(editedAddress, distributor);
 
+    // CRITICAL FIX: Generate stable key for new unidentified points to ensure tracking works
+    const stableKey = isUnidentifiedRow(data) 
+        ? `${normalizeAddress(editedAddress)}#${Date.now()}` 
+        : oldKey;
+
     const baseNewPoint: MapPoint = {
-      key: oldKey,
+      key: stableKey, // Use stable key for new items
       lat: needsGeocoding ? undefined : manualCoords?.lat || (data as MapPoint).lat,
       lon: needsGeocoding ? undefined : manualCoords?.lon || (data as MapPoint).lon,
       status: 'match',
@@ -551,6 +558,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
 
     if (needsGeocoding) {
       setStatus('geocoding');
+      // Pass both oldKey (for removal) and the baseNewPoint (containing new stable key)
       onStartPolling(rm, editedAddress, oldKey, baseNewPoint, originalIndex, oldAddress);
     } else {
       onDataUpdate(oldKey, baseNewPoint, originalIndex);
@@ -575,6 +583,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     onClose();
   };
 
+  // ... (rest of the file component render logic) ...
   // close on ESC
   useEffect(() => {
     if (!isOpen) return;
@@ -608,21 +617,19 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     .map(([k, v]) => ({ key: String(k).trim(), value: String(v).trim() }))
     .filter((x) => x.value && x.value !== 'null' && x.key !== '__rowNum__');
 
-  // button text logic (same as before)
   let saveButtonText = 'Сохранить изменения';
-  const oldAddress = (data as MapPoint).address || '';
-  const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.toLowerCase();
+  const oldAddressStr = (data as MapPoint).address || '';
+  const isAddressChangedState = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddressStr.toLowerCase();
   const isCoordsChanged = manualCoords !== null;
   const isCommentChanged = comment.trim() !== ((data as MapPoint).comment || '').trim();
 
-  if (isAddressChanged) saveButtonText = 'Сохранить новый адрес';
+  if (isAddressChangedState) saveButtonText = 'Сохранить новый адрес';
   if (isCoordsChanged) saveButtonText = 'Сохранить новые координаты';
-  if (isAddressChanged && isCoordsChanged) saveButtonText = 'Сохранить адрес и координаты';
-  if (isCommentChanged && !isAddressChanged && !isCoordsChanged) saveButtonText = 'Сохранить комментарий';
+  if (isAddressChangedState && isCoordsChanged) saveButtonText = 'Сохранить адрес и координаты';
+  if (isCommentChanged && !isAddressChangedState && !isCoordsChanged) saveButtonText = 'Сохранить комментарий';
 
   return (
     <>
-      {/* Overlay */}
       <div className="fixed inset-0 z-[9999]">
         <div
           className="absolute inset-0 bg-white/55 backdrop-blur-md"
@@ -633,11 +640,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
           <Glow />
         </div>
 
-        {/* Modal shell */}
         <div className="relative z-[10000] h-full w-full flex items-center justify-center p-3 md:p-6">
           <div className="relative w-full max-w-7xl h-[92vh]">
             <Card className="relative h-full overflow-hidden">
-              {/* Header */}
               <div className="relative px-6 pt-6 pb-4 border-b border-slate-200/70 bg-white/70">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
@@ -674,10 +679,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                 </div>
               </div>
 
-              {/* Body */}
               <div className="relative p-6 h-[calc(92vh-160px)] overflow-y-auto custom-scrollbar">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Left column */}
                   <div className="flex flex-col gap-6">
                     <Card className="p-5 bg-white/70">
                       <div className="flex items-center justify-between mb-4">
@@ -734,9 +737,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                     </Card>
                   </div>
 
-                  {/* Right column */}
                   <div className="flex flex-col gap-6">
-                    {/* Map */}
                     <Card className="overflow-hidden">
                       <div className="h-72 md:h-80">
                         <SinglePointMap
@@ -760,7 +761,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                       </div>
                     </Card>
 
-                    {/* Editable fields */}
                     <Card className="p-6 bg-white/70">
                       <div className="flex items-center justify-between mb-4">
                         <div className="text-[11px] uppercase tracking-[0.18em] text-indigo-700 font-black flex items-center gap-2">
@@ -791,7 +791,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                       </div>
 
                       <div className="space-y-4">
-                        {/* Address */}
                         <div>
                           <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">
                             Адрес ТТ LimKorm
@@ -818,7 +817,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                           )}
                         </div>
 
-                        {/* Coords */}
                         <div className="grid grid-cols-2 gap-3">
                           <div>
                             <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">
@@ -848,7 +846,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                           </span>
                         </Btn>
 
-                        {/* Comment */}
                         <div>
                           <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">
                             Заметка менеджера
@@ -867,7 +864,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                           <div className="text-[11px] text-slate-500 text-right italic">Обновлено: {lastUpdatedStr}</div>
                         )}
 
-                        {/* Status blocks */}
                         {status === 'geocoding' && (
                           <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
                             <div className="flex items-center justify-center gap-2 text-indigo-700 font-black">
@@ -903,7 +899,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                           </div>
                         )}
 
-                        {/* Save/processing */}
                         {status === 'saving' ? (
                           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center text-indigo-700 font-black flex items-center justify-center gap-2">
                             <LoaderIcon className="w-4 h-4 animate-spin" /> Сохранение…
@@ -930,7 +925,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                 </div>
               </div>
 
-              {/* Footer */}
               <div className="px-6 py-4 border-t border-slate-200/70 bg-white/70 flex items-center justify-between">
                 <Btn onClick={onBack} variant="soft" className="px-5 py-3">
                   <span className="inline-flex items-center gap-2">
@@ -952,7 +946,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
         </div>
       </div>
 
-      {/* Fullscreen map overlay */}
       {isMapExpanded && (
         <div className="fixed inset-0 z-[10050] bg-white/80 backdrop-blur-md">
           <div className="absolute inset-0 pointer-events-none">
