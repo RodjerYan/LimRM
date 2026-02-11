@@ -8,10 +8,6 @@ import EmptyState from '../EmptyState';
 import Motion from '../Motion';
 import TopBar from '../TopBar';
 import DataTable from '../DataTable';
-import SavedViews from '../SavedViews';
-import ExportButtons from '../ExportButtons';
-import RoleSwitcher from '../auth/RoleSwitcher';
-import FeatureGate from '../auth/FeatureGate';
 import { ChartCard, ChannelBarChart } from '../charts/PremiumCharts';
 
 import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState, MapPoint } from '../../types';
@@ -23,7 +19,6 @@ import {
   LoaderIcon,
   SearchIcon,
   UsersIcon,
-  DataIcon,
 } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
@@ -237,29 +232,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     return baseClientKeys.size.toLocaleString('ru-RU');
   }, [props.processingState.isProcessing, props.processingState.totalRowsProcessed, baseClientKeys]);
 
-  const tabBtn = (tab: 'ingest' | 'hygiene', label: string, disabled?: boolean) => {
-    const active = activeTab === tab;
-    return (
-      <button
-        onClick={() => setActiveTab(tab)}
-        disabled={disabled}
-        className={[
-          'px-4 py-2.5 rounded-2xl text-sm font-semibold transition-all active:scale-[0.98]',
-          'border',
-          active
-            ? 'bg-gradient-to-r from-indigo-600 to-sky-500 text-white border-transparent shadow-[0_14px_40px_rgba(99,102,241,0.22)]'
-            : 'bg-white/70 text-slate-700 border-slate-200 hover:bg-white shadow-sm',
-          disabled ? 'opacity-50 cursor-not-allowed' : '',
-        ].join(' ')}
-      >
-        {label}
-      </button>
-    );
-  };
-
   return (
     <div className="space-y-6">
-      {/* Header with TopBar */}
+      {/* Header with New TopBar (No Extra Buttons) */}
       <Motion delayMs={0}>
         <div data-tour="topbar">
             <TopBar
@@ -269,60 +244,33 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 endDate={props.endDate}
                 onStartDateChange={props.onStartDateChange}
                 onEndDateChange={props.onEndDateChange}
-                onResetDates={() => {
-                    props.onStartDateChange("");
-                    props.onEndDateChange("");
-                }}
                 isLoading={props.processingState.isProcessing}
-                statusLabel={
-                    props.processingState.isProcessing
-                    ? "Streaming"
-                    : "Online"
-                }
-                rightSlot={
-                    <div className="flex items-center gap-3">
-                        <FeatureGate perm="use_saved_views">
-                            <div data-tour="savedViews">
-                                <SavedViews 
-                                    currentState={{ startDate: props.startDate, endDate: props.endDate, activeTab: 'adapta' }}
-                                    onApply={(state) => {
-                                        if (state.startDate) props.onStartDateChange(state.startDate);
-                                        if (state.endDate) props.onEndDateChange(state.endDate);
-                                        // Tab switching is handled in App level or by switching internal tab
-                                        if (state.activeTab && state.activeTab !== 'adapta' && props.onTabChange) {
-                                            props.onTabChange(state.activeTab);
-                                        }
-                                    }}
-                                />
-                            </div>
-                        </FeatureGate>
-                        
-                        <FeatureGate perm="export_data">
-                            <ExportButtons />
-                        </FeatureGate>
-
-                        <FeatureGate perm="use_global_search">
-                            <button
-                                onClick={() => props.setIsSearchOpen?.(true)}
-                                className="px-3 py-2 rounded-2xl bg-slate-900 text-white font-medium text-xs shadow-md hover:bg-slate-800 transition-all active:scale-95"
-                                title="Глобальный поиск (Ctrl+K)"
-                                data-tour="search"
-                            >
-                                ⌘K
-                            </button>
-                        </FeatureGate>
-                        
-                        <div className="w-px h-6 bg-slate-300 mx-1"></div>
-                        
-                        <RoleSwitcher />
-
-                        <div className="w-px h-6 bg-slate-300 mx-1"></div>
-
-                        {tabBtn('ingest', 'Cloud Sync')}
-                        {tabBtn('hygiene', 'Качество (DQ)', props.activeClientsCount === 0)}
-                    </div>
-                }
+                onCloudSync={() => {
+                    setActiveTab('ingest');
+                    if (props.onForceUpdate) props.onForceUpdate();
+                }}
             />
+        </div>
+      </Motion>
+
+      {/* Clean Segmented Tab Switcher */}
+      <Motion delayMs={50}>
+        <div className="flex justify-center">
+            <div className="bg-slate-200/50 p-1 rounded-2xl flex gap-1">
+                <button
+                    onClick={() => setActiveTab('ingest')}
+                    className={`px-6 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'ingest' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                    Cloud Sync
+                </button>
+                <button
+                    onClick={() => setActiveTab('hygiene')}
+                    disabled={props.activeClientsCount === 0}
+                    className={`px-6 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'hygiene' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700 disabled:opacity-50'}`}
+                >
+                    Качество (DQ)
+                </button>
+            </div>
         </div>
       </Motion>
 

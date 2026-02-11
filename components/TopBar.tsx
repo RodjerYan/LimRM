@@ -1,20 +1,17 @@
 
 import React from "react";
-import { CalendarIcon, RefreshIcon, SuccessIcon, LoaderIcon } from "./icons";
+import { CheckIcon, CalendarIcon, CloudDownloadIcon } from "./icons";
 
 interface TopBarProps {
   title: string;
   subtitle?: string;
-
   startDate: string;
   endDate: string;
   onStartDateChange: (v: string) => void;
   onEndDateChange: (v: string) => void;
-  onResetDates?: () => void;
-
-  isLoading?: boolean;
-  statusLabel?: string;
-  rightSlot?: React.ReactNode;
+  onSave?: () => void;
+  onCloudSync?: () => void;
+  isLoading?: boolean; // Added to support loading spinner logic
 }
 
 const TopBar: React.FC<TopBarProps> = ({
@@ -24,81 +21,80 @@ const TopBar: React.FC<TopBarProps> = ({
   endDate,
   onStartDateChange,
   onEndDateChange,
-  onResetDates,
-  isLoading,
-  statusLabel,
-  rightSlot,
+  onSave,
+  onCloudSync,
+  isLoading
 }) => {
   return (
-    <div className="relative overflow-hidden rounded-3xl border border-slate-200/70 bg-white/75 backdrop-blur-xl shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
-      {/* glow */}
-      <div
-        className="pointer-events-none absolute inset-0 opacity-70"
-        style={{
-          background:
-            "radial-gradient(900px 420px at 15% 0%, rgba(99,102,241,0.14), transparent 60%)," +
-            "radial-gradient(900px 420px at 85% 0%, rgba(34,211,238,0.12), transparent 60%)",
-        }}
-      />
+    <div className="w-full bg-white/80 backdrop-blur-xl border border-slate-200/70 rounded-3xl px-6 py-4 shadow-sm">
+      
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
 
-      <div className="relative px-6 py-5 flex flex-col xl:flex-row xl:items-center gap-5">
-        {/* Left */}
-        <div className="min-w-0">
-          <div className="t-title">{title}</div>
+        {/* LEFT BLOCK */}
+        <div className="flex flex-col">
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900 truncate">
+            {title}
+          </h1>
           {subtitle && (
-            <div className="text-xs text-slate-500 mt-1 truncate max-w-md">
+            <span className="text-xs text-slate-500 mt-1 truncate">
               {subtitle}
-            </div>
+            </span>
           )}
         </div>
 
-        {/* Middle: Date range */}
-        <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-2 t-label">
+        {/* RIGHT BLOCK */}
+        <div className="flex flex-wrap items-center gap-3">
+
+          {/* PERIOD */}
+          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 h-9 transition-colors hover:bg-slate-100 hover:border-slate-300">
             <CalendarIcon />
-            Период
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => onStartDateChange(e.target.value)}
+              className="bg-transparent text-sm text-slate-800 outline-none w-[110px] cursor-pointer"
+            />
+            <span className="text-slate-400">—</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => onEndDateChange(e.target.value)}
+              className="bg-transparent text-sm text-slate-800 outline-none w-[110px] cursor-pointer"
+            />
           </div>
 
-          <input
-            type="date"
-            value={startDate}
-            onChange={(e) => onStartDateChange(e.target.value)}
-            className="h-9 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-900 shadow-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition outline-none"
-          />
-          <span className="text-slate-400 font-medium">—</span>
-          <input
-            type="date"
-            value={endDate}
-            onChange={(e) => onEndDateChange(e.target.value)}
-            className="h-9 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-900 shadow-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition outline-none"
-          />
+          {/* ONLINE STATUS */}
+          <div className={`flex items-center gap-2 px-3 h-9 text-xs font-medium rounded-2xl border ${isLoading ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+            {isLoading ? (
+               <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+            ) : (
+               <CheckIcon />
+            )}
+            {isLoading ? 'Syncing...' : 'Online'}
+          </div>
 
-          {onResetDates && (
+          {/* SAVE BUTTON */}
+          {onSave && (
             <button
-              onClick={onResetDates}
-              className="h-9 w-9 flex items-center justify-center rounded-xl border border-slate-200 bg-slate-900/5 text-slate-600 hover:bg-slate-900/10 transition"
-              title="Сбросить"
+              onClick={onSave}
+              className="h-9 px-4 rounded-2xl text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition shadow-sm"
             >
-              <RefreshIcon small />
+              Сохранить
+            </button>
+          )}
+
+          {/* CLOUD SYNC */}
+          {onCloudSync && (
+            <button
+              onClick={onCloudSync}
+              className="h-9 px-4 rounded-2xl text-xs font-medium bg-gradient-to-r from-indigo-600 to-blue-600 text-white hover:opacity-90 transition shadow-sm flex items-center gap-2"
+            >
+              <CloudDownloadIcon />
+              Cloud Sync
             </button>
           )}
         </div>
 
-        {/* Right */}
-        <div className="flex items-center gap-4 ml-auto overflow-x-auto max-w-full pb-1 xl:pb-0">
-          {statusLabel && (
-            <div className="flex items-center gap-2 h-9 px-3 rounded-2xl border border-slate-200 bg-slate-900/5 text-xs font-semibold text-slate-700 whitespace-nowrap">
-              {isLoading ? (
-                <LoaderIcon className="w-3 h-3 animate-spin" />
-              ) : (
-                <SuccessIcon className="w-3 h-3 text-emerald-600" />
-              )}
-              {statusLabel}
-            </div>
-          )}
-
-          {rightSlot}
-        </div>
       </div>
     </div>
   );
