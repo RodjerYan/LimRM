@@ -391,13 +391,13 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                 enrichWithAbcCategories(finalData);
                 setAllData(finalData);
                 
-                const safeMeta = loadedMeta || {};
                 const versionHash = serverMeta?.versionHash || 'unknown';
 
                 await saveAnalyticsState({
                     allData: finalData,
-                    unidentifiedRows: finalWorkerPayload?.unidentifiedRows || safeMeta.unidentifiedRows || [], 
-                    okbRegionCounts: finalWorkerPayload?.okbRegionCounts || safeMeta.okbRegionCounts || {},
+                    // FIX: Prioritize worker payload, remove fallback to potentially empty safeMeta
+                    unidentifiedRows: finalWorkerPayload?.unidentifiedRows ?? [], 
+                    okbRegionCounts: finalWorkerPayload?.okbRegionCounts ?? {},
                     totalRowsProcessed: totalRowsProcessedRef.current,
                     versionHash: versionHash,
                     okbData: [], okbStatus: null

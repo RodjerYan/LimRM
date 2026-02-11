@@ -75,13 +75,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
   // --- DEBUG LOGGING ---
   useEffect(() => {
-    console.log('[ADAPTA] uploadedData len:', props.uploadedData?.length);
-    console.log('[ADAPTA] activeClientsCount:', props.activeClientsCount);
+    // console.log('[ADAPTA] uploadedData len:', props.uploadedData?.length);
+    // console.log('[ADAPTA] activeClientsCount (prop):', props.activeClientsCount);
     if (props.uploadedData?.length) {
-      console.log('[ADAPTA] sample row:', props.uploadedData[0]);
-      console.log('[ADAPTA] sample client:', props.uploadedData[0]?.clients?.[0]);
-    } else {
-      console.log('[ADAPTA] uploadedData is empty or undefined');
+       // console.log('[ADAPTA] sample row fact:', props.uploadedData[0].fact);
     }
   }, [props.uploadedData, props.activeClientsCount]);
   // ---------------------
@@ -94,14 +91,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     }
   }, [props.openChannelRequest, props.onConsumeOpenChannelRequest]);
 
-  const healthScore = useMemo(() => {
-    if (props.activeClientsCount === 0) return 0;
-    const penalty = props.unidentifiedCount * 5;
-    const baseScore = 100;
-    return Math.max(0, Math.round(baseScore - (penalty / props.activeClientsCount) * 100));
-  }, [props.activeClientsCount, props.unidentifiedCount]);
-
-  const healthTone = healthScore > 80 ? 'lime' : healthScore > 50 ? 'blue' : 'red';
+  // Determine Effective Period: Prefer load dates (sync scope) if available, falling back to analysis dates
+  const effectiveStart = props.loadStartDate || props.startDate;
+  const effectiveEnd = props.loadEndDate || props.endDate;
 
   // Helper for safe date normalization (Universal Parser)
   const toMonthKey = (raw?: string | null): string | null => {
@@ -146,8 +138,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       let sum = 0;
 
       // Normalize filter inputs using the same robust helper as keys
-      const filterStart = toMonthKey(props.startDate);
-      const filterEnd = toMonthKey(props.endDate);
+      // USE EFFECTIVE DATES HERE
+      const filterStart = toMonthKey(effectiveStart);
+      const filterEnd = toMonthKey(effectiveEnd);
       const hasFilter = Boolean(filterStart || filterEnd);
 
       Object.entries(client.monthlyFact).forEach(([date, val]) => {
@@ -172,7 +165,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     return client.fact || 0;
   };
 
-  // Fixed Universe of Clients (Base Clients) based on CURRENT filter
+  // Fixed Universe of Clients (Base Clients) based on CURRENT/EFFECTIVE filter
   const baseClientKeys = useMemo(() => {
     const set = new Set<string>();
     if (props.uploadedData) {
@@ -184,7 +177,19 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       });
     }
     return set;
-  }, [props.uploadedData, props.startDate, props.endDate]);
+  }, [props.uploadedData, effectiveStart, effectiveEnd]);
+
+  // Use internal calculation for UI consistency instead of prop from parent (which might be filtered differently)
+  const displayActiveCount = props.uploadedData ? baseClientKeys.size : props.activeClientsCount;
+
+  const healthScore = useMemo(() => {
+    if (displayActiveCount === 0) return 0;
+    const penalty = props.unidentifiedCount * 5;
+    const baseScore = 100;
+    return Math.max(0, Math.round(baseScore - (penalty / displayActiveCount) * 100));
+  }, [displayActiveCount, props.unidentifiedCount]);
+
+  const healthTone = healthScore > 80 ? 'lime' : healthScore > 50 ? 'blue' : 'red';
 
   const outliers = useMemo<OutlierItem[]>(() => {
     if (!props.uploadedData || props.uploadedData.length === 0) return [];
@@ -209,7 +214,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       .filter((row) => row.fact > 0);
 
     return detectOutliers(relevantData);
-  }, [props.uploadedData, props.startDate, props.endDate]);
+  }, [props.uploadedData, effectiveStart, effectiveEnd]);
 
   const channelStats = useMemo(() => {
     if (!props.uploadedData || props.uploadedData.length === 0) return [];
@@ -239,7 +244,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         percentage: totalUniqueCount > 0 ? (data.uniqueKeys.size / totalUniqueCount) * 100 : 0,
       }))
       .sort((a, b) => b.count - a.count);
-  }, [props.uploadedData, props.startDate, props.endDate, baseClientKeys]);
+  }, [props.uploadedData, effectiveStart, effectiveEnd, baseClientKeys]);
 
   const groupedChannelData = useMemo(() => {
     if (!selectedChannel || !props.uploadedData) return null;
@@ -279,7 +284,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       hierarchy[rm][city].push(c);
     });
     return hierarchy;
-  }, [selectedChannel, props.uploadedData, channelSearchTerm, props.startDate, props.endDate, baseClientKeys]);
+  }, [selectedChannel, props.uploadedData, channelSearchTerm, effectiveStart, effectiveEnd, baseClientKeys]);
 
   const rowsToDisplay = useMemo(() => {
     if (props.processingState.isProcessing) {
@@ -322,7 +327,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 </button>
                 <button
                     onClick={() => setActiveTab('hygiene')}
-                    disabled={props.activeClientsCount === 0}
+                    disabled={displayActiveCount === 0}
                     className={`px-6 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'hygiene' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700 disabled:opacity-50'}`}
                 >
                     Качество (DQ)
@@ -332,7 +337,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       </Motion>
 
       {/* Recommended UX: Filtered out state */}
-      {props.activeClientsCount > 0 && baseClientKeys.size === 0 && (
+      {displayActiveCount > 0 && baseClientKeys.size === 0 && (
         <Motion delayMs={80}>
           <EmptyState
             kind="noResults"
@@ -343,8 +348,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
               <button
                 // CORRECT FIX: Reset the LOAD dates, not the filter dates directly
                 onClick={() => { 
-                    props.onLoadStartDateChange(''); 
-                    props.onLoadEndDateChange(''); 
+                    props.onLoadStartDateChange?.(''); 
+                    props.onLoadEndDateChange?.(''); 
                 }}
                 className="rounded-2xl px-4 py-2.5 text-sm font-semibold bg-gradient-to-r from-indigo-600 to-sky-500 text-white shadow-[0_14px_40px_rgba(99,102,241,0.22)] hover:from-indigo-500 hover:to-sky-400 transition-all"
               >
@@ -398,7 +403,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         {props.dbStatus === 'ready' ? 'Live Index: OK' : 'No Index Found'}
                       </div>
                       <div className="t-muted mt-1">
-                        {props.activeClientsCount.toLocaleString()} уник. ТТ
+                        {displayActiveCount.toLocaleString()} уник. ТТ
                       </div>
                     </div>
                   </div>
@@ -502,7 +507,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                       />
                       <StatTile
                         label="Уникальных ТТ"
-                        value={(props.uploadedData ? baseClientKeys.size : props.activeClientsCount).toLocaleString('ru-RU')}
+                        // USE INTERNAL COUNT
+                        value={displayActiveCount.toLocaleString('ru-RU')}
                         accent="lime"
                         footnote="Гео-объектов"
                       />
