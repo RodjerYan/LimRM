@@ -90,7 +90,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
   const healthTone = healthScore > 80 ? 'lime' : healthScore > 50 ? 'blue' : 'red';
 
-  // Helper for safe date normalization (Robust Regex Version)
+  // Helper for safe date normalization (Robust Regex Version with Range Check)
   const toMonthKey = (raw?: string | null): string | null => {
     if (!raw) return null;
     // Replace separators dots/slashes with dashes
@@ -99,8 +99,12 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const match = s.match(/^(\d{4})-(\d{1,2})/);
     if (match) {
         const year = match[1];
-        const month = match[2].padStart(2, '0'); // Ensure '05' instead of '5'
-        return `${year}-${month}`;
+        const month = parseInt(match[2], 10);
+        
+        // Strict month validation: reject invalid months like 13, 99, 0
+        if (month < 1 || month > 12) return null;
+
+        return `${year}-${String(month).padStart(2, '0')}`;
     }
     return null;
   };
@@ -114,15 +118,21 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       // Normalize filter inputs to YYYY-MM for comparison with keys
       const filterStart = props.startDate ? props.startDate.substring(0, 7) : null;
       const filterEnd = props.endDate ? props.endDate.substring(0, 7) : null;
+      const hasFilter = Boolean(filterStart || filterEnd);
 
       Object.entries(client.monthlyFact).forEach(([date, val]) => {
         if (date === 'unknown') return;
 
         const mk = toMonthKey(date);
         
-        // Strict filter: only if we successfully parsed the month key
-        if (filterStart && mk && mk < filterStart) return;
-        if (filterEnd && mk && mk > filterEnd) return;
+        // Strict filter logic: 
+        // If a filter is active, ignore keys that don't parse to a valid date.
+        // This prevents garbage data from leaking into specific time windows.
+        if (hasFilter) {
+            if (!mk) return; 
+            if (filterStart && mk < filterStart) return;
+            if (filterEnd && mk > filterEnd) return;
+        }
 
         sum += (val as number) || 0;
       });
