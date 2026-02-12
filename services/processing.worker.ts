@@ -656,6 +656,13 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
         if (!rm) rm = 'Unknown_RM';
 
+        // --- COORDINATE EXTRACTION (New Logic) ---
+        const latRaw = findValueInRow(row, ['широта', 'lat', 'latitude', 'широта (lat)', 'geo_lat', 'y']);
+        const lonRaw = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x']);
+        const rowLat = latRaw ? parseCleanFloat(latRaw) : undefined;
+        const rowLon = lonRaw ? parseCleanFloat(lonRaw) : undefined;
+        const hasRowCoords = (rowLat && rowLat !== 0) && (rowLon && rowLon !== 0);
+
         const parsed = parseRussianAddress(rawAddr);
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
         const cacheEntry = state_cacheAddressMap.get(normAddr);
@@ -673,10 +680,10 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         const reg = getCanonicalRegion(row) || parsed.region;
         const isRegionFound = reg !== 'Регион не определен';
 
-        if (!isCityFound && !isRegionFound && !cacheEntry) {
-            // For Object Mode, rawData[i] IS the object. For Array mode, rawData[i] is array, we might need headerOffset.
-            // Simplified: Store the computed object 'row' which is standardized.
+        // MODIFIED CONDITION: Allow row if it has explicit coords, even if parsing failed
+        if (!isCityFound && !isRegionFound && !cacheEntry && !hasRowCoords) {
             state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_seenRowsCount, rawArray: isObjectMode ? [] : (rawData[i + headerOffset] || []) });
+            continue;
         }
 
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
@@ -726,12 +733,9 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
 
             if (!state_uniquePlottableClients.has(uniqueClientKey)) {
                 const okb = state_okbCoordIndex.get(normAddr);
-                const latRaw = findValueInRow(row, ['широта', 'lat', 'latitude', 'широта (lat)', 'geo_lat', 'y']);
-                const lonRaw = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x']);
-                const rowLat = latRaw ? parseCleanFloat(latRaw) : undefined;
-                const rowLon = lonRaw ? parseCleanFloat(lonRaw) : undefined;
-                const effectiveLat = (rowLat && rowLat !== 0) ? rowLat : (cacheEntry?.lat || okb?.lat);
-                const effectiveLon = (rowLon && rowLon !== 0) ? rowLon : (cacheEntry?.lon || okb?.lon);
+                // Priority: Explicit Row Coords > Cache > OKB Lookup
+                const effectiveLat = (hasRowCoords) ? rowLat : (cacheEntry?.lat || okb?.lat);
+                const effectiveLon = (hasRowCoords) ? rowLon : (cacheEntry?.lon || okb?.lon);
 
                 state_uniquePlottableClients.set(uniqueClientKey, {
                     key: uniqueClientKey,
@@ -750,7 +754,7 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
                     fact: 0,
                     monthlyFact: {},
                     dailyFact: {},
-                    abcCategory: 'C'
+                    abcCategory: 'C' 
                 });
             }
             
