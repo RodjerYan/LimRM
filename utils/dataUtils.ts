@@ -223,21 +223,33 @@ export function normalizeAddress(address: string | null | undefined, options: { 
 
 /**
  * Standardizes a string to YYYY-MM-DD format if possible.
+ * Robustly handles YYYY-MM-DD, DD.MM.YYYY, YYYY.MM.DD and ISO strings.
  */
-export const toDayKey = (raw?: string | null): string | null => {
+export const toDayKey = (raw?: string | null | number): string | null => {
   if (!raw) return null;
   const s = String(raw).trim();
 
-  // If already YYYY-MM-DD
+  // 1. Already YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
 
-  // Try parsing DD.MM.YYYY
-  const m = s.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})$/);
-  if (m) {
-      return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  // 2. YYYY.MM.DD or YYYY/MM/DD (common in data exports)
+  let match = s.match(/^(\d{4})[\.\-/](\d{1,2})[\.\-/](\d{1,2})/);
+  if (match) {
+      return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
   }
-  
-  // Try converting Date object if passed as string (less common here)
+
+  // 3. DD.MM.YYYY or DD/MM/YYYY or DD-MM-YYYY (Russian/EU format)
+  match = s.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})/);
+  if (match) {
+      return `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`;
+  }
+
+  // 4. ISO Date String (starts with YYYY-MM-DD)
+  if (s.length >= 10 && s[4] === '-' && s[7] === '-') {
+       return s.substring(0, 10);
+  }
+
+  // 5. Date Object attempt (last resort, for full text dates)
   const d = new Date(s);
   if (!isNaN(d.getTime())) {
       return d.toISOString().split('T')[0];
@@ -296,8 +308,21 @@ export const normalizeAggregatedToPeriod = (data: AggregatedDataRow[], startYM: 
             if (hasDaily) {
                 let dailySum = 0;
                 for (const [day, val] of Object.entries(c.dailyFact!)) {
-                    if (startYM && day < startYM) continue;
-                    if (endYM && day > endYM) continue;
+                    const dk = toDayKey(day);
+                    if (!dk) continue; 
+                    
+                    // Note: startYM/endYM passed here are likely YYYY-MM prefixes if called from useDataSync logic
+                    // We need full comparison if possible, but typically this function uses Month keys.
+                    // For robustness, let's assume if it's Daily, we should filter by Month prefix if inputs are Months.
+                    
+                    // If inputs are full YYYY-MM-DD:
+                    if (startYM && startYM.length === 10 && dk < startYM) continue;
+                    if (endYM && endYM.length === 10 && dk > endYM) continue;
+                    
+                    // If inputs are YYYY-MM:
+                    if (startYM && startYM.length === 7 && dk.slice(0, 7) < startYM) continue;
+                    if (endYM && endYM.length === 7 && dk.slice(0, 7) > endYM) continue;
+
                     dailySum += val;
                 }
                 fact = dailySum;
@@ -305,9 +330,6 @@ export const normalizeAggregatedToPeriod = (data: AggregatedDataRow[], startYM: 
             // Fallback to Monthly
             else if (hasMonthly) {
                 // If filtering by specific DAYS, monthly might be inaccurate but it's the best we have
-                // Note: startYM/endYM passed here are likely YYYY-MM-DD if toDayKey is used upstream, 
-                // but sumMonthlyInRange expects YYYY-MM. 
-                // We need to check format.
                 const startMonth = startYM ? startYM.slice(0, 7) : null;
                 const endMonth = endYM ? endYM.slice(0, 7) : null;
                 fact = sumMonthlyInRange(c.monthlyFact, startMonth, endMonth, true);
