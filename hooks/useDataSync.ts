@@ -401,21 +401,13 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                 
                 let finalData = accumulatedRows;
 
-                try {
-                    console.log('5. [Sync] Fetching savepoint deltas...');
-                    const deltasRes = await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
-                    if (deltasRes.ok) {
-                        const deltas = await deltasRes.json();
-                        if (Array.isArray(deltas) && deltas.length > 0) {
-                            console.info(`   [Sync] Applying ${deltas.length} deltas...`);
-                            finalData = applyDeltasToData(finalData, deltas);
-                        } else { console.log('   [Sync] No deltas found.'); }
-                    }
-                } catch (e) { console.error("Failed to fetch/apply deltas:", e); }
+                // --- CRITICAL FIX: ORDER OF APPLICATION ---
+                // 1. First Apply CACHE (Base Truth from Google Sheets)
+                // 2. Then Apply DELTAS (Recent user overrides that might not be in cache yet)
+                // This prevents stale cache from overwriting fresh local edits.
 
-                // --- NEW: FETCH AND APPLY CACHE HERE (For Immediate Consistency) ---
                 try {
-                    console.log('5b. [Sync] Fetching coordinate cache...');
+                    console.log('5. [Sync] Fetching coordinate cache...');
                     const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
                     if (cacheRes.ok) {
                         const cacheData = await cacheRes.json();
@@ -425,6 +417,18 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                         }
                     }
                 } catch (e) { console.error("Failed to fetch/apply cache:", e); }
+
+                try {
+                    console.log('5b. [Sync] Fetching savepoint deltas...');
+                    const deltasRes = await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
+                    if (deltasRes.ok) {
+                        const deltas = await deltasRes.json();
+                        if (Array.isArray(deltas) && deltas.length > 0) {
+                            console.info(`   [Sync] Applying ${deltas.length} deltas...`);
+                            finalData = applyDeltasToData(finalData, deltas);
+                        } else { console.log('   [Sync] No deltas found.'); }
+                    }
+                } catch (e) { console.error("Failed to fetch/apply deltas:", e); }
 
                 // --- CRITICAL FIX: POST-DELTA NORMALIZATION ---
                 const startYM = startDate ? startDate.slice(0, 7) : null;
