@@ -266,10 +266,15 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     postMessage({ type: 'progress', payload: { percentage: 5, message: statusMsg, totalProcessed: state_processedRowsCount } });
 }
 
-function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn) {
-    const rows = payload.chunkData;
-    if (!Array.isArray(rows)) {
-        console.error("restoreChunk: Invalid data format", rows);
+function restoreChunk(payload: { chunkData: any }, postMessage: PostMessageFn) {
+    // FIX: Robust unpacking. chunkData might be { aggregatedData: [...] } or just [...]
+    const rowsRaw = payload.chunkData;
+    const rows = Array.isArray(rowsRaw) 
+        ? rowsRaw 
+        : (rowsRaw && Array.isArray(rowsRaw.aggregatedData) ? rowsRaw.aggregatedData : []);
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+        console.error("restoreChunk: Invalid data format", rowsRaw);
         return;
     }
 
@@ -398,7 +403,17 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             return parseCleanFloat(v);
         };
 
-        for (const p of rawData) {
+        // FIX: Unpack if wrapped in aggregatedData
+        const points: any[] = [];
+        for (const item of rawData) {
+            if (item && Array.isArray(item.aggregatedData)) {
+                points.push(...item.aggregatedData);
+            } else {
+                points.push(item);
+            }
+        }
+
+        for (const p of points) {
             state_seenRowsCount++;
             state_processedRowsCount++;
 
@@ -412,9 +427,24 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
 
             // --- DATE PROCESSING (New - Robust) ---
             // Try multiple keys for date
-            const rawDate = getValueFuzzy(p, ['sale_date', 'date', 'period', 'day', 'дата', 'период']);
+            const rawDate = getValueFuzzy(p, [
+                'sale_date', 'saleDate',
+                'date', 'period', 'day', 
+                'дата', 'период', 
+                'дата документа', 'датадокумента', 'дата_документа'
+            ]);
             const dayKey = parseDayKey(rawDate) || 'unknown';
             const monthKey = dayKey !== 'unknown' ? getMonthFromDay(dayKey) : 'unknown';
+
+            // Log first few rows for debugging
+            if (state_seenRowsCount < 4) {
+                 console.log(`[Worker] POINT SAMPLE #${state_seenRowsCount}:`, { 
+                     rawDate, dayKey, 
+                     address: p.address, 
+                     fact: p.fact,
+                     keys: Object.keys(p).join(',')
+                 });
+            }
 
             // IMPORTANT: We do NOT filter here for POINT_SNAPSHOT to allow the user to change filters in the UI.
             // The filtering happens in `useAnalytics`.
