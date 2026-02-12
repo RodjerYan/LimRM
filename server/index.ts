@@ -35,6 +35,10 @@ import getAkb from '../api/get-akb.ts';
 // @ts-ignore
 import getFullCache from '../api/get-full-cache.ts';
 // @ts-ignore
+import getHistory from '../api/get-history.ts';
+// @ts-ignore
+import syncGoogle from '../api/sync-google.ts';
+// @ts-ignore
 import startDataUpdate from '../api/start-data-update.ts';
 // @ts-ignore
 import checkUpdateStatus from '../api/check-update-status.ts';
@@ -160,6 +164,10 @@ app.all('/api/get-cached-address', adapt(getFullCache));
 app.all('/api/update-address', adapt(getFullCache));
 app.all('/api/delete-address', adapt(getFullCache));
 app.all('/api/snapshot', adapt(getFullCache)); // Legacy/Alias
+
+// NEW ROUTES
+app.all('/api/get-history', adapt(getHistory));
+app.all('/api/sync-google', adapt(syncGoogle));
 
 app.all('/api/start-data-update', adapt(startDataUpdate));
 app.all('/api/check-update-status', adapt(checkUpdateStatus));
