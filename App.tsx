@@ -67,16 +67,18 @@ const AppContent: React.FC = () => {
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [openChannelRequest, setOpenChannelRequest] = useState<string | null>(null);
 
-    // SYNC WRAPPERS: When loading period changes, automatically update the view filter
-    // so the user immediately sees what they are working with.
+    // SYNC WRAPPERS: When loading period changes, automatically update the view filter.
+    // If cleared, also clear the view filter to show all data.
     const handleLoadStartDateChange = (date: string) => {
         setLoadStartDate(date);
-        setFilterStartDate(date);
+        if (!date) setFilterStartDate('');
+        else setFilterStartDate(date);
     };
 
     const handleLoadEndDateChange = (date: string) => {
         setLoadEndDate(date);
-        setFilterEndDate(date);
+        if (!date) setFilterEndDate('');
+        else setFilterEndDate(date);
     };
 
     // Deep Link Handling
