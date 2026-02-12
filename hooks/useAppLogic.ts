@@ -205,11 +205,12 @@ export const useAppLogic = () => {
                     if (hasNewDeltas) lastDeltaTsRef.current = newestTs;
                     lastCacheSizeRef.current = currentCacheSize;
 
-                    // 1. Apply Deltas
-                    let freshData = applyDeltasToData(allData, deltas);
-                    
-                    // 2. Apply Cache
-                    freshData = applyCacheToData(freshData, cacheData);
+                    // --- CRITICAL FIX: CORRECT ORDER OF APPLICATION ---
+                    // 1. Apply Cache FIRST (Base Truth from Google Sheets)
+                    let freshData = applyCacheToData(allData, cacheData);
+
+                    // 2. Apply Deltas SECOND (Recent User Overrides - Priority)
+                    freshData = applyDeltasToData(freshData, deltas);
                     
                     setAllData(freshData); 
                     addNotification("Данные обновлены из облака", "info");
