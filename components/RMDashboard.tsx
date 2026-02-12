@@ -7,7 +7,7 @@ import ClientsListModal from './ClientsListModal';
 import RegionDetailsModal from './RegionDetailsModal';
 import GrowthExplanationModal from './GrowthExplanationModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
-import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon, ChartBarIcon, TargetIcon, UsersIcon } from './icons';
+import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon, ChartBarIcon, TargetIcon, UsersIcon, CalendarIcon, CheckIcon } from './icons';
 import { findValueInRow, findAddressInRow, normalizeRmNameForMatching, normalizeAddress, recoverRegion } from '../utils/dataUtils';
 import { PlanningEngine } from '../services/planning/engine';
 import { streamPackagingInsights } from '../services/aiService';
@@ -40,8 +40,6 @@ ChartJS.register(
 // --- Date Utils for Annualization ---
 const safeParseDate = (s?: string) => {
   if (!s) return null;
-  // If it's an ISO datetime, let Date parse it.
-  // If it's YYYY-MM-DD, force local midnight to avoid UTC day shift.
   const d = s.includes('T') ? new Date(s) : new Date(`${s}T00:00:00`);
   return isNaN(d.getTime()) ? null : d;
 };
@@ -55,14 +53,13 @@ const daysBetweenInclusive = (start: Date, end: Date) => {
 
 const isLeapYear = (y: number) => (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
 
-// Helper for date formatting (FACT = filter period, PLAN = current calendar year)
+// Helper for date formatting
 const formatDateLabel = (
   start?: string,
   end?: string
 ): { factLabel: string; planYear: number } => {
-  const planYear = new Date().getFullYear(); // <-- ALWAYS current user year
+  const planYear = new Date().getFullYear(); 
 
-  // No filter -> fact is "all loaded data"
   if (!start && !end) {
     return { factLabel: 'Факт (весь период)', planYear };
   }
@@ -75,8 +72,6 @@ const formatDateLabel = (
 
   const sDate = safeParseDate(start);
   const eDate = safeParseDate(end);
-
-  // Guard against invalid dates
   const sOk = sDate && !isNaN(sDate.getTime());
   const eOk = eDate && !isNaN(eDate.getTime());
 
@@ -101,7 +96,7 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number;
         datasets: [{
             label: 'Объем (кг)',
             data: [fact, plan],
-            backgroundColor: ['rgba(16, 185, 129, 0.7)', 'rgba(79, 70, 229, 0.7)'], // Emerald / Indigo
+            backgroundColor: ['rgba(16, 185, 129, 0.7)', 'rgba(79, 70, 229, 0.7)'], 
             borderColor: ['#10b981', '#4f46e5'],
             borderWidth: 1,
             borderRadius: 6,
@@ -135,7 +130,7 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number;
         labels: ['Текущая База (Факт)', 'Цель Роста (Gap)'],
         datasets: [{
             data: [fact, gap],
-            backgroundColor: ['rgba(16, 185, 129, 0.8)', 'rgba(251, 191, 36, 0.8)'], // Emerald / Amber
+            backgroundColor: ['rgba(16, 185, 129, 0.8)', 'rgba(251, 191, 36, 0.8)'], 
             borderColor: ['#ffffff', '#ffffff'],
             borderWidth: 2,
             hoverOffset: 4
@@ -210,7 +205,8 @@ const BrandPackagingModal: React.FC<{
     dateLabels: { fact: string; plan: string };
     periodAnnualizeK: number;
     baseRate: number;
-}> = ({ isOpen, onClose, brandMetric, regionName, onExplain, onAnalyze, dateLabels, periodAnnualizeK, baseRate }) => {
+    planScalingFactor: number; // New: Scales annual plan to selected period
+}> = ({ isOpen, onClose, brandMetric, regionName, onExplain, onAnalyze, dateLabels, periodAnnualizeK, baseRate, planScalingFactor }) => {
     if (!brandMetric || !brandMetric.packagingDetails) return null;
     const rawRows = brandMetric.packagingDetails;
     const aggregatedRows = useMemo(() => {
@@ -221,10 +217,12 @@ const BrandPackagingModal: React.FC<{
             const g = groups.get(key)!;
             g.fact += r.fact;
             
-            // PLAN must be YEARLY: annualized fact * (1 + growth)
+            // Annualize then scale to target period
             const annualFact = r.fact * periodAnnualizeK;
             const growth = r.planMetric ? r.planMetric.growthPct : baseRate;
-            g.plan += annualFact * (1 + growth / 100);
+            const annualPlan = annualFact * (1 + growth / 100);
+            
+            g.plan += annualPlan * planScalingFactor;
             
             g.rows.push(r);
             if (r.clients) r.clients.forEach(client => {
@@ -236,8 +234,9 @@ const BrandPackagingModal: React.FC<{
             });
         });
         return Array.from(groups.values()).map(g => {
-            const annualFact = g.fact * periodAnnualizeK;
-            const growth = annualFact > 0 ? ((g.plan - annualFact) / annualFact) * 100 : (g.plan > 0 ? 100 : 0);
+            // Growth is calculated against the projected fact for the same period length
+            const targetFact = g.fact * periodAnnualizeK * planScalingFactor;
+            const growth = targetFact > 0 ? ((g.plan - targetFact) / targetFact) * 100 : (g.plan > 0 ? 100 : 0);
             const representativeRow = g.rows.reduce((prev, curr) => (prev.fact > curr.fact) ? prev : curr);
             
             const metric: PlanMetric = {
@@ -250,7 +249,8 @@ const BrandPackagingModal: React.FC<{
             
             return { key: g.packaging, packaging: g.packaging, fact: g.fact, plan: g.plan, growthPct: growth, planMetric: metric, skuList: Array.from(g.skus).sort(), channelList: Array.from(g.channels).sort() };
         }).sort((a, b) => b.fact - a.fact);
-    }, [rawRows, brandMetric.name, periodAnnualizeK, baseRate]);
+    }, [rawRows, brandMetric.name, periodAnnualizeK, baseRate, planScalingFactor]);
+    
     const totalFact = aggregatedRows.reduce((sum, r) => sum + r.fact, 0);
     const totalPlan = aggregatedRows.reduce((sum, r) => sum + r.plan, 0);
     const handleExportXLSX = () => {
@@ -313,10 +313,9 @@ interface RMDashboardProps {
     okbStatus: OkbStatus | null;
     onActiveClientsClick?: () => void;
     onEditClient?: (client: MapPoint) => void;
-    // Add date props for dynamic headers
     startDate?: string;
     endDate?: string;
-    dateRange?: string; // Legacy/Additional context
+    dateRange?: string;
 }
 
 type RegionBucket = {
@@ -330,6 +329,13 @@ type RegionBucket = {
     originalRegionName: string;
     regionListings: number;
 };
+
+// --- PLAN CONFIGURATION STATE ---
+interface PlanConfig {
+    isActive: boolean;
+    start: string;
+    end: string;
+}
 
 export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData, mode = 'modal', metrics, okbStatus, onActiveClientsClick, onEditClient, startDate, endDate, dateRange }) => {
     const [baseRate, setBaseRate] = useState(15);
@@ -352,32 +358,65 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const [packagingChartData, setPackagingChartData] = useState<{ fact: number; plan: number; growthPct: number; labels: { fact: string; plan: string } } | null>(null);
     const packagingAbortController = useRef<AbortController | null>(null);
     
-    // Dynamic Date Logic
-    const { factLabel, planYear } = useMemo(() => formatDateLabel(startDate, endDate), [startDate, endDate]);
-    const planLabel = `План ${planYear}`;
+    // --- PLAN CALCULATION STATES ---
+    const [planConfig, setPlanConfig] = useState<PlanConfig>({ isActive: false, start: '', end: '' });
+    const [isPlanSettingsOpen, setIsPlanSettingsOpen] = useState(false);
+    const [tempPlanStart, setTempPlanStart] = useState('');
+    const [tempPlanEnd, setTempPlanEnd] = useState('');
 
-    // NEW: Annualization Coefficient
+    // Dynamic Date Logic for FACT column (what is currently filtered)
+    const { factLabel } = useMemo(() => formatDateLabel(startDate, endDate), [startDate, endDate]);
+    
+    // Dynamic Label for PLAN column
+    const planLabel = useMemo(() => {
+        if (planConfig.isActive && planConfig.start && planConfig.end) {
+             const sDate = safeParseDate(planConfig.start);
+             const eDate = safeParseDate(planConfig.end);
+             const sStr = sDate ? sDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '...';
+             const eStr = eDate ? eDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '...';
+             return `План (${sStr} - ${eStr})`;
+        }
+        return `План (—)`;
+    }, [planConfig]);
+
+    // --- COEFFS for Fact Annualization (Current View) ---
     const periodAnnualizeK = useMemo(() => {
-        const y = planYear;
+        const y = new Date().getFullYear();
         const daysInYear = isLeapYear(y) ? 366 : 365;
-
         const sRaw = safeParseDate(startDate);
         const eRaw = safeParseDate(endDate);
-
-        // No filter at all -> keep as is
         if (!sRaw && !eRaw) return 1;
-
-        // If only one bound is set, complete it.
-        // start missing -> from Jan 1 current year
-        // end missing   -> to today
         const start = sRaw ?? new Date(y, 0, 1);
         const end = eRaw ?? new Date();
-
         if (end < start) return 1;
-
         const days = daysBetweenInclusive(start, end);
         return days > 0 ? (daysInYear / days) : 1;
-    }, [startDate, endDate, planYear]);
+    }, [startDate, endDate]);
+
+    // --- COEFFS for Plan Scaling (Target Period) ---
+    const planScalingFactor = useMemo(() => {
+        if (!planConfig.isActive || !planConfig.start || !planConfig.end) return 0; // Show 0 if no plan set
+        
+        const y = new Date().getFullYear();
+        const daysInYear = isLeapYear(y) ? 366 : 365;
+        
+        const s = safeParseDate(planConfig.start);
+        const e = safeParseDate(planConfig.end);
+        
+        if (s && e && e >= s) {
+            const targetDays = daysBetweenInclusive(s, e);
+            // Factor = Portion of Year for the plan
+            return targetDays / daysInYear; 
+        }
+        return 0;
+    }, [planConfig]);
+
+    const handleCalculatePlan = () => {
+        if (tempPlanStart && tempPlanEnd) {
+            setPlanConfig({ isActive: true, start: tempPlanStart, end: tempPlanEnd });
+            setIsPlanSettingsOpen(false);
+        }
+    };
 
     const metricsData = useMemo<RMMetrics[]>(() => {
         const globalOkbRegionCounts = okbRegionCounts || {};
@@ -419,9 +458,10 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 const regionAvgSku = regData.regionListings > 0 ? regData.regionListings / regData.activeClients.size : 1;
                 const regionVelocity = regData.regionListings > 0 ? regData.fact / regData.regionListings : 0;
                 
-                // Calculate annualized fact for the Region Plan
+                // Calculate annualized fact based on loaded data
                 const annualFact = regData.fact * periodAnnualizeK;
 
+                // Engine calculates Annual Plan
                 const planResult = PlanningEngine.calculateRMPlan({ 
                     totalFact: annualFact, 
                     totalPotential: regionOkbCount, 
@@ -433,44 +473,69 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                     rmGlobalVelocity: globalAvgSalesPerSku 
                 }, { baseRate: baseRate, globalAvgSku: globalAvgSkuPerClient, globalAvgSales: globalAvgSalesPerSku, riskLevel: 'low' });
                 
+                // Scale Annual Plan to the requested Target Period
+                const scaledPlan = planResult.plan * planScalingFactor;
+
                 const regBrands: PlanMetric[] = [];
                 regData.brandRows.forEach((rows, bName) => {
                     let bFact = 0; let bPlan = 0;
                     rows.forEach(r => { 
                         bFact += r.fact; 
                         
-                        // Annualize Brand Plan
+                        // Annualize Brand Plan base
                         const annualBFact = r.fact * periodAnnualizeK;
-                        // Use row's own growth metric if available (from smart plan), otherwise base rate
+                        // Use row's own growth metric if available
                         const growth = r.planMetric ? r.planMetric.growthPct : baseRate;
-                        bPlan += annualBFact * (1 + growth / 100);
+                        
+                        // Calculated Annual Plan * Scaling Factor
+                        bPlan += (annualBFact * (1 + growth / 100)) * planScalingFactor;
                     });
                     
                     if (!rmBrandsMap.has(bName)) rmBrandsMap.set(bName, {fact: 0, plan: 0});
                     rmBrandsMap.get(bName)!.fact += bFact; 
                     rmBrandsMap.get(bName)!.plan += bPlan;
                     
-                    regBrands.push({ name: bName, fact: bFact, plan: bPlan, growthPct: bFact > 0 ? ((bPlan - bFact * periodAnnualizeK)/(bFact * periodAnnualizeK))*100 : 0, packagingDetails: rows });
+                    // Note: growthPct is displayed as ANNUALIZED rate (speed), not absolute volume growth
+                    // So we compare Annual Plan vs Annual Fact to show the %
+                    // (Same as comparing Target Period Plan vs Projected Target Fact)
+                    const projectedTargetFact = bFact * periodAnnualizeK * planScalingFactor;
+                    
+                    regBrands.push({ 
+                        name: bName, 
+                        fact: bFact, 
+                        plan: bPlan, 
+                        growthPct: projectedTargetFact > 0 ? ((bPlan - projectedTargetFact)/projectedTargetFact)*100 : 0, 
+                        packagingDetails: rows 
+                    });
                 });
                 
-                rmRegions.push({ name: regData.originalRegionName, fact: regData.fact, plan: planResult.plan, growthPct: planResult.growthPct, activeCount: regData.activeClients.size, totalCount: regionOkbCount, factors: planResult.factors, details: planResult.details, brands: regBrands.sort((a,b) => b.fact - a.fact) });
+                rmRegions.push({ name: regData.originalRegionName, fact: regData.fact, plan: scaledPlan, growthPct: planResult.growthPct, activeCount: regData.activeClients.size, totalCount: regionOkbCount, factors: planResult.factors, details: planResult.details, brands: regBrands.sort((a,b) => b.fact - a.fact) });
             }
             
             const rmBrands: PlanMetric[] = []; 
             rmBrandsMap.forEach((val, key) => { 
-                const annualizedFact = val.fact * periodAnnualizeK;
-                rmBrands.push({ name: key, fact: val.fact, plan: val.plan, growthPct: annualizedFact > 0 ? ((val.plan - annualizedFact)/annualizedFact)*100 : 0 }); 
+                // Project fact to target period to calc growth %
+                const projectedTargetFact = val.fact * periodAnnualizeK * planScalingFactor;
+                rmBrands.push({ 
+                    name: key, 
+                    fact: val.fact, 
+                    plan: val.plan, 
+                    growthPct: projectedTargetFact > 0 ? ((val.plan - projectedTargetFact)/projectedTargetFact)*100 : 0 
+                }); 
             });
             
             const rmAvgSku = bucket.uniqueClientKeys.size > 0 ? bucket.totalListings / bucket.uniqueClientKeys.size : 0;
             const rmVelocity = bucket.totalListings > 0 ? bucket.totalFact / bucket.totalListings : 0;
             const totalRmPlan = rmRegions.reduce((sum, r) => sum + r.plan, 0);
-            const totalRmGrowthPct = bucket.totalFact > 0 ? ((totalRmPlan - (bucket.totalFact * periodAnnualizeK)) / (bucket.totalFact * periodAnnualizeK)) * 100 : 0;
+            
+            // Calc overall growth %
+            const totalRmProjectedFact = bucket.totalFact * periodAnnualizeK * planScalingFactor;
+            const totalRmGrowthPct = totalRmProjectedFact > 0 ? ((totalRmPlan - totalRmProjectedFact) / totalRmProjectedFact) * 100 : 0;
             
             results.push({ rmName: bucket.originalName, totalClients: bucket.uniqueClientKeys.size, totalOkbCount: rmOkbTotal, totalFact: bucket.totalFact, totalPotential: rmOkbTotal, avgFactPerClient: bucket.uniqueClientKeys.size > 0 ? bucket.totalFact / bucket.uniqueClientKeys.size : 0, marketShare: rmOkbTotal > 0 ? bucket.uniqueClientKeys.size / rmOkbTotal : 0, countA: bucket.countA, countB: bucket.countB, countC: bucket.countC, factA: bucket.factA, factB: bucket.factB, factC: bucket.factC, recommendedGrowthPct: totalRmGrowthPct, nextYearPlan: totalRmPlan, regions: rmRegions.sort((a,b) => b.fact - a.fact), brands: rmBrands.sort((a,b) => b.fact - a.fact), avgSkuPerClient: rmAvgSku, avgSalesPerSku: rmVelocity, globalAvgSku: globalAvgSkuPerClient, globalAvgSalesSku: globalAvgSalesPerSku });
         }
         return results.sort((a, b) => b.totalFact - a.totalFact);
-    }, [data, okbRegionCounts, okbData, baseRate, periodAnnualizeK]);
+    }, [data, okbRegionCounts, okbData, baseRate, periodAnnualizeK, planScalingFactor]);
 
     const handleShowAbcClients = (rmName: string, category: 'A' | 'B' | 'C') => {
         const targetClients: MapPoint[] = [];
@@ -550,6 +615,15 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 
                 <div className="flex items-center gap-4">
                     <button 
+                        onClick={() => setIsPlanSettingsOpen(true)}
+                        className={`flex items-center gap-2 px-4 py-3 text-xs font-bold rounded-xl border transition-colors shadow-sm h-full ${planConfig.isActive ? 'bg-indigo-600 text-white border-indigo-500 hover:bg-indigo-500' : 'bg-white hover:bg-gray-50 text-slate-700 border-gray-200'}`}
+                        title="Настроить период и рассчитать план"
+                    >
+                        <CalendarIcon small /> 
+                        {planConfig.isActive ? 'План рассчитан (Настроить)' : 'Рассчитать план'}
+                    </button>
+
+                    <button 
                         onClick={handleGlobalExportUncovered}
                         disabled={!okbData || okbData.length === 0}
                         className="flex items-center gap-2 px-4 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-xs font-bold rounded-xl border border-indigo-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed h-full shadow-sm"
@@ -566,11 +640,28 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                         </div>
                         <div className="text-center w-24">
                             <div className="text-3xl font-mono font-bold text-amber-500">+{baseRate}%</div>
-                            <div className="text-[10px] text-gray-400 uppercase font-bold">Цель {planYear}</div>
+                            <div className="text-[10px] text-gray-400 uppercase font-bold">Цель</div>
                         </div>
                     </div>
                 </div>
             </div>
+
+            {/* Plan Calculation Info Banner */}
+            {planConfig.isActive && (
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3">
+                     <div className="text-blue-500 mt-0.5"><CheckIcon small /></div>
+                     <div>
+                         <h4 className="text-sm font-bold text-blue-800">Режим планирования активен</h4>
+                         <p className="text-xs text-blue-700 mt-1 leading-relaxed">
+                            План рассчитан на период: <strong>{new Date(planConfig.start).toLocaleDateString()} — {new Date(planConfig.end).toLocaleDateString()}</strong>.
+                            <br/>
+                            Расчет производится на основе показателей предыдущего года (или загруженного периода). 
+                            Если у клиента/региона не было продаж в прошлом периоде, используется индивидуальная модель оценки потенциала (Acquisition Model) на основе текущих данных.
+                         </p>
+                     </div>
+                </div>
+            )}
+
             <div className="grid grid-cols-1 gap-6">
                 {metricsData.map((rm, idx) => (
                     <div key={rm.rmName} className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-md transition-all hover:border-indigo-200">
@@ -579,8 +670,13 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                 <div className="flex items-center gap-4"><div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-white shadow-sm ${idx < 3 ? 'bg-amber-400 text-black' : 'bg-gray-200 text-gray-600'}`}>{idx + 1}</div><div><h3 className="text-lg font-bold text-gray-900">{rm.rmName}</h3><div className="flex items-center gap-3 text-xs text-gray-500 mt-1"><span>{rm.totalClients} активных клиентов</span><span className="w-1 h-1 rounded-full bg-gray-300"></span><span>{rm.totalOkbCount.toLocaleString()} потенциал (ОКБ)</span></div></div></div>
                                 <div className="flex items-center gap-8 text-right">
                                     <div><div className="text-[10px] uppercase text-gray-400 font-bold mb-1">{factLabel}</div><div className="text-xl font-mono font-bold text-gray-900">{new Intl.NumberFormat('ru-RU').format(rm.totalFact)}</div></div>
-                                    <div><div className="text-[10px] uppercase text-gray-400 font-bold mb-1">{planLabel}</div><div className="text-xl font-mono font-bold text-indigo-600">{new Intl.NumberFormat('ru-RU').format(Math.round(rm.nextYearPlan))}</div></div>
-                                    <div><div className="text-[10px] uppercase text-gray-400 font-bold mb-1">Прирост</div><div className={`text-xl font-mono font-bold ${rm.recommendedGrowthPct > baseRate ? 'text-emerald-500' : 'text-amber-500'}`}>+{rm.recommendedGrowthPct.toFixed(1)}%</div></div>
+                                    <div>
+                                        <div className="text-[10px] uppercase text-gray-400 font-bold mb-1">{planLabel}</div>
+                                        <div className="text-xl font-mono font-bold text-indigo-600">
+                                            {planConfig.isActive ? new Intl.NumberFormat('ru-RU').format(Math.round(rm.nextYearPlan)) : '—'}
+                                        </div>
+                                    </div>
+                                    <div><div className="text-[10px] uppercase text-gray-400 font-bold mb-1">Прирост</div><div className={`text-xl font-mono font-bold ${rm.recommendedGrowthPct > baseRate ? 'text-emerald-500' : 'text-amber-500'}`}>{planConfig.isActive ? `+${rm.recommendedGrowthPct.toFixed(1)}%` : '—'}</div></div>
                                     <div className="hidden md:block w-px h-10 bg-gray-200 mx-2"></div>
                                     <button onClick={(e) => { e.stopPropagation(); setSelectedRMForAnalysis(rm); setIsAnalysisModalOpen(true); }} className="p-2.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-colors border border-indigo-100 group"><BrainIcon small /></button>
                                     <div className={`transform transition-transform duration-300 ${expandedRM === rm.rmName ? 'rotate-180' : ''}`}><ArrowLeftIcon className="w-5 h-5 text-gray-400 -rotate-90" /></div>
@@ -641,8 +737,14 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                             <tr key={reg.name} className="hover:bg-white transition-colors group">
                                                 <td className="px-4 py-3 font-medium text-gray-900">{reg.name}</td>
                                                 <td className="px-4 py-3 font-mono text-gray-600">{new Intl.NumberFormat('ru-RU').format(reg.fact)}</td>
-                                                <td className="px-4 py-3 font-mono text-gray-900 font-bold">{new Intl.NumberFormat('ru-RU').format(Math.round(reg.plan))}</td>
-                                                <td className="px-4 py-3"><span className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${reg.growthPct > baseRate ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>+{reg.growthPct.toFixed(1)}%</span></td>
+                                                <td className="px-4 py-3 font-mono text-gray-900 font-bold">
+                                                    {planConfig.isActive ? new Intl.NumberFormat('ru-RU').format(Math.round(reg.plan)) : '—'}
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    {planConfig.isActive ? (
+                                                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${reg.growthPct > baseRate ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>+{reg.growthPct.toFixed(1)}%</span>
+                                                    ) : '—'}
+                                                </td>
                                                 <td className="px-4 py-3 text-center flex justify-center gap-2">
                                                     <button onClick={() => { setExplanationData(reg); }} className="p-1.5 hover:bg-gray-200 rounded text-indigo-500 transition-colors" title="Почему такой план?"><CalculatorIcon small /></button>
                                                     <button onClick={() => { 
@@ -727,6 +829,53 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                     </div>
                 ))}
             </div>
+            
+            {/* PLAN SETTINGS MODAL */}
+            <Modal
+                isOpen={isPlanSettingsOpen}
+                onClose={() => setIsPlanSettingsOpen(false)}
+                title="Настройка периода планирования"
+                maxWidth="max-w-md"
+            >
+                <div className="p-2 space-y-6">
+                    <p className="text-sm text-slate-600 leading-relaxed">
+                        Выберите период, на который необходимо рассчитать план продаж.
+                        Система автоматически учтет сезонность и исторические данные для построения прогноза.
+                    </p>
+                    
+                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Начало периода</label>
+                            <input 
+                                type="date" 
+                                value={tempPlanStart} 
+                                onChange={(e) => setTempPlanStart(e.target.value)}
+                                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Конец периода</label>
+                            <input 
+                                type="date" 
+                                value={tempPlanEnd} 
+                                onChange={(e) => setTempPlanEnd(e.target.value)}
+                                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2">
+                        <button onClick={() => setIsPlanSettingsOpen(false)} className="px-4 py-2 text-sm font-bold text-slate-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">Отмена</button>
+                        <button 
+                            onClick={handleCalculatePlan}
+                            disabled={!tempPlanStart || !tempPlanEnd}
+                            className="px-4 py-2 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            Рассчитать
+                        </button>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 
@@ -736,14 +885,14 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 <div className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-200 px-8 py-4 flex justify-between items-center shadow-sm">
                     <div className="flex items-center gap-4">
                         <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors"><ArrowLeftIcon /></button>
-                        <div><h1 className="text-xl font-bold text-gray-900">Дашборд План/Факт</h1><p className="text-xs text-gray-500">Стратегическое планирование {planYear}</p></div>
+                        <div><h1 className="text-xl font-bold text-gray-900">Дашборд План/Факт</h1><p className="text-xs text-gray-500">Стратегическое планирование {planConfig.isActive ? `(${new Date(planConfig.start).toLocaleDateString()} - ${new Date(planConfig.end).toLocaleDateString()})` : ''}</p></div>
                     </div>
                 </div>
                 <div className="p-8 max-w-[1600px] mx-auto">{renderContent()}</div>
                 <RMAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => setIsAnalysisModalOpen(false)} rmData={selectedRMForAnalysis} baseRate={baseRate} dateRange={dateRange} />
                 <GrowthExplanationModal isOpen={!!explanationData} onClose={() => setExplanationData(null)} data={explanationData} baseRate={baseRate} />
                 <RegionDetailsModal isOpen={isRegionModalOpen} onClose={() => setIsRegionModalOpen(false)} rmName={selectedRegionDetails?.rmName || ''} regionName={selectedRegionDetails?.regionName || ''} activeClients={selectedRegionDetails?.activeClients || []} potentialClients={selectedRegionDetails?.potentialClients || []} onEditClient={onEditClient} />
-                <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(m) => setExplanationData(m)} dateLabels={{ fact: factLabel, plan: planLabel }} periodAnnualizeK={periodAnnualizeK} baseRate={baseRate} onAnalyze={(row) => {
+                <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(m) => setExplanationData(m)} dateLabels={{ fact: factLabel, plan: planLabel }} periodAnnualizeK={periodAnnualizeK} baseRate={baseRate} planScalingFactor={planScalingFactor} onAnalyze={(row) => {
                     const skuList = row.skuList || [];
                     setPackagingAnalysisTitle(`Анализ: ${row.packaging} (${selectedBrandRegion})`);
                     setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct, labels: { fact: factLabel, plan: planLabel } });
@@ -783,7 +932,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             <RMAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => setIsAnalysisModalOpen(false)} rmData={selectedRMForAnalysis} baseRate={baseRate} dateRange={dateRange} />
             <GrowthExplanationModal isOpen={!!explanationData} onClose={() => setExplanationData(null)} data={explanationData} baseRate={baseRate} />
             <RegionDetailsModal isOpen={isRegionModalOpen} onClose={() => setIsRegionModalOpen(false)} rmName={selectedRegionDetails?.rmName || ''} regionName={selectedRegionDetails?.regionName || ''} activeClients={selectedRegionDetails?.activeClients || []} potentialClients={selectedRegionDetails?.potentialClients || []} onEditClient={onEditClient} />
-            <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(m) => setExplanationData(m)} dateLabels={{ fact: factLabel, plan: planLabel }} periodAnnualizeK={periodAnnualizeK} baseRate={baseRate} onAnalyze={(row) => {
+            <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(m) => setExplanationData(m)} dateLabels={{ fact: factLabel, plan: planLabel }} periodAnnualizeK={periodAnnualizeK} baseRate={baseRate} planScalingFactor={planScalingFactor} onAnalyze={(row) => {
                 const skuList = row.skuList || [];
                 setPackagingAnalysisTitle(`Анализ: ${row.packaging} (${selectedBrandRegion})`);
                 setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct, labels: { fact: factLabel, plan: planLabel } });
@@ -813,6 +962,53 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 }}
                 showAbcLegend={true}
             />
+            {/* PLAN SETTINGS MODAL FOR MODAL MODE */}
+            <Modal
+                isOpen={isPlanSettingsOpen}
+                onClose={() => setIsPlanSettingsOpen(false)}
+                title="Настройка периода планирования"
+                maxWidth="max-w-md"
+                zIndex="z-[1100]"
+            >
+                <div className="p-2 space-y-6">
+                    <p className="text-sm text-slate-600 leading-relaxed">
+                        Выберите период, на который необходимо рассчитать план продаж.
+                        Система автоматически учтет сезонность и исторические данные для построения прогноза.
+                    </p>
+                    
+                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Начало периода</label>
+                            <input 
+                                type="date" 
+                                value={tempPlanStart} 
+                                onChange={(e) => setTempPlanStart(e.target.value)}
+                                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Конец периода</label>
+                            <input 
+                                type="date" 
+                                value={tempPlanEnd} 
+                                onChange={(e) => setTempPlanEnd(e.target.value)}
+                                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2">
+                        <button onClick={() => setIsPlanSettingsOpen(false)} className="px-4 py-2 text-sm font-bold text-slate-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">Отмена</button>
+                        <button 
+                            onClick={handleCalculatePlan}
+                            disabled={!tempPlanStart || !tempPlanEnd}
+                            className="px-4 py-2 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            Рассчитать
+                        </button>
+                    </div>
+                </div>
+            </Modal>
         </Modal>
     );
 };
