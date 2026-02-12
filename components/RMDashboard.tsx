@@ -40,7 +40,9 @@ ChartJS.register(
 // --- Date Utils for Annualization ---
 const safeParseDate = (s?: string) => {
   if (!s) return null;
-  const d = new Date(s);
+  // If it's an ISO datetime, let Date parse it.
+  // If it's YYYY-MM-DD, force local midnight to avoid UTC day shift.
+  const d = s.includes('T') ? new Date(s) : new Date(`${s}T00:00:00`);
   return isNaN(d.getTime()) ? null : d;
 };
 
@@ -71,8 +73,8 @@ const formatDateLabel = (
     year: '2-digit',
   };
 
-  const sDate = start ? new Date(start) : null;
-  const eDate = end ? new Date(end) : null;
+  const sDate = safeParseDate(start);
+  const eDate = safeParseDate(end);
 
   // Guard against invalid dates
   const sOk = sDate && !isNaN(sDate.getTime());
@@ -198,7 +200,17 @@ const PackagingAnalysisModal: React.FC<{ isOpen: boolean; onClose: () => void; t
     );
 };
 
-const BrandPackagingModal: React.FC<{ isOpen: boolean; onClose: () => void; brandMetric: PlanMetric | null; regionName: string; onExplain: (metric: PlanMetric) => void; onAnalyze: (row: any) => void; dateLabels: { fact: string; plan: string } }> = ({ isOpen, onClose, brandMetric, regionName, onExplain, onAnalyze, dateLabels }) => {
+const BrandPackagingModal: React.FC<{ 
+    isOpen: boolean; 
+    onClose: () => void; 
+    brandMetric: PlanMetric | null; 
+    regionName: string; 
+    onExplain: (metric: PlanMetric) => void; 
+    onAnalyze: (row: any) => void; 
+    dateLabels: { fact: string; plan: string };
+    periodAnnualizeK: number;
+    baseRate: number;
+}> = ({ isOpen, onClose, brandMetric, regionName, onExplain, onAnalyze, dateLabels, periodAnnualizeK, baseRate }) => {
     if (!brandMetric || !brandMetric.packagingDetails) return null;
     const rawRows = brandMetric.packagingDetails;
     const aggregatedRows = useMemo(() => {
@@ -208,7 +220,12 @@ const BrandPackagingModal: React.FC<{ isOpen: boolean; onClose: () => void; bran
             if (!groups.has(key)) groups.set(key, { packaging: key, fact: 0, plan: 0, rows: [], skus: new Set(), channels: new Set() });
             const g = groups.get(key)!;
             g.fact += r.fact;
-            g.plan += (r.potential || 0); // Using calculated potential from enrichment which is essentially the plan
+            
+            // PLAN must be YEARLY: annualized fact * (1 + growth)
+            const annualFact = r.fact * periodAnnualizeK;
+            const growth = r.planMetric ? r.planMetric.growthPct : baseRate;
+            g.plan += annualFact * (1 + growth / 100);
+            
             g.rows.push(r);
             if (r.clients) r.clients.forEach(client => {
                 if (client.originalRow) {
@@ -219,12 +236,21 @@ const BrandPackagingModal: React.FC<{ isOpen: boolean; onClose: () => void; bran
             });
         });
         return Array.from(groups.values()).map(g => {
-            const growth = g.fact > 0 ? ((g.plan - g.fact) / g.fact) * 100 : (g.plan > 0 ? 100 : 0);
+            const annualFact = g.fact * periodAnnualizeK;
+            const growth = annualFact > 0 ? ((g.plan - annualFact) / annualFact) * 100 : (g.plan > 0 ? 100 : 0);
             const representativeRow = g.rows.reduce((prev, curr) => (prev.fact > curr.fact) ? prev : curr);
-            const metric: PlanMetric = { ...representativeRow.planMetric!, name: `${representativeRow.brand} (${g.packaging})`, fact: g.fact, plan: g.plan, growthPct: growth };
+            
+            const metric: PlanMetric = {
+                ...(representativeRow.planMetric ?? { name: '', fact: 0, plan: 0, growthPct: 0 }),
+                name: `${representativeRow.brand} (${g.packaging})`,
+                fact: g.fact,
+                plan: g.plan,
+                growthPct: growth
+            };
+            
             return { key: g.packaging, packaging: g.packaging, fact: g.fact, plan: g.plan, growthPct: growth, planMetric: metric, skuList: Array.from(g.skus).sort(), channelList: Array.from(g.channels).sort() };
         }).sort((a, b) => b.fact - a.fact);
-    }, [rawRows, brandMetric.name]);
+    }, [rawRows, brandMetric.name, periodAnnualizeK, baseRate]);
     const totalFact = aggregatedRows.reduce((sum, r) => sum + r.fact, 0);
     const totalPlan = aggregatedRows.reduce((sum, r) => sum + r.plan, 0);
     const handleExportXLSX = () => {
@@ -332,18 +358,26 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
 
     // NEW: Annualization Coefficient
     const periodAnnualizeK = useMemo(() => {
-        const currentYear = new Date().getFullYear();
-        const daysInYear = isLeapYear(currentYear) ? 366 : 365;
+        const y = planYear;
+        const daysInYear = isLeapYear(y) ? 366 : 365;
 
-        const s = safeParseDate(startDate);
-        const e = safeParseDate(endDate);
+        const sRaw = safeParseDate(startDate);
+        const eRaw = safeParseDate(endDate);
 
-        // If no filter, assume data is already annualized or represents full available history
-        if (!s || !e) return 1;
+        // No filter at all -> keep as is
+        if (!sRaw && !eRaw) return 1;
 
-        const days = daysBetweenInclusive(s, e);
+        // If only one bound is set, complete it.
+        // start missing -> from Jan 1 current year
+        // end missing   -> to today
+        const start = sRaw ?? new Date(y, 0, 1);
+        const end = eRaw ?? new Date();
+
+        if (end < start) return 1;
+
+        const days = daysBetweenInclusive(start, end);
         return days > 0 ? (daysInYear / days) : 1;
-    }, [startDate, endDate]);
+    }, [startDate, endDate, planYear]);
 
     const metricsData = useMemo<RMMetrics[]>(() => {
         const globalOkbRegionCounts = okbRegionCounts || {};
@@ -709,7 +743,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 <RMAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => setIsAnalysisModalOpen(false)} rmData={selectedRMForAnalysis} baseRate={baseRate} dateRange={dateRange} />
                 <GrowthExplanationModal isOpen={!!explanationData} onClose={() => setExplanationData(null)} data={explanationData} baseRate={baseRate} />
                 <RegionDetailsModal isOpen={isRegionModalOpen} onClose={() => setIsRegionModalOpen(false)} rmName={selectedRegionDetails?.rmName || ''} regionName={selectedRegionDetails?.regionName || ''} activeClients={selectedRegionDetails?.activeClients || []} potentialClients={selectedRegionDetails?.potentialClients || []} onEditClient={onEditClient} />
-                <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(m) => setExplanationData(m)} dateLabels={{ fact: factLabel, plan: planLabel }} onAnalyze={(row) => {
+                <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(m) => setExplanationData(m)} dateLabels={{ fact: factLabel, plan: planLabel }} periodAnnualizeK={periodAnnualizeK} baseRate={baseRate} onAnalyze={(row) => {
                     const skuList = row.skuList || [];
                     setPackagingAnalysisTitle(`Анализ: ${row.packaging} (${selectedBrandRegion})`);
                     setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct, labels: { fact: factLabel, plan: planLabel } });
@@ -749,7 +783,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             <RMAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => setIsAnalysisModalOpen(false)} rmData={selectedRMForAnalysis} baseRate={baseRate} dateRange={dateRange} />
             <GrowthExplanationModal isOpen={!!explanationData} onClose={() => setExplanationData(null)} data={explanationData} baseRate={baseRate} />
             <RegionDetailsModal isOpen={isRegionModalOpen} onClose={() => setIsRegionModalOpen(false)} rmName={selectedRegionDetails?.rmName || ''} regionName={selectedRegionDetails?.regionName || ''} activeClients={selectedRegionDetails?.activeClients || []} potentialClients={selectedRegionDetails?.potentialClients || []} onEditClient={onEditClient} />
-            <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(m) => setExplanationData(m)} dateLabels={{ fact: factLabel, plan: planLabel }} onAnalyze={(row) => {
+            <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(m) => setExplanationData(m)} dateLabels={{ fact: factLabel, plan: planLabel }} periodAnnualizeK={periodAnnualizeK} baseRate={baseRate} onAnalyze={(row) => {
                 const skuList = row.skuList || [];
                 setPackagingAnalysisTitle(`Анализ: ${row.packaging} (${selectedBrandRegion})`);
                 setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct, labels: { fact: factLabel, plan: planLabel } });
