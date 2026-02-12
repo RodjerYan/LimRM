@@ -27,6 +27,7 @@ type OkbCoordIndex = Map<string, { lat: number; lon: number }>;
 let state_aggregatedData: AggregationMap = {};
 let state_uniquePlottableClients = new Map<string, MapPoint>();
 let state_unidentifiedRows: UnidentifiedRow[] = [];
+let state_unidentifiedKeySet = new Set<string>(); // NEW: Dedup set for unidentified rows
 let state_headers: string[] = [];
 let state_clientNameHeader: string | undefined = undefined;
 let state_okbCoordIndex: OkbCoordIndex = new Map();
@@ -116,10 +117,24 @@ const parseCleanFloat = (val: any): number => {
 };
 
 const isBadCoordCell = (v: any): boolean => {
-    const s = String(v ?? '').trim().toLowerCase();
+    if (v === null || v === undefined) return true;
+
+    // number 0 -> bad
+    if (typeof v === 'number') return v === 0;
+
+    const s = String(v).trim().toLowerCase();
     if (!s) return true;
+
+    // text statuses
     if (s === 'не определен' || s === 'не определён') return true;
     if (s === 'некорректный адрес' || s === 'не корректный адрес') return true;
+    if (s.includes('не найден')) return true;
+
+    // "0", "0.0", "0,0", "0;0" -> bad
+    const normalized = s.replace(/[\s\u00A0]/g, '').replace(',', '.');
+    // Regex for exactly 0, 0.0, 0.00 etc
+    if (/^0(\.0+)?$/.test(normalized)) return true;
+
     return false;
 };
 
@@ -225,6 +240,7 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     state_aggregatedData = {};
     state_uniquePlottableClients = new Map();
     state_unidentifiedRows = [];
+    state_unidentifiedKeySet = new Set();
     state_headers = [];
     state_processedRowsCount = totalRowsProcessed || 0;
     state_seenRowsCount = totalRowsProcessed || 0;
@@ -276,7 +292,16 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
                 });
             }
         });
-        if (restoredUnidentified) state_unidentifiedRows = [...restoredUnidentified];
+        if (restoredUnidentified) {
+            state_unidentifiedRows = [...restoredUnidentified];
+            // Re-populate dedup set from restored
+            restoredUnidentified.forEach(row => {
+                const normAddr = normalizeAddress(findAddressInRow(row.rowData) || '');
+                const clientName = findValueInRowLocal(row.rowData, ['name', 'client', 'наименование']) || '';
+                const dedupKey = `${normAddr}#${clientName.toLowerCase().replace(/[^a-zа-я0-9]/g, '')}`;
+                state_unidentifiedKeySet.add(dedupKey);
+            });
+        }
     }
 
     postMessage({ 
@@ -623,7 +648,6 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         if (!rm) rm = 'Unknown_RM';
 
         // --- COORDINATE EXTRACTION (STRICT: ONLY lat/lon columns) ---
-        // User requested removing combined fallback for strict check
         const latRaw = findValueInRowLocal(row, ['широта', 'lat', 'latitude', 'широта (lat)', 'geo_lat', 'y', 'lat_clean']);
         const lonRaw = findValueInRowLocal(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x', 'lon_clean']);
         
@@ -641,21 +665,24 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         
         const okb = state_okbCoordIndex.get(normAddr);
 
-        const hasEffectiveCoords =
-            hasRowCoords ||
-            (!!cacheEntry?.lat && !!cacheEntry?.lon) ||
-            (!!okb?.lat && !!okb?.lon);
+        // "Неопознанные" = проблема ИМЕННО В ИСХОДНЫХ КОЛОНКАХ lat/lon
+        // (даже если координаты потом восстановились из cache/OKB — строка всё равно проблемная)
+        const coordsProblem = coordsColumnBad || !hasRowCoords;
 
-        // ✅ Неопознанные = только bad lat/lon + нет координат вообще
-        if (coordsColumnBad && !hasEffectiveCoords) {
-            state_unidentifiedRows.push({
-                rm,
-                rowData: row,
-                originalIndex: state_seenRowsCount,
-                rawArray: isObjectMode ? [] : (rawData[i + headerOffset] || [])
-            });
-            continue;
+        // Дедуп по адресу+имя (чтобы не раздувалось)
+        if (coordsProblem) {
+            const dedupKey = `${normAddr}#${(clientName || '').toLowerCase().replace(/[^a-zа-я0-9]/g, '')}`;
+            if (!state_unidentifiedKeySet.has(dedupKey)) {
+                state_unidentifiedKeySet.add(dedupKey);
+                state_unidentifiedRows.push({
+                    rm,
+                    rowData: row,
+                    originalIndex: state_seenRowsCount,
+                    rawArray: isObjectMode ? [] : (rawData[i + headerOffset] || [])
+                });
+            }
         }
+        // ВАЖНО: НЕ continue — строка дальше должна обрабатываться как обычно
 
         let channel = findValueInRowLocal(row, ['канал продаж', 'тип тт', 'сегмент']);
         if (!channel || channel.length < 2) channel = detectChannelByName(clientName);
