@@ -73,9 +73,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [channelSearchTerm, setChannelSearchTerm] = useState('');
 
-  // Determine Effective Period: Prefer load dates (sync scope) if available, falling back to analysis dates
-  const effectiveStart = props.loadStartDate || props.startDate;
-  const effectiveEnd = props.loadEndDate || props.endDate;
+  // Determine Effective Period: Use Analysis Dates (Filter) strictly for visualization
+  // This prevents loaded data from being hidden if it doesn't match the "load" period exactly.
+  const effectiveStart = props.startDate;
+  const effectiveEnd = props.endDate;
 
   // --- DEBUG LOGGING ---
   useEffect(() => {
@@ -292,11 +293,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             <TopBar
                 title="ADAPTA"
                 subtitle="Live Data Ingestion & Quality Control"
-                // STRICT BINDING: Use load dates for the main controls
-                startDate={props.loadStartDate}
-                endDate={props.loadEndDate}
-                onStartDateChange={props.onLoadStartDateChange}
-                onEndDateChange={props.onLoadEndDateChange}
+                // STRICT BINDING: Use analysis dates (Filter) for the main controls to ensure data visibility
+                startDate={props.startDate}
+                endDate={props.endDate}
+                onStartDateChange={props.onStartDateChange}
+                onEndDateChange={props.onEndDateChange}
                 isLoading={props.processingState.isProcessing}
                 onCloudSync={() => {
                     setActiveTab('ingest');
@@ -337,10 +338,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             description="Расширьте диапазон дат или сбросьте фильтры."
             action={
               <button
-                // CORRECT FIX: Reset the LOAD dates, not the filter dates directly
+                // CORRECT FIX: Reset the FILTER dates, since we are controlling filter now
                 onClick={() => { 
-                    props.onLoadStartDateChange?.(''); 
-                    props.onLoadEndDateChange?.(''); 
+                    props.onStartDateChange(''); 
+                    props.onEndDateChange(''); 
                 }}
                 className="rounded-2xl px-4 py-2.5 text-sm font-semibold bg-gradient-to-r from-indigo-600 to-sky-500 text-white shadow-[0_14px_40px_rgba(99,102,241,0.22)] hover:from-indigo-500 hover:to-sky-400 transition-all"
               >

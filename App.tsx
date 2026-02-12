@@ -67,6 +67,18 @@ const AppContent: React.FC = () => {
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [openChannelRequest, setOpenChannelRequest] = useState<string | null>(null);
 
+    // SYNC WRAPPERS: When loading period changes, automatically update the view filter
+    // so the user immediately sees what they are working with.
+    const handleLoadStartDateChange = (date: string) => {
+        setLoadStartDate(date);
+        setFilterStartDate(date);
+    };
+
+    const handleLoadEndDateChange = (date: string) => {
+        setLoadEndDate(date);
+        setFilterEndDate(date);
+    };
+
     // Deep Link Handling
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -171,8 +183,8 @@ const AppContent: React.FC = () => {
                                 onEndDateChange={setFilterEndDate}
                                 loadStartDate={loadStartDate}
                                 loadEndDate={loadEndDate}
-                                onLoadStartDateChange={setLoadStartDate}
-                                onLoadEndDateChange={setLoadEndDate}
+                                onLoadStartDateChange={handleLoadStartDateChange}
+                                onLoadEndDateChange={handleLoadEndDateChange}
                                 
                                 // Enhanced props
                                 openChannelRequest={openChannelRequest}

@@ -267,14 +267,15 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
 }
 
 function restoreChunk(payload: { chunkData: any }, postMessage: PostMessageFn) {
-    // FIX: Robust unpacking. chunkData might be { aggregatedData: [...] } or just [...]
-    const rowsRaw = payload.chunkData;
-    const rows = Array.isArray(rowsRaw) 
-        ? rowsRaw 
-        : (rowsRaw && Array.isArray(rowsRaw.aggregatedData) ? rowsRaw.aggregatedData : []);
+    const raw = payload.chunkData;
+    
+    // FIX 1: Robust unpacking. chunkData might be { aggregatedData: [...] } or just [...]
+    const rows = Array.isArray(raw) 
+        ? raw 
+        : (raw && Array.isArray(raw.aggregatedData) ? raw.aggregatedData : []);
 
     if (!Array.isArray(rows) || rows.length === 0) {
-        console.error("restoreChunk: Invalid data format", rowsRaw);
+        console.error("restoreChunk: Invalid data format", raw);
         return;
     }
 
@@ -300,8 +301,24 @@ function restoreChunk(payload: { chunkData: any }, postMessage: PostMessageFn) {
                 safeKey = `${normAddr}#${normName}`;
             }
             
-            // Preserve dailyFact if present, otherwise rely on monthlyFact or just fact
-            const filteredClient = { ...client, key: safeKey, fact: clientFact };
+            // FIX 2: Generate dailyFact from sale_date if missing (flat snapshot support)
+            // This is critical for filtering by date when dealing with "raw" sales lines
+            const rawDate = getValueFuzzy(client, ['sale_date', 'saleDate', 'date', 'period', 'day', 'дата', 'дата документа']);
+            const dayKey = parseDayKey(rawDate) || 'unknown';
+            
+            // Only populate dailyFact if we have a valid date and no existing breakdown
+            const existingDaily = client.dailyFact || {};
+            const finalDailyFact = { ...existingDaily };
+            if (Object.keys(finalDailyFact).length === 0 && dayKey !== 'unknown' && clientFact !== 0) {
+                finalDailyFact[dayKey] = clientFact;
+            }
+
+            const filteredClient = { 
+                ...client, 
+                key: safeKey, 
+                fact: clientFact,
+                dailyFact: finalDailyFact // Ensure this is set
+            };
             
             const reg = filteredClient.region || 'Не определен';
             const rm = filteredClient.rm || 'Не указан';
