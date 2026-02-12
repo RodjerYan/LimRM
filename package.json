@@ -6,6 +6,10 @@
   "main": "server.js",
   "author": "Limkorm",
   "description": "LimRM Geo Analyzer Desktop",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "npm@10.8.0",
   "scripts": {
     "clean": "rm -rf dist dist-server dist-electron",
     "dev": "vite",

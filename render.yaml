@@ -12,3 +12,7 @@ services:
         value: key_is_set
       - key: NODE_VERSION
         value: 20.11.0
+      - key: SKIP_INSTALL_DEPS
+        value: false
+      - key: NPM_CONFIG_PRODUCTION
+        value: false
