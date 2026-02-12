@@ -9,7 +9,7 @@ import {
 } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
-import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
+import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 
 // Helper for Unique IDs
 const generateRowId = () => {
@@ -52,6 +52,30 @@ const normalizeHeaderKey = (key: string): string => {
     return String(key).toLowerCase().replace(/[\r\n\t\s\u00A0]/g, '').trim();
 };
 
+// INLINE HELPER: Robust value finding to ensure we don't miss columns due to import caching
+const findValueInRowLocal = (row: any, keywords: string[]): string => {
+    if (!row) return '';
+    const rowKeys = Object.keys(row);
+    
+    // 1. Exact match (fast)
+    for (const keyword of keywords) {
+        const k = normalizeHeaderKey(keyword);
+        const exactKey = rowKeys.find(rKey => normalizeHeaderKey(rKey) === k);
+        if (exactKey && row[exactKey] != null) return String(row[exactKey]);
+    }
+
+    // 2. Partial match (slower but covers "Адрес (доставки)" etc)
+    for (const keyword of keywords) {
+        const k = normalizeHeaderKey(keyword);
+        const boundaryKey = rowKeys.find(rKey => {
+            const normRKey = normalizeHeaderKey(rKey);
+            return normRKey.includes(k);
+        });
+        if (boundaryKey && row[boundaryKey] != null) return String(row[boundaryKey]);
+    }
+    return '';
+};
+
 const isValidManagerValue = (val: string): boolean => {
     if (!val) return false;
     const v = String(val).trim().toLowerCase();
@@ -71,7 +95,6 @@ const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): 
     return '';
 };
 
-// --- NEW: Channel Auto-Detection Logic ---
 const detectChannelByName = (name: string): string => {
     const n = name.toLowerCase();
     if (n.includes('wildberries') || n.includes('вайлдберриз') || n.includes('ozon') || n.includes('озон') || n.includes('яндекс') || n.includes('интернет') || n.includes('e-com') || n.includes('маркетплейс')) return 'Интернет-канал';
@@ -86,9 +109,18 @@ const parseCleanFloat = (val: any): number => {
     if (typeof val === 'number') return val;
     if (!val) return 0;
     const strVal = String(val);
+    // Replace comma with dot, remove spaces (including non-breaking)
     const cleaned = strVal.replace(/[\s\u00A0]/g, '').replace(',', '.');
     const floatVal = parseFloat(cleaned);
     return isNaN(floatVal) ? 0 : floatVal;
+};
+
+const isBadCoordCell = (v: any): boolean => {
+    const s = String(v ?? '').trim().toLowerCase();
+    if (!s) return true;
+    if (s === 'не определен' || s === 'не определён') return true;
+    if (s === 'некорректный адрес' || s === 'не корректный адрес') return true;
+    return false;
 };
 
 // --- UPDATED DATE PARSER (YYYY-MM-DD) ---
@@ -107,29 +139,24 @@ const parseDayKey = (val: any): string | null => {
         return null;
     }
     
-    // Remove quotes and whitespace
     const str = String(val).replace(/['"]/g, '').trim();
     if (!str) return null;
     
-    // Matches YYYY-MM-DD or YYYY.MM.DD (optionally with time)
-    // Matches starts with 20xx
     let match = str.match(/^(20\d{2})[\.\-/](\d{1,2})[\.\-/](\d{1,2})/);
     if (match) return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
     
-    // Matches DD.MM.YYYY (optionally with time)
     match = str.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](20\d{2})/);
     if (match) return `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`;
     
     return null;
 };
 
-// Helper to extract YYYY-MM from YYYY-MM-DD
 const getMonthFromDay = (dayKey: string): string => {
     return dayKey.slice(0, 7);
 };
 
 const getCanonicalRegion = (row: any): string => {
-    const subjectValue = findValueInRow(row, ['субъект', 'регион', 'область']);
+    const subjectValue = findValueInRowLocal(row, ['субъект', 'регион', 'область']);
     if (subjectValue && subjectValue.trim()) {
         const cleanVal = subjectValue.trim();
         let lowerVal = cleanVal.toLowerCase().replace(/ё/g, 'е').replace(/[.,]/g, ' ').replace(/\s+/g, ' ');
@@ -154,20 +181,16 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
     return coordIndex;
 };
 
-// Helper to find a value by multiple possible keys (case-insensitive)
 const getValueFuzzy = (obj: any, keys: string[]) => {
-    // 1. Direct check
     for (const k of keys) {
         if (obj[k] !== undefined) return obj[k];
     }
-    // 2. Case-insensitive scan of object keys
     const objKeys = Object.keys(obj);
     for (const k of keys) {
         const lowerK = k.toLowerCase();
         const found = objKeys.find(ok => ok.toLowerCase() === lowerK);
         if (found) return obj[found];
     }
-    // 3. Partial match scan (safer for things like 'Sale_Date (UTC)')
     for (const k of keys) {
         const lowerK = k.toLowerCase();
         const found = objKeys.find(ok => ok.toLowerCase().includes(lowerK));
@@ -211,11 +234,10 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     state_okbByRegion = {};
     state_okbRegionCounts = {};
     
-    // Apply Filters - Expecting YYYY-MM-DD
     state_filterStart = startDate || null;
     state_filterEnd = endDate || null;
     
-    console.log(`[Worker] Init Stream. Full Load. Filter (Daily): ${state_filterStart} - ${state_filterEnd}`);
+    console.log(`[Worker] Init Stream. Filter: ${state_filterStart} - ${state_filterEnd}`);
     
     if (okbData) {
         okbData.forEach(row => {
@@ -268,8 +290,6 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
 
 function restoreChunk(payload: { chunkData: any }, postMessage: PostMessageFn) {
     const raw = payload.chunkData;
-    
-    // FIX 1: Robust unpacking. chunkData might be { aggregatedData: [...] } or just [...]
     const rows = Array.isArray(raw) 
         ? raw 
         : (raw && Array.isArray(raw.aggregatedData) ? raw.aggregatedData : []);
@@ -289,9 +309,7 @@ function restoreChunk(payload: { chunkData: any }, postMessage: PostMessageFn) {
 
         clientsToProcess.forEach(client => {
             restoredClientsCount++; 
-            
             let clientFact = typeof client.fact === 'number' ? client.fact : 0;
-            
             let safeKey = client.key;
             if (!safeKey) {
                 const addr = client.address || 'unknown';
@@ -300,13 +318,9 @@ function restoreChunk(payload: { chunkData: any }, postMessage: PostMessageFn) {
                 const normName = name.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
                 safeKey = `${normAddr}#${normName}`;
             }
-            
-            // FIX 2: Generate dailyFact from sale_date if missing (flat snapshot support)
-            // This is critical for filtering by date when dealing with "raw" sales lines
             const rawDate = getValueFuzzy(client, ['sale_date', 'saleDate', 'date', 'period', 'day', 'дата', 'дата документа']);
             const dayKey = parseDayKey(rawDate) || 'unknown';
             
-            // Only populate dailyFact if we have a valid date and no existing breakdown
             const existingDaily = client.dailyFact || {};
             const finalDailyFact = { ...existingDaily };
             if (Object.keys(finalDailyFact).length === 0 && dayKey !== 'unknown' && clientFact !== 0) {
@@ -317,7 +331,7 @@ function restoreChunk(payload: { chunkData: any }, postMessage: PostMessageFn) {
                 ...client, 
                 key: safeKey, 
                 fact: clientFact,
-                dailyFact: finalDailyFact // Ensure this is set
+                dailyFact: finalDailyFact
             };
             
             const reg = filteredClient.region || 'Не определен';
@@ -341,16 +355,12 @@ function restoreChunk(payload: { chunkData: any }, postMessage: PostMessageFn) {
             }
 
             const group = state_aggregatedData[groupKey];
-            
-            // IDEMPOTENT UPDATE
             group.clients.set(safeKey, filteredClient);
             state_uniquePlottableClients.set(safeKey, filteredClient);
-            
             dirtyGroups.add(groupKey);
         });
     });
 
-    // RECALCULATE DIRTY GROUPS TO PREVENT DOUBLE COUNTING
     dirtyGroups.forEach(gKey => {
         const grp = state_aggregatedData[gKey];
         if (!grp) return;
@@ -361,22 +371,16 @@ function restoreChunk(payload: { chunkData: any }, postMessage: PostMessageFn) {
 
         grp.clients.forEach(c => {
             newFact += (c.fact || 0);
-            
-            // Re-aggregate Daily Facts
             if (c.dailyFact) {
                 Object.entries(c.dailyFact).forEach(([day, v]) => {
-                    const normDay = parseDayKey(day) || day; // Ensure standardized YYYY-MM-DD
+                    const normDay = parseDayKey(day) || day; 
                     newDaily[normDay] = (newDaily[normDay] || 0) + (v as number);
-                    
-                    // Also populate monthly for compatibility
                     const monthKey = getMonthFromDay(normDay);
                     newMonthly[monthKey] = (newMonthly[monthKey] || 0) + (v as number);
                 });
-            } 
-            // Fallback: If only Monthly Fact exists (legacy snapshots)
-            else if (c.monthlyFact) {
+            } else if (c.monthlyFact) {
                 Object.entries(c.monthlyFact).forEach(([m, v]) => {
-                    const normKey = m.length > 7 ? getMonthFromDay(m) : m; // Basic normalization
+                    const normKey = m.length > 7 ? getMonthFromDay(m) : m;
                     newMonthly[normKey] = (newMonthly[normKey] || 0) + (v as number);
                 });
             }
@@ -420,7 +424,6 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             return parseCleanFloat(v);
         };
 
-        // FIX: Unpack if wrapped in aggregatedData
         const points: any[] = [];
         for (const item of rawData) {
             if (item && Array.isArray(item.aggregatedData)) {
@@ -434,7 +437,6 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             state_seenRowsCount++;
             state_processedRowsCount++;
 
-            // Extract basic fields
             const region = String(p.region ?? 'Регион не определен');
             const rm = String(p.rm ?? 'Unknown_RM');
             const brand = String(p.brand ?? 'Без бренда');
@@ -442,8 +444,6 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             const type = String(p.type ?? detectChannelByName(p.name || ''));
             const city = String(p.city ?? 'Город не определен');
 
-            // --- DATE PROCESSING (New - Robust) ---
-            // Try multiple keys for date
             const rawDate = getValueFuzzy(p, [
                 'sale_date', 'saleDate',
                 'date', 'period', 'day', 
@@ -453,22 +453,8 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             const dayKey = parseDayKey(rawDate) || 'unknown';
             const monthKey = dayKey !== 'unknown' ? getMonthFromDay(dayKey) : 'unknown';
 
-            // Log first few rows for debugging
-            if (state_seenRowsCount < 4) {
-                 console.log(`[Worker] POINT SAMPLE #${state_seenRowsCount}:`, { 
-                     rawDate, dayKey, 
-                     address: p.address, 
-                     fact: p.fact,
-                     keys: Object.keys(p).join(',')
-                 });
-            }
-
-            // IMPORTANT: We do NOT filter here for POINT_SNAPSHOT to allow the user to change filters in the UI.
-            // The filtering happens in `useAnalytics`.
-
             const groupKey = `${region}-${rm}-${brand}-${packaging}`.toLowerCase();
 
-            // Ensure group exists
             if (!state_aggregatedData[groupKey]) {
                 state_aggregatedData[groupKey] = {
                     __rowId: generateRowId(),
@@ -489,23 +475,17 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
                 };
             }
 
-            // Client data
-            // Use address as fallback if key missing
             const addrKey = String(p.key || p.address || '').trim(); 
             if (!addrKey) continue;
 
             const lat = normCoord(p.lat);
             const lon = normCoord(p.lng ?? p.lon);
-            
-            // Try multiple keys for fact/weight
             const rawFact = getValueFuzzy(p, ['fact', 'weight', 'volume', 'amount', 'количество', 'вес', 'объем']);
             const fact = parseNum(rawFact);
 
-            // Update Group Totals
             const group = state_aggregatedData[groupKey];
             group.fact += fact;
             
-            // Accumulate Group Daily/Monthly
             if (!group.dailyFact) group.dailyFact = {};
             if (dayKey !== 'unknown') {
                 group.dailyFact[dayKey] = (group.dailyFact[dayKey] || 0) + fact;
@@ -515,9 +495,7 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
                 group.monthlyFact[monthKey] = (group.monthlyFact[monthKey] || 0) + fact;
             }
 
-            // Upsert Client
             if (!group.clients.has(addrKey)) {
-                // Create New Client Entry
                 group.clients.set(addrKey, {
                     key: addrKey,
                     name: String(p.name ?? 'ТТ'),
@@ -530,7 +508,7 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
                     type,
                     lat,
                     lon,
-                    fact: 0, // Will add below
+                    fact: 0,
                     status: 'match',
                     originalRow: p,
                     monthlyFact: {},
@@ -539,7 +517,6 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
                 });
             }
 
-            // Update Client Facts
             const client = group.clients.get(addrKey)!;
             client.fact = (client.fact || 0) + fact;
             
@@ -552,28 +529,22 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
                 client.monthlyFact[monthKey] = (client.monthlyFact[monthKey] || 0) + fact;
             }
             
-            // Add to unique map for visualization
             if (!state_uniquePlottableClients.has(addrKey)) {
                 state_uniquePlottableClients.set(addrKey, client);
             }
         }
         
-        // Skip standard processing for this chunk
         const currentProgress = Math.min(98, 10 + (state_seenRowsCount / 3500000) * 85); 
         postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая обработка: ${state_processedRowsCount.toLocaleString()}...`, totalProcessed: state_processedRowsCount } });
         return;
     }
     
     // --- STANDARD PROCESSING (Raw Rows) ---
-    // ... (rest of standard processing unchanged, it uses findValueInRow already)
     let jsonData: any[] = [];
     let headerOffset = 0;
 
     if (isObjectMode) {
-        // Direct object array (already parsed JSON)
         jsonData = rawData;
-
-        // Try to infer headers from the first valid object for robust key lookup later
         if (jsonData.length > 0 && state_headers.length === 0) {
              const firstObj = jsonData[0];
              if (typeof firstObj === 'object') {
@@ -589,7 +560,6 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
              }
         }
     } else {
-        // Standard Array-of-Arrays (Excel Row) processing
         if (isFirstChunk || state_headers.length === 0) {
             const hRow = rawData.findIndex(row => Array.isArray(row) && row.some((cell: any) => String(cell || '').toLowerCase().includes('адрес')));
             const actualHRow = hRow === -1 ? 0 : hRow;
@@ -624,13 +594,10 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         const row = jsonData[i];
         state_seenRowsCount++; 
         
-        const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day', 'sale_date']);
-        
-        // PARSE DAY KEY (YYYY-MM-DD)
+        const dateRaw = findValueInRowLocal(row, ['дата', 'период', 'месяц', 'date', 'period', 'day', 'sale_date']);
         let dayKey = parseDayKey(dateRaw);
         const finalDayKey = dayKey || 'unknown';
 
-        // STRICT DATE FILTERING (DAILY PRECISION)
         if (finalDayKey !== 'unknown') {
             if (state_filterStart && finalDayKey < state_filterStart) continue;
             if (state_filterEnd && finalDayKey > state_filterEnd) continue;
@@ -644,7 +611,6 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         const lowerAddr = cleanAddr.toLowerCase();
         if (['нет', 'не указан', 'неизвестно', 'unknown', 'none', 'пусто'].includes(lowerAddr)) continue;
 
-        // Passed filters -> Increment processed count
         state_processedRowsCount++;
 
         let clientName = String(row[state_clientNameHeader || ''] || '').trim();
@@ -656,37 +622,51 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
         if (!rm) rm = 'Unknown_RM';
 
-        // --- COORDINATE EXTRACTION (New Logic) ---
-        const latRaw = findValueInRow(row, ['широта', 'lat', 'latitude', 'широта (lat)', 'geo_lat', 'y']);
-        const lonRaw = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x']);
-        const rowLat = latRaw ? parseCleanFloat(latRaw) : undefined;
-        const rowLon = lonRaw ? parseCleanFloat(lonRaw) : undefined;
-        const hasRowCoords = (rowLat && rowLat !== 0) && (rowLon && rowLon !== 0);
+        // --- COORDINATE EXTRACTION (STRICT: ONLY lat/lon columns) ---
+        // User requested removing combined fallback for strict check
+        const latRaw = findValueInRowLocal(row, ['широта', 'lat', 'latitude', 'широта (lat)', 'geo_lat', 'y', 'lat_clean']);
+        const lonRaw = findValueInRowLocal(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x', 'lon_clean']);
+        
+        const coordsColumnBad = isBadCoordCell(latRaw) || isBadCoordCell(lonRaw);
+
+        const rowLat = parseCleanFloat(latRaw);
+        const rowLon = parseCleanFloat(lonRaw);
+        const hasRowCoords = (rowLat !== 0) && (rowLon !== 0);
 
         const parsed = parseRussianAddress(rawAddr);
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
         const cacheEntry = state_cacheAddressMap.get(normAddr);
 
         if (cacheEntry && cacheEntry.isDeleted) continue;
-
-        let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
-        if (!channel || channel.length < 2) channel = detectChannelByName(clientName);
-
-        const rawBrand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
-        const brands = rawBrand.split(/[,;|\r\n]+/).map((b: string) => b.trim()).filter((b: string) => b.length > 0);
-        const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
         
-        const isCityFound = parsed.city !== 'Город не определен';
-        const reg = getCanonicalRegion(row) || parsed.region;
-        const isRegionFound = reg !== 'Регион не определен';
+        const okb = state_okbCoordIndex.get(normAddr);
 
-        // MODIFIED CONDITION: Allow row if it has explicit coords, even if parsing failed
-        if (!isCityFound && !isRegionFound && !cacheEntry && !hasRowCoords) {
-            state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_seenRowsCount, rawArray: isObjectMode ? [] : (rawData[i + headerOffset] || []) });
+        const hasEffectiveCoords =
+            hasRowCoords ||
+            (!!cacheEntry?.lat && !!cacheEntry?.lon) ||
+            (!!okb?.lat && !!okb?.lon);
+
+        // ✅ Неопознанные = только bad lat/lon + нет координат вообще
+        if (coordsColumnBad && !hasEffectiveCoords) {
+            state_unidentifiedRows.push({
+                rm,
+                rowData: row,
+                originalIndex: state_seenRowsCount,
+                rawArray: isObjectMode ? [] : (rawData[i + headerOffset] || [])
+            });
             continue;
         }
 
-        const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
+        let channel = findValueInRowLocal(row, ['канал продаж', 'тип тт', 'сегмент']);
+        if (!channel || channel.length < 2) channel = detectChannelByName(clientName);
+
+        const rawBrand = findValueInRowLocal(row, ['торговая марка', 'бренд']) || 'Без бренда';
+        const brands = rawBrand.split(/[,;|\r\n]+/).map((b: string) => b.trim()).filter((b: string) => b.length > 0);
+        const packaging = findValueInRowLocal(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
+        
+        const reg = getCanonicalRegion(row) || parsed.region;
+
+        const weightRaw = findValueInRowLocal(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
         const totalWeight = parseCleanFloat(weightRaw);
         const weightPerBrand = brands.length > 0 ? totalWeight / brands.length : 0;
         
@@ -715,16 +695,13 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
                 };
             }
 
-            // ACCUMULATE
             state_aggregatedData[groupKey].fact += weightPerBrand;
             
-            // Daily Fact
             if (!state_aggregatedData[groupKey].dailyFact) state_aggregatedData[groupKey].dailyFact = {};
             if (finalDayKey !== 'unknown') {
                 state_aggregatedData[groupKey].dailyFact[finalDayKey] = (state_aggregatedData[groupKey].dailyFact[finalDayKey] || 0) + weightPerBrand;
             }
             
-            // Monthly Fact (Legacy/Overview support)
             const monthKey = getMonthFromDay(finalDayKey);
             if (!state_aggregatedData[groupKey].monthlyFact) state_aggregatedData[groupKey].monthlyFact = {};
             if (monthKey !== 'unknown') {
@@ -732,7 +709,6 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             }
 
             if (!state_uniquePlottableClients.has(uniqueClientKey)) {
-                const okb = state_okbCoordIndex.get(normAddr);
                 // Priority: Explicit Row Coords > Cache > OKB Lookup
                 const effectiveLat = (hasRowCoords) ? rowLat : (cacheEntry?.lat || okb?.lat);
                 const effectiveLon = (hasRowCoords) ? rowLon : (cacheEntry?.lon || okb?.lon);
@@ -762,13 +738,11 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             if (pt) {
                 pt.fact = (pt.fact || 0) + weightPerBrand;
                 
-                // Client Level Daily
                 if (!pt.dailyFact) pt.dailyFact = {};
                 if (finalDayKey !== 'unknown') {
                     pt.dailyFact[finalDayKey] = (pt.dailyFact[finalDayKey] || 0) + weightPerBrand;
                 }
                 
-                // Client Level Monthly
                 if (!pt.monthlyFact) pt.monthlyFact = {};
                 if (monthKey !== 'unknown') {
                     pt.monthlyFact[monthKey] = (pt.monthlyFact[monthKey] || 0) + weightPerBrand;
@@ -781,7 +755,6 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
     
     if (state_seenRowsCount % 10000 === 0) console.log(`⚙️ [Worker] Seen ${state_seenRowsCount} rows, Processed ${state_processedRowsCount}...`);
     
-    // Checkpoints based on SEEN count to ensure consistent UI updates
     if (state_seenRowsCount - state_lastCheckpointCount >= CHECKPOINT_THRESHOLD) {
         state_lastCheckpointCount = state_seenRowsCount;
         performIncrementalAbc();
@@ -819,7 +792,6 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         });
     }
 
-    // Progress percentage
     const currentProgress = Math.min(98, 10 + (state_seenRowsCount / 3500000) * 85); 
     postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая обработка: ${state_processedRowsCount.toLocaleString()}...`, totalProcessed: state_processedRowsCount } });
 }
