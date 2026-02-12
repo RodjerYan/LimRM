@@ -37,6 +37,22 @@ ChartJS.register(
   ArcElement
 );
 
+// --- Date Utils for Annualization ---
+const safeParseDate = (s?: string) => {
+  if (!s) return null;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+};
+
+const daysBetweenInclusive = (start: Date, end: Date) => {
+  const a = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const b = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  const ms = b.getTime() - a.getTime();
+  return Math.max(1, Math.floor(ms / 86400000) + 1);
+};
+
+const isLeapYear = (y: number) => (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
+
 // Helper for date formatting (FACT = filter period, PLAN = current calendar year)
 const formatDateLabel = (
   start?: string,
@@ -192,7 +208,7 @@ const BrandPackagingModal: React.FC<{ isOpen: boolean; onClose: () => void; bran
             if (!groups.has(key)) groups.set(key, { packaging: key, fact: 0, plan: 0, rows: [], skus: new Set(), channels: new Set() });
             const g = groups.get(key)!;
             g.fact += r.fact;
-            g.plan += (r.planMetric?.plan || 0);
+            g.plan += (r.potential || 0); // Using calculated potential from enrichment which is essentially the plan
             g.rows.push(r);
             if (r.clients) r.clients.forEach(client => {
                 if (client.originalRow) {
@@ -314,6 +330,21 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const { factLabel, planYear } = useMemo(() => formatDateLabel(startDate, endDate), [startDate, endDate]);
     const planLabel = `План ${planYear}`;
 
+    // NEW: Annualization Coefficient
+    const periodAnnualizeK = useMemo(() => {
+        const currentYear = new Date().getFullYear();
+        const daysInYear = isLeapYear(currentYear) ? 366 : 365;
+
+        const s = safeParseDate(startDate);
+        const e = safeParseDate(endDate);
+
+        // If no filter, assume data is already annualized or represents full available history
+        if (!s || !e) return 1;
+
+        const days = daysBetweenInclusive(s, e);
+        return days > 0 ? (daysInYear / days) : 1;
+    }, [startDate, endDate]);
+
     const metricsData = useMemo<RMMetrics[]>(() => {
         const globalOkbRegionCounts = okbRegionCounts || {};
         let globalTotalListings = 0; let globalTotalVolume = 0; const allUniqueClientKeys = new Set<string>();
@@ -354,31 +385,58 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 const regionAvgSku = regData.regionListings > 0 ? regData.regionListings / regData.activeClients.size : 1;
                 const regionVelocity = regData.regionListings > 0 ? regData.fact / regData.regionListings : 0;
                 
-                const planResult = PlanningEngine.calculateRMPlan({ totalFact: regData.fact, totalPotential: regionOkbCount, matchedCount: regData.matchedOkbCoords.size, activeCount: regData.activeClients.size, totalRegionOkb: regionOkbCount, avgSku: regionAvgSku, avgVelocity: regionVelocity, rmGlobalVelocity: globalAvgSalesPerSku }, { baseRate: baseRate, globalAvgSku: globalAvgSkuPerClient, globalAvgSales: globalAvgSalesPerSku, riskLevel: 'low' });
+                // Calculate annualized fact for the Region Plan
+                const annualFact = regData.fact * periodAnnualizeK;
+
+                const planResult = PlanningEngine.calculateRMPlan({ 
+                    totalFact: annualFact, 
+                    totalPotential: regionOkbCount, 
+                    matchedCount: regData.matchedOkbCoords.size, 
+                    activeCount: regData.activeClients.size, 
+                    totalRegionOkb: regionOkbCount, 
+                    avgSku: regionAvgSku, 
+                    avgVelocity: regionVelocity, 
+                    rmGlobalVelocity: globalAvgSalesPerSku 
+                }, { baseRate: baseRate, globalAvgSku: globalAvgSkuPerClient, globalAvgSales: globalAvgSalesPerSku, riskLevel: 'low' });
                 
                 const regBrands: PlanMetric[] = [];
                 regData.brandRows.forEach((rows, bName) => {
                     let bFact = 0; let bPlan = 0;
-                    rows.forEach(r => { bFact += r.fact; if (r.planMetric) bPlan += r.planMetric.plan; else bPlan += r.fact * 1.15; });
+                    rows.forEach(r => { 
+                        bFact += r.fact; 
+                        
+                        // Annualize Brand Plan
+                        const annualBFact = r.fact * periodAnnualizeK;
+                        // Use row's own growth metric if available (from smart plan), otherwise base rate
+                        const growth = r.planMetric ? r.planMetric.growthPct : baseRate;
+                        bPlan += annualBFact * (1 + growth / 100);
+                    });
+                    
                     if (!rmBrandsMap.has(bName)) rmBrandsMap.set(bName, {fact: 0, plan: 0});
-                    rmBrandsMap.get(bName)!.fact += bFact; rmBrandsMap.get(bName)!.plan += bPlan;
-                    regBrands.push({ name: bName, fact: bFact, plan: bPlan, growthPct: bFact > 0 ? ((bPlan - bFact)/bFact)*100 : 0, packagingDetails: rows });
+                    rmBrandsMap.get(bName)!.fact += bFact; 
+                    rmBrandsMap.get(bName)!.plan += bPlan;
+                    
+                    regBrands.push({ name: bName, fact: bFact, plan: bPlan, growthPct: bFact > 0 ? ((bPlan - bFact * periodAnnualizeK)/(bFact * periodAnnualizeK))*100 : 0, packagingDetails: rows });
                 });
                 
                 rmRegions.push({ name: regData.originalRegionName, fact: regData.fact, plan: planResult.plan, growthPct: planResult.growthPct, activeCount: regData.activeClients.size, totalCount: regionOkbCount, factors: planResult.factors, details: planResult.details, brands: regBrands.sort((a,b) => b.fact - a.fact) });
             }
             
-            const rmBrands: PlanMetric[] = []; rmBrandsMap.forEach((val, key) => { rmBrands.push({ name: key, fact: val.fact, plan: val.plan, growthPct: val.fact > 0 ? ((val.plan - val.fact)/val.fact)*100 : 0 }); });
+            const rmBrands: PlanMetric[] = []; 
+            rmBrandsMap.forEach((val, key) => { 
+                const annualizedFact = val.fact * periodAnnualizeK;
+                rmBrands.push({ name: key, fact: val.fact, plan: val.plan, growthPct: annualizedFact > 0 ? ((val.plan - annualizedFact)/annualizedFact)*100 : 0 }); 
+            });
             
             const rmAvgSku = bucket.uniqueClientKeys.size > 0 ? bucket.totalListings / bucket.uniqueClientKeys.size : 0;
             const rmVelocity = bucket.totalListings > 0 ? bucket.totalFact / bucket.totalListings : 0;
             const totalRmPlan = rmRegions.reduce((sum, r) => sum + r.plan, 0);
-            const totalRmGrowthPct = bucket.totalFact > 0 ? ((totalRmPlan - bucket.totalFact) / bucket.totalFact) * 100 : 0;
+            const totalRmGrowthPct = bucket.totalFact > 0 ? ((totalRmPlan - (bucket.totalFact * periodAnnualizeK)) / (bucket.totalFact * periodAnnualizeK)) * 100 : 0;
             
             results.push({ rmName: bucket.originalName, totalClients: bucket.uniqueClientKeys.size, totalOkbCount: rmOkbTotal, totalFact: bucket.totalFact, totalPotential: rmOkbTotal, avgFactPerClient: bucket.uniqueClientKeys.size > 0 ? bucket.totalFact / bucket.uniqueClientKeys.size : 0, marketShare: rmOkbTotal > 0 ? bucket.uniqueClientKeys.size / rmOkbTotal : 0, countA: bucket.countA, countB: bucket.countB, countC: bucket.countC, factA: bucket.factA, factB: bucket.factB, factC: bucket.factC, recommendedGrowthPct: totalRmGrowthPct, nextYearPlan: totalRmPlan, regions: rmRegions.sort((a,b) => b.fact - a.fact), brands: rmBrands.sort((a,b) => b.fact - a.fact), avgSkuPerClient: rmAvgSku, avgSalesPerSku: rmVelocity, globalAvgSku: globalAvgSkuPerClient, globalAvgSalesSku: globalAvgSalesPerSku });
         }
         return results.sort((a, b) => b.totalFact - a.totalFact);
-    }, [data, okbRegionCounts, okbData, baseRate]);
+    }, [data, okbRegionCounts, okbData, baseRate, periodAnnualizeK]);
 
     const handleShowAbcClients = (rmName: string, category: 'A' | 'B' | 'C') => {
         const targetClients: MapPoint[] = [];
