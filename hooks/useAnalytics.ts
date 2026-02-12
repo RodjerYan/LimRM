@@ -32,7 +32,7 @@ export const useAnalytics = (
 
     if (hasDateFilter) {
       processedData = allData.map(row => {
-        // Check if row has ANY temporal breakdown
+        // We prefer dailyFact if available for precise filtering
         const rowHasDaily = row.dailyFact && Object.keys(row.dailyFact).length > 0;
         const rowHasMonthly = !rowHasDaily && row.monthlyFact && Object.keys(row.monthlyFact).length > 0;
 
@@ -41,12 +41,14 @@ export const useAnalytics = (
         if (rowHasDaily) {
             for (const [dayKey, val] of Object.entries(row.dailyFact!)) {
                 if (dayKey === 'unknown') {
-                    newRowFact += (val as number) || 0;
+                    // Decide if 'unknown' dates should be included when filter is active
+                    // Usually safer to exclude if filtering by date, OR include if loose logic needed
+                    // For strict analytics: exclude unknown if filter is active.
+                    // newRowFact += (val as number) || 0; 
                     continue;
                 }
                 const dk = toDayKey(dayKey);
                 if (!dk) {
-                    newRowFact += (val as number) || 0;
                     continue;
                 }
                 if (fStart && dk < fStart) continue;
@@ -60,7 +62,6 @@ export const useAnalytics = (
             
             for (const [monthKey, val] of Object.entries(row.monthlyFact!)) {
                 if (monthKey === 'unknown') {
-                    newRowFact += (val as number) || 0;
                     continue;
                 }
                 // Normalize legacy keys
@@ -71,9 +72,10 @@ export const useAnalytics = (
                 newRowFact += (val as number) || 0;
             }
         } else {
-            // CRITICAL FIX: If snapshot lacks ANY time data (flat snapshot), 
-            // we assume the total fact applies to the current context 
-            // instead of zeroing it out. This prevents data disappearance.
+            // If snapshot lacks ANY time data (flat snapshot), we cannot filter by time.
+            // Option A: Show 0 (Strict)
+            // Option B: Show Total (Loose)
+            // Current Decision: Show Total to prevent empty screen for users without temporal data
             newRowFact = row.fact;
         }
 
@@ -87,9 +89,9 @@ export const useAnalytics = (
 
             if (cHasDaily) {
                 for (const [d, v] of Object.entries(client.dailyFact!)) {
-                    if (d === 'unknown') { clientSum += (v as number) || 0; continue; }
+                    if (d === 'unknown') continue;
                     const dk = toDayKey(d);
-                    if (!dk) { clientSum += (v as number) || 0; continue; }
+                    if (!dk) continue;
                     if (fStart && dk < fStart) continue;
                     if (fEnd && dk > fEnd) continue;
                     clientSum += (v as number) || 0;
@@ -98,14 +100,14 @@ export const useAnalytics = (
                 const startMonth = fStart ? fStart.slice(0, 7) : null;
                 const endMonth = fEnd ? fEnd.slice(0, 7) : null;
                 for (const [m, v] of Object.entries(client.monthlyFact!)) {
-                    if (m === 'unknown') { clientSum += (v as number) || 0; continue; }
+                    if (m === 'unknown') continue;
                     const mk = m.length > 7 ? m.slice(0, 7) : m;
                     if (startMonth && mk < startMonth) continue;
                     if (endMonth && mk > endMonth) continue;
                     clientSum += (v as number) || 0;
                 }
             } else {
-                // Same fallback for clients: if no time data, preserve existing fact
+                // If no time data, preserve existing fact (same logic as row)
                 clientSum = client.fact || 0;
             }
 

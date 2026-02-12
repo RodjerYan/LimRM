@@ -384,6 +384,15 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             const type = String(p.type ?? detectChannelByName(p.name || ''));
             const city = String(p.city ?? 'Город не определен');
 
+            // --- DATE PROCESSING (New) ---
+            const rawDate = p.sale_date || p.date || p.period;
+            const dayKey = parseDayKey(rawDate) || 'unknown';
+            const monthKey = dayKey !== 'unknown' ? getMonthFromDay(dayKey) : 'unknown';
+
+            // Filter logic if applied strictly during loading (Optional: keep loading everything for client-side filtering)
+            // if (state_filterStart && dayKey !== 'unknown' && dayKey < state_filterStart) continue;
+            // if (state_filterEnd && dayKey !== 'unknown' && dayKey > state_filterEnd) continue;
+
             const groupKey = `${region}-${rm}-${brand}-${packaging}`.toLowerCase();
 
             // Ensure group exists
@@ -418,31 +427,57 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             // Update Group Totals
             const group = state_aggregatedData[groupKey];
             group.fact += fact;
+            
+            // Accumulate Group Daily/Monthly
+            if (!group.dailyFact) group.dailyFact = {};
+            if (dayKey !== 'unknown') {
+                group.dailyFact[dayKey] = (group.dailyFact[dayKey] || 0) + fact;
+            }
+            if (!group.monthlyFact) group.monthlyFact = {};
+            if (monthKey !== 'unknown') {
+                group.monthlyFact[monthKey] = (group.monthlyFact[monthKey] || 0) + fact;
+            }
 
-            // Add client to map
-            group.clients.set(addrKey, {
-                key: addrKey,
-                name: String(p.name ?? 'ТТ'),
-                address: String(p.address ?? ''),
-                city,
-                region,
-                rm,
-                brand,
-                packaging,
-                type,
-                lat,
-                lon,
-                fact,
-                status: 'match',
-                originalRow: p,
-                monthlyFact: p.monthlyFact || {},
-                dailyFact: p.dailyFact || {},
-                abcCategory: 'C' // Will be re-calculated
-            });
+            // Upsert Client
+            if (!group.clients.has(addrKey)) {
+                // Create New Client Entry
+                group.clients.set(addrKey, {
+                    key: addrKey,
+                    name: String(p.name ?? 'ТТ'),
+                    address: String(p.address ?? ''),
+                    city,
+                    region,
+                    rm,
+                    brand,
+                    packaging,
+                    type,
+                    lat,
+                    lon,
+                    fact: 0, // Will add below
+                    status: 'match',
+                    originalRow: p,
+                    monthlyFact: {},
+                    dailyFact: {},
+                    abcCategory: 'C' 
+                });
+            }
+
+            // Update Client Facts
+            const client = group.clients.get(addrKey)!;
+            client.fact = (client.fact || 0) + fact;
+            
+            if (!client.dailyFact) client.dailyFact = {};
+            if (dayKey !== 'unknown') {
+                client.dailyFact[dayKey] = (client.dailyFact[dayKey] || 0) + fact;
+            }
+            if (!client.monthlyFact) client.monthlyFact = {};
+            if (monthKey !== 'unknown') {
+                client.monthlyFact[monthKey] = (client.monthlyFact[monthKey] || 0) + fact;
+            }
             
             // Add to unique map for visualization
             if (!state_uniquePlottableClients.has(addrKey)) {
-                state_uniquePlottableClients.set(addrKey, group.clients.get(addrKey)!);
+                state_uniquePlottableClients.set(addrKey, client);
             }
         }
         
@@ -511,7 +546,7 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         const row = jsonData[i];
         state_seenRowsCount++; 
         
-        const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
+        const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day', 'sale_date']);
         
         // PARSE DAY KEY (YYYY-MM-DD)
         let dayKey = parseDayKey(dateRaw);
@@ -600,12 +635,16 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             
             // Daily Fact
             if (!state_aggregatedData[groupKey].dailyFact) state_aggregatedData[groupKey].dailyFact = {};
-            state_aggregatedData[groupKey].dailyFact[finalDayKey] = (state_aggregatedData[groupKey].dailyFact[finalDayKey] || 0) + weightPerBrand;
+            if (finalDayKey !== 'unknown') {
+                state_aggregatedData[groupKey].dailyFact[finalDayKey] = (state_aggregatedData[groupKey].dailyFact[finalDayKey] || 0) + weightPerBrand;
+            }
             
             // Monthly Fact (Legacy/Overview support)
             const monthKey = getMonthFromDay(finalDayKey);
             if (!state_aggregatedData[groupKey].monthlyFact) state_aggregatedData[groupKey].monthlyFact = {};
-            state_aggregatedData[groupKey].monthlyFact[monthKey] = (state_aggregatedData[groupKey].monthlyFact[monthKey] || 0) + weightPerBrand;
+            if (monthKey !== 'unknown') {
+                state_aggregatedData[groupKey].monthlyFact[monthKey] = (state_aggregatedData[groupKey].monthlyFact[monthKey] || 0) + weightPerBrand;
+            }
 
             if (!state_uniquePlottableClients.has(uniqueClientKey)) {
                 const okb = state_okbCoordIndex.get(normAddr);
@@ -643,11 +682,15 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
                 
                 // Client Level Daily
                 if (!pt.dailyFact) pt.dailyFact = {};
-                pt.dailyFact[finalDayKey] = (pt.dailyFact[finalDayKey] || 0) + weightPerBrand;
+                if (finalDayKey !== 'unknown') {
+                    pt.dailyFact[finalDayKey] = (pt.dailyFact[finalDayKey] || 0) + weightPerBrand;
+                }
                 
                 // Client Level Monthly
                 if (!pt.monthlyFact) pt.monthlyFact = {};
-                pt.monthlyFact[monthKey] = (pt.monthlyFact[monthKey] || 0) + weightPerBrand;
+                if (monthKey !== 'unknown') {
+                    pt.monthlyFact[monthKey] = (pt.monthlyFact[monthKey] || 0) + weightPerBrand;
+                }
                 
                 state_aggregatedData[groupKey].clients.set(uniqueClientKey, pt);
             }
