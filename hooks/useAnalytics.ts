@@ -39,31 +39,34 @@ export const useAnalytics = (
         let newRowFact = 0; 
 
         if (rowHasDaily) {
+            let hasValidDates = false;
             for (const [dayKey, val] of Object.entries(row.dailyFact!)) {
                 if (dayKey === 'unknown') {
-                    // Decide if 'unknown' dates should be included when filter is active
-                    // Usually safer to exclude if filtering by date, OR include if loose logic needed
-                    // For strict analytics: exclude unknown if filter is active.
-                    // newRowFact += (val as number) || 0; 
+                    // Skip unknown if filter is active
                     continue;
                 }
                 const dk = toDayKey(dayKey);
                 if (!dk) {
                     continue;
                 }
+                hasValidDates = true;
                 if (fStart && dk < fStart) continue;
                 if (fEnd && dk > fEnd) continue;
                 newRowFact += (val as number) || 0;
             }
+            
+            // FALLBACK: If dailyFact exists but ONLY contains 'unknown' (parsing failed completely),
+            // and the user has selected a filter, this effectively hides the data.
+            // If you want to show it regardless (risky for analytics), uncomment below:
+            // if (!hasValidDates && row.dailyFact!['unknown']) newRowFact = row.dailyFact!['unknown'];
+            
         } else if (rowHasMonthly) {
             // Fallback for legacy data (monthly only)
             const startMonth = fStart ? fStart.slice(0, 7) : null;
             const endMonth = fEnd ? fEnd.slice(0, 7) : null;
             
             for (const [monthKey, val] of Object.entries(row.monthlyFact!)) {
-                if (monthKey === 'unknown') {
-                    continue;
-                }
+                if (monthKey === 'unknown') continue;
                 // Normalize legacy keys
                 const mk = monthKey.length > 7 ? monthKey.slice(0, 7) : monthKey;
                 
@@ -73,8 +76,6 @@ export const useAnalytics = (
             }
         } else {
             // If snapshot lacks ANY time data (flat snapshot), we cannot filter by time.
-            // Option A: Show 0 (Strict)
-            // Option B: Show Total (Loose)
             // Current Decision: Show Total to prevent empty screen for users without temporal data
             newRowFact = row.fact;
         }

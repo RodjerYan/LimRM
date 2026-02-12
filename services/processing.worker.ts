@@ -106,14 +106,18 @@ const parseDayKey = (val: any): string | null => {
         }
         return null;
     }
-    const str = String(val).trim();
     
-    // Matches YYYY-MM-DD or YYYY.MM.DD
-    let match = str.match(/^(\d{4})[\.\-/](\d{2})[\.\-/](\d{2})/);
-    if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+    // Remove quotes and whitespace
+    const str = String(val).replace(/['"]/g, '').trim();
+    if (!str) return null;
     
-    // Matches DD.MM.YYYY
-    match = str.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})/);
+    // Matches YYYY-MM-DD or YYYY.MM.DD (optionally with time)
+    // Matches starts with 20xx
+    let match = str.match(/^(20\d{2})[\.\-/](\d{1,2})[\.\-/](\d{1,2})/);
+    if (match) return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+    
+    // Matches DD.MM.YYYY (optionally with time)
+    match = str.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](20\d{2})/);
     if (match) return `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`;
     
     return null;
@@ -148,6 +152,28 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
         }
     }
     return coordIndex;
+};
+
+// Helper to find a value by multiple possible keys (case-insensitive)
+const getValueFuzzy = (obj: any, keys: string[]) => {
+    // 1. Direct check
+    for (const k of keys) {
+        if (obj[k] !== undefined) return obj[k];
+    }
+    // 2. Case-insensitive scan of object keys
+    const objKeys = Object.keys(obj);
+    for (const k of keys) {
+        const lowerK = k.toLowerCase();
+        const found = objKeys.find(ok => ok.toLowerCase() === lowerK);
+        if (found) return obj[found];
+    }
+    // 3. Partial match scan (safer for things like 'Sale_Date (UTC)')
+    for (const k of keys) {
+        const lowerK = k.toLowerCase();
+        const found = objKeys.find(ok => ok.toLowerCase().includes(lowerK));
+        if (found) return obj[found];
+    }
+    return undefined;
 };
 
 function performIncrementalAbc() {
@@ -384,14 +410,14 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             const type = String(p.type ?? detectChannelByName(p.name || ''));
             const city = String(p.city ?? 'Город не определен');
 
-            // --- DATE PROCESSING (New) ---
-            const rawDate = p.sale_date || p.date || p.period;
+            // --- DATE PROCESSING (New - Robust) ---
+            // Try multiple keys for date
+            const rawDate = getValueFuzzy(p, ['sale_date', 'date', 'period', 'day', 'дата', 'период']);
             const dayKey = parseDayKey(rawDate) || 'unknown';
             const monthKey = dayKey !== 'unknown' ? getMonthFromDay(dayKey) : 'unknown';
 
-            // Filter logic if applied strictly during loading (Optional: keep loading everything for client-side filtering)
-            // if (state_filterStart && dayKey !== 'unknown' && dayKey < state_filterStart) continue;
-            // if (state_filterEnd && dayKey !== 'unknown' && dayKey > state_filterEnd) continue;
+            // IMPORTANT: We do NOT filter here for POINT_SNAPSHOT to allow the user to change filters in the UI.
+            // The filtering happens in `useAnalytics`.
 
             const groupKey = `${region}-${rm}-${brand}-${packaging}`.toLowerCase();
 
@@ -417,12 +443,16 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             }
 
             // Client data
-            const addrKey = String(p.key || p.address || '').trim(); // Fallback to address if key missing
+            // Use address as fallback if key missing
+            const addrKey = String(p.key || p.address || '').trim(); 
             if (!addrKey) continue;
 
             const lat = normCoord(p.lat);
-            const lon = normCoord(p.lng ?? p.lon); // Handle lng/lon variance
-            const fact = parseNum(p.fact);
+            const lon = normCoord(p.lng ?? p.lon);
+            
+            // Try multiple keys for fact/weight
+            const rawFact = getValueFuzzy(p, ['fact', 'weight', 'volume', 'amount', 'количество', 'вес', 'объем']);
+            const fact = parseNum(rawFact);
 
             // Update Group Totals
             const group = state_aggregatedData[groupKey];
@@ -488,6 +518,7 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
     }
     
     // --- STANDARD PROCESSING (Raw Rows) ---
+    // ... (rest of standard processing unchanged, it uses findValueInRow already)
     let jsonData: any[] = [];
     let headerOffset = 0;
 
