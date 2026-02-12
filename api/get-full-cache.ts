@@ -98,7 +98,9 @@ export default async function handler(req: Request) {
             
             if (action === 'save-delta' && drive) {
                 const deltaItem = body;
-                if (!deltaItem) return new Response(JSON.stringify({ error: 'Missing delta payload' }), { status: 400 });
+                if (!deltaItem || Object.keys(deltaItem).length === 0) {
+                    return new Response(JSON.stringify({ error: 'Missing or empty delta payload' }), { status: 400 });
+                }
 
                 const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID, 'savepoints');
                 let targetFile = null;
@@ -112,7 +114,7 @@ export default async function handler(req: Request) {
                     nextIndex = currentIndex;
                     const fileSize = lastFile.size;
                     
-                    if (fileSize > 100 * 1024) {
+                    if (fileSize > 250 * 1024) { // Limit delta file size to 250KB to avoid huge reads
                         nextIndex = currentIndex + 1;
                         targetFile = null;
                     } else {
@@ -122,6 +124,7 @@ export default async function handler(req: Request) {
                             targetFile = lastFile;
                             try { fileContent = JSON.parse(contentStr); } catch (e) { }
                         } catch (e) {
+                            // If failed to read, start new file
                             nextIndex = currentIndex + 1;
                             targetFile = null; 
                         }

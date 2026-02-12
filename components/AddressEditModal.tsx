@@ -96,7 +96,6 @@ const getRmName = (data: EditableData | null): string => {
   return findValueInRow(row, ['рм', 'региональный менеджер', 'менеджер', 'manager', 'ответственный']) || '';
 };
 
-// ... (Keep Glow, Card, Chip, Btn, SinglePointMap same) ...
 // --- Premium light helpers ---
 const Glow = () => (
   <div
@@ -487,13 +486,32 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       const rm = getRmName(data);
       const address = (data as MapPoint).address || findAddressInRow(originalRow) || '';
 
+      if (!rm) {
+          throw new Error('Не удалось определить РМ. Синхронизация невозможна.');
+      }
+
       const res = await fetch(`/api/sync-google?rm=${encodeURIComponent(rm)}&address=${encodeURIComponent(address)}`);
       const json = await res.json();
 
       if (!res.ok) throw new Error(json?.error || 'Ошибка синхронизации');
 
       if (json?.updatedPoint) {
-        onDataUpdate((data as MapPoint).key, json.updatedPoint, (data as any).originalIndex, { skipHistory: true });
+        // MERGE RM explicitly because api/sync-google might not return it
+        const name = (data as MapPoint).name || findValueInRow(originalRow, ['наименование', 'клиент']) || 'ТТ';
+        const mergedPoint: MapPoint = { 
+            ...json.updatedPoint, 
+            rm,
+            name,
+            // Ensure status is valid
+            status: (json.updatedPoint.lat && json.updatedPoint.lon) ? 'match' : 'potential'
+        };
+        
+        onDataUpdate(
+            (data as MapPoint).key || String((data as any).originalIndex), 
+            mergedPoint, 
+            (data as any).originalIndex, 
+            { skipHistory: true }
+        );
       }
 
       setStatus('idle');
