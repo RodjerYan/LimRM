@@ -216,7 +216,19 @@ const AppContent: React.FC = () => {
                         )}
 
                         {activeModule === 'dashboard' && (
-                            <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filtered} metrics={summaryMetrics} okbRegionCounts={okbRegionCounts} mode="page" okbData={okbData} okbStatus={okbStatus} onEditClient={setEditingClient} />
+                            <RMDashboard 
+                                isOpen={true} 
+                                onClose={() => setActiveModule('amp')} 
+                                data={filtered} 
+                                metrics={summaryMetrics} 
+                                okbRegionCounts={okbRegionCounts} 
+                                mode="page" 
+                                okbData={okbData} 
+                                okbStatus={okbStatus} 
+                                onEditClient={setEditingClient} 
+                                startDate={filterStartDate}
+                                endDate={filterEndDate}
+                            />
                         )}
 
                         {activeModule === 'prophet' && <Prophet data={filtered} />}

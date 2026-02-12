@@ -37,12 +37,49 @@ ChartJS.register(
   ArcElement
 );
 
-const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number }> = ({ fact, plan, growthPct }) => {
+// Helper for date formatting (FACT = filter period, PLAN = current calendar year)
+const formatDateLabel = (
+  start?: string,
+  end?: string
+): { factLabel: string; planYear: number } => {
+  const planYear = new Date().getFullYear(); // <-- ALWAYS current user year
+
+  // No filter -> fact is "all loaded data"
+  if (!start && !end) {
+    return { factLabel: 'Факт (весь период)', planYear };
+  }
+
+  const dateOptions: Intl.DateTimeFormatOptions = {
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+  };
+
+  const sDate = start ? new Date(start) : null;
+  const eDate = end ? new Date(end) : null;
+
+  // Guard against invalid dates
+  const sOk = sDate && !isNaN(sDate.getTime());
+  const eOk = eDate && !isNaN(eDate.getTime());
+
+  let factLabel = 'Факт (период)';
+  if (sOk && eOk) {
+    factLabel = `Факт (${sDate!.toLocaleDateString('ru-RU', dateOptions)} - ${eDate!.toLocaleDateString('ru-RU', dateOptions)})`;
+  } else if (sOk) {
+    factLabel = `Факт (с ${sDate!.toLocaleDateString('ru-RU', dateOptions)})`;
+  } else if (eOk) {
+    factLabel = `Факт (по ${eDate!.toLocaleDateString('ru-RU', dateOptions)})`;
+  }
+
+  return { factLabel, planYear };
+};
+
+const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number; labels: { fact: string; plan: string } }> = ({ fact, plan, growthPct, labels }) => {
     const gap = Math.max(0, plan - fact);
     const percentage = plan > 0 ? (fact / plan) * 100 : 0;
     
     const barData = {
-        labels: ['Факт 2025', 'План 2026'],
+        labels: [labels.fact, labels.plan],
         datasets: [{
             label: 'Объем (кг)',
             data: [fact, plan],
@@ -130,12 +167,12 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number 
     );
 };
 
-const PackagingAnalysisModal: React.FC<{ isOpen: boolean; onClose: () => void; title: string; content: string; isLoading: boolean; chartData?: { fact: number; plan: number; growthPct: number } | null; }> = ({ isOpen, onClose, title, content, isLoading, chartData }) => {
+const PackagingAnalysisModal: React.FC<{ isOpen: boolean; onClose: () => void; title: string; content: string; isLoading: boolean; chartData?: { fact: number; plan: number; growthPct: number; labels: { fact: string; plan: string } } | null; }> = ({ isOpen, onClose, title, content, isLoading, chartData }) => {
     const sanitizedHtml = DOMPurify.sanitize(marked.parse(content) as string);
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={title} maxWidth="max-w-4xl" zIndex="z-[1100]">
             <div className="space-y-6">
-                {chartData && <PackagingCharts fact={chartData.fact} plan={chartData.plan} growthPct={chartData.growthPct} />}
+                {chartData && <PackagingCharts fact={chartData.fact} plan={chartData.plan} growthPct={chartData.growthPct} labels={chartData.labels} />}
                 <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-md min-h-[150px]">
                     <h3 className="text-sm font-bold text-indigo-600 uppercase tracking-wider mb-4 flex items-center gap-2"><BrainIcon small /> Экспертное заключение</h3>
                     {isLoading && !content ? <div className="flex flex-col items-center justify-center h-32 text-indigo-500 gap-3 animate-pulse"><LoaderIcon /><span className="text-sm font-medium">Джемини моделирует сценарии...</span></div> : <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed"><div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} /></div>}
@@ -145,7 +182,7 @@ const PackagingAnalysisModal: React.FC<{ isOpen: boolean; onClose: () => void; t
     );
 };
 
-const BrandPackagingModal: React.FC<{ isOpen: boolean; onClose: () => void; brandMetric: PlanMetric | null; regionName: string; onExplain: (metric: PlanMetric) => void; onAnalyze: (row: any) => void; }> = ({ isOpen, onClose, brandMetric, regionName, onExplain, onAnalyze }) => {
+const BrandPackagingModal: React.FC<{ isOpen: boolean; onClose: () => void; brandMetric: PlanMetric | null; regionName: string; onExplain: (metric: PlanMetric) => void; onAnalyze: (row: any) => void; dateLabels: { fact: string; plan: string } }> = ({ isOpen, onClose, brandMetric, regionName, onExplain, onAnalyze, dateLabels }) => {
     if (!brandMetric || !brandMetric.packagingDetails) return null;
     const rawRows = brandMetric.packagingDetails;
     const aggregatedRows = useMemo(() => {
@@ -175,7 +212,7 @@ const BrandPackagingModal: React.FC<{ isOpen: boolean; onClose: () => void; bran
     const totalFact = aggregatedRows.reduce((sum, r) => sum + r.fact, 0);
     const totalPlan = aggregatedRows.reduce((sum, r) => sum + r.plan, 0);
     const handleExportXLSX = () => {
-        const exportData = aggregatedRows.map(row => ({ 'Фасовка': row.packaging, 'Ассортимент (SKU)': row.skuList.join(', '), 'Канал продаж': row.channelList.join(', '), 'Инд. Рост (%)': row.growthPct.toFixed(2), 'Факт (кг)': row.fact, 'План 2026 (кг)': row.plan.toFixed(0) }));
+        const exportData = aggregatedRows.map(row => ({ 'Фасовка': row.packaging, 'Ассортимент (SKU)': row.skuList.join(', '), 'Канал продаж': row.channelList.join(', '), 'Инд. Рост (%)': row.growthPct.toFixed(2), 'Факт (кг)': row.fact, [`${dateLabels.plan} (кг)`]: row.plan.toFixed(0) }));
         const worksheet = XLSX.utils.json_to_sheet(exportData);
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Детализация');
@@ -188,8 +225,8 @@ const BrandPackagingModal: React.FC<{ isOpen: boolean; onClose: () => void; bran
                     <div className="flex gap-8 items-center">
                         <div className="flex flex-col"><span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Фасовок</span><span className="text-gray-900 font-bold text-lg">{aggregatedRows.length}</span></div>
                         <div className="h-8 w-px bg-gray-200"></div>
-                        <div className="flex flex-col"><span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Общий Факт</span><span className="text-emerald-600 font-mono font-bold text-lg">{new Intl.NumberFormat('ru-RU').format(totalFact)}</span></div>
-                        <div className="flex flex-col"><span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Общий План</span><span className="text-gray-900 font-mono font-bold text-lg">{new Intl.NumberFormat('ru-RU').format(totalPlan)}</span></div>
+                        <div className="flex flex-col"><span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Общий {dateLabels.fact}</span><span className="text-emerald-600 font-mono font-bold text-lg">{new Intl.NumberFormat('ru-RU').format(totalFact)}</span></div>
+                        <div className="flex flex-col"><span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Общий {dateLabels.plan}</span><span className="text-gray-900 font-mono font-bold text-lg">{new Intl.NumberFormat('ru-RU').format(totalPlan)}</span></div>
                     </div>
                     <button onClick={handleExportXLSX} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2 px-4 rounded-lg transition-all shadow-md hover:shadow-lg"><ExportIcon />Выгрузить в XLSX</button>
                 </div>
@@ -197,7 +234,7 @@ const BrandPackagingModal: React.FC<{ isOpen: boolean; onClose: () => void; bran
                     <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
                         <table className="min-w-full text-sm text-left table-fixed">
                             <thead className="bg-gray-50 text-gray-500 font-semibold text-xs uppercase tracking-wider sticky top-0 z-20 shadow-sm">
-                                <tr><th className="px-6 py-4 w-24 text-gray-600">Фасовка</th><th className="px-6 py-4 w-auto">SKU (Ассортимент)</th><th className="px-6 py-4 w-32 text-gray-600">Канал</th><th className="px-6 py-4 w-32 text-right">Инд. Рост</th><th className="px-6 py-4 w-32 text-right">Факт</th><th className="px-6 py-4 w-32 text-right">План 2026</th><th className="px-6 py-4 w-24 text-center">Анализ</th></tr>
+                                <tr><th className="px-6 py-4 w-24 text-gray-600">Фасовка</th><th className="px-6 py-4 w-auto">SKU (Ассортимент)</th><th className="px-6 py-4 w-32 text-gray-600">Канал</th><th className="px-6 py-4 w-32 text-right">Инд. Рост</th><th className="px-6 py-4 w-32 text-right">{dateLabels.fact}</th><th className="px-6 py-4 w-32 text-right">{dateLabels.plan}</th><th className="px-6 py-4 w-24 text-center">Анализ</th></tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100 text-gray-700">
                                 {aggregatedRows.map((row) => {
@@ -234,7 +271,10 @@ interface RMDashboardProps {
     okbStatus: OkbStatus | null;
     onActiveClientsClick?: () => void;
     onEditClient?: (client: MapPoint) => void;
-    dateRange?: string;
+    // Add date props for dynamic headers
+    startDate?: string;
+    endDate?: string;
+    dateRange?: string; // Legacy/Additional context
 }
 
 type RegionBucket = {
@@ -249,7 +289,7 @@ type RegionBucket = {
     regionListings: number;
 };
 
-export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData, mode = 'modal', metrics, okbStatus, onActiveClientsClick, onEditClient, dateRange }) => {
+export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData, mode = 'modal', metrics, okbStatus, onActiveClientsClick, onEditClient, startDate, endDate, dateRange }) => {
     const [baseRate, setBaseRate] = useState(15);
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
@@ -267,11 +307,12 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const [packagingAnalysisTitle, setPackagingAnalysisTitle] = useState('');
     const [isPackagingAnalysisOpen, setIsPackagingAnalysisOpen] = useState(false);
     const [isPackagingAnalysisLoading, setIsPackagingAnalysisLoading] = useState(false);
-    const [packagingChartData, setPackagingChartData] = useState<{ fact: number; plan: number; growthPct: number } | null>(null);
+    const [packagingChartData, setPackagingChartData] = useState<{ fact: number; plan: number; growthPct: number; labels: { fact: string; plan: string } } | null>(null);
     const packagingAbortController = useRef<AbortController | null>(null);
     
-    const currentYear = new Date().getFullYear();
-    const nextYear = currentYear + 1;
+    // Dynamic Date Logic
+    const { factLabel, planYear } = useMemo(() => formatDateLabel(startDate, endDate), [startDate, endDate]);
+    const planLabel = `План ${planYear}`;
 
     const metricsData = useMemo<RMMetrics[]>(() => {
         const globalOkbRegionCounts = okbRegionCounts || {};
@@ -433,7 +474,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                         </div>
                         <div className="text-center w-24">
                             <div className="text-3xl font-mono font-bold text-amber-500">+{baseRate}%</div>
-                            <div className="text-[10px] text-gray-400 uppercase font-bold">Цель {nextYear}</div>
+                            <div className="text-[10px] text-gray-400 uppercase font-bold">Цель {planYear}</div>
                         </div>
                     </div>
                 </div>
@@ -445,8 +486,8 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                                 <div className="flex items-center gap-4"><div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-white shadow-sm ${idx < 3 ? 'bg-amber-400 text-black' : 'bg-gray-200 text-gray-600'}`}>{idx + 1}</div><div><h3 className="text-lg font-bold text-gray-900">{rm.rmName}</h3><div className="flex items-center gap-3 text-xs text-gray-500 mt-1"><span>{rm.totalClients} активных клиентов</span><span className="w-1 h-1 rounded-full bg-gray-300"></span><span>{rm.totalOkbCount.toLocaleString()} потенциал (ОКБ)</span></div></div></div>
                                 <div className="flex items-center gap-8 text-right">
-                                    <div><div className="text-[10px] uppercase text-gray-400 font-bold mb-1">Факт {currentYear}</div><div className="text-xl font-mono font-bold text-gray-900">{new Intl.NumberFormat('ru-RU').format(rm.totalFact)}</div></div>
-                                    <div><div className="text-[10px] uppercase text-gray-400 font-bold mb-1">План {nextYear}</div><div className="text-xl font-mono font-bold text-indigo-600">{new Intl.NumberFormat('ru-RU').format(Math.round(rm.nextYearPlan))}</div></div>
+                                    <div><div className="text-[10px] uppercase text-gray-400 font-bold mb-1">{factLabel}</div><div className="text-xl font-mono font-bold text-gray-900">{new Intl.NumberFormat('ru-RU').format(rm.totalFact)}</div></div>
+                                    <div><div className="text-[10px] uppercase text-gray-400 font-bold mb-1">{planLabel}</div><div className="text-xl font-mono font-bold text-indigo-600">{new Intl.NumberFormat('ru-RU').format(Math.round(rm.nextYearPlan))}</div></div>
                                     <div><div className="text-[10px] uppercase text-gray-400 font-bold mb-1">Прирост</div><div className={`text-xl font-mono font-bold ${rm.recommendedGrowthPct > baseRate ? 'text-emerald-500' : 'text-amber-500'}`}>+{rm.recommendedGrowthPct.toFixed(1)}%</div></div>
                                     <div className="hidden md:block w-px h-10 bg-gray-200 mx-2"></div>
                                     <button onClick={(e) => { e.stopPropagation(); setSelectedRMForAnalysis(rm); setIsAnalysisModalOpen(true); }} className="p-2.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-colors border border-indigo-100 group"><BrainIcon small /></button>
@@ -502,7 +543,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                 </div>
                                 <h4 className="text-sm font-bold text-gray-600 uppercase mb-4">Детализация по Регионам</h4>
                                 <div className="overflow-x-auto"><table className="w-full text-left text-sm text-gray-600">
-                                    <thead className="text-xs text-gray-500 bg-gray-100 uppercase"><tr><th className="px-4 py-3 rounded-l-lg">Регион</th><th className="px-4 py-3">Факт {currentYear}</th><th className="px-4 py-3">План {nextYear}</th><th className="px-4 py-3">Рост</th><th className="px-4 py-3 text-center rounded-r-lg">Действия</th></tr></thead>
+                                    <thead className="text-xs text-gray-500 bg-gray-100 uppercase"><tr><th className="px-4 py-3 rounded-l-lg">Регион</th><th className="px-4 py-3">{factLabel}</th><th className="px-4 py-3">{planLabel}</th><th className="px-4 py-3">Рост</th><th className="px-4 py-3 text-center rounded-r-lg">Действия</th></tr></thead>
                                     <tbody className="divide-y divide-gray-200">
                                         {rm.regions.map((reg) => (
                                             <tr key={reg.name} className="hover:bg-white transition-colors group">
@@ -603,17 +644,17 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 <div className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-200 px-8 py-4 flex justify-between items-center shadow-sm">
                     <div className="flex items-center gap-4">
                         <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors"><ArrowLeftIcon /></button>
-                        <div><h1 className="text-xl font-bold text-gray-900">Дашборд План/Факт</h1><p className="text-xs text-gray-500">Стратегическое планирование 2026</p></div>
+                        <div><h1 className="text-xl font-bold text-gray-900">Дашборд План/Факт</h1><p className="text-xs text-gray-500">Стратегическое планирование {planYear}</p></div>
                     </div>
                 </div>
                 <div className="p-8 max-w-[1600px] mx-auto">{renderContent()}</div>
                 <RMAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => setIsAnalysisModalOpen(false)} rmData={selectedRMForAnalysis} baseRate={baseRate} dateRange={dateRange} />
                 <GrowthExplanationModal isOpen={!!explanationData} onClose={() => setExplanationData(null)} data={explanationData} baseRate={baseRate} />
                 <RegionDetailsModal isOpen={isRegionModalOpen} onClose={() => setIsRegionModalOpen(false)} rmName={selectedRegionDetails?.rmName || ''} regionName={selectedRegionDetails?.regionName || ''} activeClients={selectedRegionDetails?.activeClients || []} potentialClients={selectedRegionDetails?.potentialClients || []} onEditClient={onEditClient} />
-                <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(m) => setExplanationData(m)} onAnalyze={(row) => {
+                <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(m) => setExplanationData(m)} dateLabels={{ fact: factLabel, plan: planLabel }} onAnalyze={(row) => {
                     const skuList = row.skuList || [];
                     setPackagingAnalysisTitle(`Анализ: ${row.packaging} (${selectedBrandRegion})`);
-                    setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct });
+                    setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct, labels: { fact: factLabel, plan: planLabel } });
                     setPackagingAnalysisContent('');
                     setIsPackagingAnalysisOpen(true);
                     setIsPackagingAnalysisLoading(true);
@@ -650,10 +691,10 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             <RMAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => setIsAnalysisModalOpen(false)} rmData={selectedRMForAnalysis} baseRate={baseRate} dateRange={dateRange} />
             <GrowthExplanationModal isOpen={!!explanationData} onClose={() => setExplanationData(null)} data={explanationData} baseRate={baseRate} />
             <RegionDetailsModal isOpen={isRegionModalOpen} onClose={() => setIsRegionModalOpen(false)} rmName={selectedRegionDetails?.rmName || ''} regionName={selectedRegionDetails?.regionName || ''} activeClients={selectedRegionDetails?.activeClients || []} potentialClients={selectedRegionDetails?.potentialClients || []} onEditClient={onEditClient} />
-            <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(m) => setExplanationData(m)} onAnalyze={(row) => {
+            <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(m) => setExplanationData(m)} dateLabels={{ fact: factLabel, plan: planLabel }} onAnalyze={(row) => {
                 const skuList = row.skuList || [];
                 setPackagingAnalysisTitle(`Анализ: ${row.packaging} (${selectedBrandRegion})`);
-                setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct });
+                setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct, labels: { fact: factLabel, plan: planLabel } });
                 setPackagingAnalysisContent('');
                 setIsPackagingAnalysisOpen(true);
                 setIsPackagingAnalysisLoading(true);
