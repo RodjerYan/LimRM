@@ -6,11 +6,11 @@ export async function sendVerifyCode(to: string, code: string): Promise<{ succes
   const SMTP_USER = "rodjeryan@gmail.com";
   const SMTP_PASS = "tzkhmargvuowyqon"; 
 
-  // Явная конфигурация для Gmail (SSL/465)
+  // Переключаемся на порт 587 (STARTTLS), так как 465 часто блокируется облачными провайдерами
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 465,
-    secure: true, // использовать SSL
+    port: 587,
+    secure: false, // false для 587 (использует STARTTLS), true для 465
     auth: {
       user: SMTP_USER,
       pass: SMTP_PASS,
@@ -18,7 +18,7 @@ export async function sendVerifyCode(to: string, code: string): Promise<{ succes
     // Логирование для отладки
     logger: true,
     debug: true,
-    // Опции для обхода проблем с сертификатами (антивирусы/прокси)
+    // Опции для обхода проблем с сертификатами
     tls: {
         rejectUnauthorized: false
     },
@@ -28,7 +28,7 @@ export async function sendVerifyCode(to: string, code: string): Promise<{ succes
   });
 
   try {
-    console.log(`[MAILER] Начинаем отправку на ${to}...`);
+    console.log(`[MAILER] Начинаем отправку на ${to} (Port 587)...`);
     
     await Promise.race([
         transporter.sendMail({
