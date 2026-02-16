@@ -1,5 +1,5 @@
 
-import React, { Suspense, useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState, useMemo } from 'react';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
 import Prophet from './components/modules/Prophet';
@@ -28,6 +28,11 @@ import NotFoundPage from './components/NotFoundPage';
 import GlobalSearch from './components/GlobalSearch';
 import { useSearchEverywhereItems } from './components/search/useSearchEverywhereItems';
 
+// Advanced Analytics Modules
+import ChurnRadar from './components/modules/ChurnRadar';
+import CoverageView from './components/modules/CoverageView';
+import { calculateChurnMetrics, calculateCoverageMetrics } from './services/analytics/advancedAnalytics';
+
 const DetailsModal = React.lazy(() => import('./components/DetailsModal'));
 const UnidentifiedRowsModal = React.lazy(() => import('./components/UnidentifiedRowsModal'));
 
@@ -47,6 +52,9 @@ const AppContent: React.FC = () => {
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [openChannelRequest, setOpenChannelRequest] = useState<string | null>(null);
     
+    // -- AMP Module State --
+    const [ampView, setAmpView] = useState<'map' | 'churn'>('map');
+
     const {
         activeModule, setActiveModule,
         allData,
@@ -79,6 +87,23 @@ const AppContent: React.FC = () => {
         loadStartDate, setLoadStartDate,
         loadEndDate, setLoadEndDate
     } = useAppLogic();
+
+    // --- Advanced Analytics Calculations ---
+    const churnMetrics = useMemo(() => {
+        if (activeModule === 'amp' && ampView === 'churn') {
+            return calculateChurnMetrics(allActiveClients);
+        }
+        return [];
+    }, [activeModule, ampView, allActiveClients]);
+
+    const coverageMetrics = useMemo(() => {
+        if (activeModule === 'adapta' && okbStatus?.rowCount) {
+            // Need flattened active clients with regions
+            return calculateCoverageMetrics(allActiveClients, okbData, okbRegionCounts);
+        }
+        return [];
+    }, [activeModule, allActiveClients, okbData, okbRegionCounts, okbStatus]);
+
 
     const handleLoadStartDateChange = (date: string) => {
         setLoadStartDate(date);
@@ -200,55 +225,89 @@ const AppContent: React.FC = () => {
 
                     <div className="mx-auto w-full max-w-[1320px] px-4 md:px-6 lg:px-8 py-6">
                         {activeModule === 'adapta' && (
-                            <Adapta 
-                                processingState={processingState}
-                                onForceUpdate={handleForceUpdate}
-                                onFileProcessed={() => {}}
-                                onProcessingStateChange={() => {}}
-                                okbData={okbData}
-                                okbStatus={okbStatus}
-                                onOkbStatusChange={setOkbStatus}
-                                onOkbDataChange={setOkbData}
-                                disabled={processingState.isProcessing}
-                                unidentifiedCount={unidentifiedRows.length}
-                                onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
-                                activeClientsCount={allActiveClients.length}
-                                uploadedData={allData} 
-                                dbStatus={dbStatus}
-                                onStartEdit={setEditingClient}
-                                startDate={filterStartDate} 
-                                endDate={filterEndDate}     
-                                onStartDateChange={setFilterStartDate} 
-                                onEndDateChange={setFilterEndDate}
-                                loadStartDate={loadStartDate}
-                                loadEndDate={loadEndDate}
-                                onLoadStartDateChange={handleLoadStartDateChange}
-                                onLoadEndDateChange={handleLoadEndDateChange}
-                                openChannelRequest={openChannelRequest}
-                                onConsumeOpenChannelRequest={() => setOpenChannelRequest(null)}
-                                onTabChange={setActiveModule}
-                                setIsSearchOpen={setIsSearchOpen}
-                                selectedRm={filters.rm}
-                                onRmChange={(rm) => setFilters(prev => ({ ...prev, rm }))}
-                            />
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                <div className="lg:col-span-2">
+                                    <Adapta 
+                                        processingState={processingState}
+                                        onForceUpdate={handleForceUpdate}
+                                        onFileProcessed={() => {}}
+                                        onProcessingStateChange={() => {}}
+                                        okbData={okbData}
+                                        okbStatus={okbStatus}
+                                        onOkbStatusChange={setOkbStatus}
+                                        onOkbDataChange={setOkbData}
+                                        disabled={processingState.isProcessing}
+                                        unidentifiedCount={unidentifiedRows.length}
+                                        onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
+                                        activeClientsCount={allActiveClients.length}
+                                        uploadedData={allData} 
+                                        dbStatus={dbStatus}
+                                        onStartEdit={setEditingClient}
+                                        startDate={filterStartDate} 
+                                        endDate={filterEndDate}     
+                                        onStartDateChange={setFilterStartDate} 
+                                        onEndDateChange={setFilterEndDate}
+                                        loadStartDate={loadStartDate}
+                                        loadEndDate={loadEndDate}
+                                        onLoadStartDateChange={handleLoadStartDateChange}
+                                        onLoadEndDateChange={handleLoadEndDateChange}
+                                        openChannelRequest={openChannelRequest}
+                                        onConsumeOpenChannelRequest={() => setOpenChannelRequest(null)}
+                                        onTabChange={setActiveModule}
+                                        setIsSearchOpen={setIsSearchOpen}
+                                        selectedRm={filters.rm}
+                                        onRmChange={(rm) => setFilters(prev => ({ ...prev, rm }))}
+                                    />
+                                </div>
+                                <div className="lg:col-span-1">
+                                    <CoverageView metrics={coverageMetrics} />
+                                </div>
+                            </div>
                         )}
 
                         {activeModule === 'amp' && (
                             <div className="space-y-6">
-                                <InteractiveRegionMap data={filtered} activeClients={allActiveClients} potentialClients={mapPotentialClients} onEditClient={setEditingClient} selectedRegions={filters.region} flyToClientKey={null} />
-                                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                                    <div className="lg:col-span-1">
-                                        <Filters options={filterOptions} currentFilters={filters} onFilterChange={setFilters} onReset={() => setFilters({rm:'', brand:[], packaging:[], region:[]})} disabled={allData.length === 0} />
-                                    </div>
-                                    <div className="lg:col-span-3"><PotentialChart data={filtered} /></div>
+                                <div className="flex justify-end gap-2 mb-2">
+                                    <button 
+                                        onClick={() => setAmpView('map')} 
+                                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${ampView === 'map' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                                    >
+                                        Карта & Аналитика
+                                    </button>
+                                    <button 
+                                        onClick={() => setAmpView('churn')} 
+                                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${ampView === 'churn' ? 'bg-red-600 text-white shadow-lg shadow-red-500/30' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                                    >
+                                        Churn Radar (Риски)
+                                    </button>
                                 </div>
-                                <ResultsTable 
-                                    data={filtered} 
-                                    onRowClick={setSelectedDetailsRow} 
-                                    unidentifiedRowsCount={unidentifiedRows.length} 
-                                    onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)} 
-                                    disabled={allData.length === 0} 
-                                />
+
+                                {ampView === 'map' ? (
+                                    <>
+                                        <InteractiveRegionMap data={filtered} activeClients={allActiveClients} potentialClients={mapPotentialClients} onEditClient={setEditingClient} selectedRegions={filters.region} flyToClientKey={null} />
+                                        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                                            <div className="lg:col-span-1">
+                                                <Filters options={filterOptions} currentFilters={filters} onFilterChange={setFilters} onReset={() => setFilters({rm:'', brand:[], packaging:[], region:[]})} disabled={allData.length === 0} />
+                                            </div>
+                                            <div className="lg:col-span-3"><PotentialChart data={filtered} /></div>
+                                        </div>
+                                        <ResultsTable 
+                                            data={filtered} 
+                                            onRowClick={setSelectedDetailsRow} 
+                                            unidentifiedRowsCount={unidentifiedRows.length} 
+                                            onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)} 
+                                            disabled={allData.length === 0} 
+                                        />
+                                    </>
+                                ) : (
+                                    <ChurnRadar 
+                                        metrics={churnMetrics} 
+                                        onClientClick={(id) => {
+                                            const client = allActiveClients.find(c => c.key === id);
+                                            if (client) setEditingClient(client);
+                                        }} 
+                                    />
+                                )}
                             </div>
                         )}
 

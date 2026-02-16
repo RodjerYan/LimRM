@@ -398,3 +398,44 @@ export interface DeltaItem {
     payload?: Partial<MapPoint>; // Only changed fields
     timestamp: number;
 }
+
+// --- ANALYTICS ENGINE TYPES ---
+
+export type ActionType = 'churn' | 'activation' | 'growth' | 'data_fix';
+
+export interface SuggestedAction {
+    clientId: string;
+    clientName: string;
+    address: string;
+    rm: string;
+    type: ActionType;
+    priorityScore: number;
+    reason: string;
+    recommendedStep: string;
+    fact: number;
+    potential: number;
+}
+
+export type ChurnRiskLevel = 'OK' | 'Monitor' | 'High' | 'Critical';
+
+export interface ChurnMetric {
+    clientId: string;
+    clientName: string;
+    address: string;
+    rm: string;
+    riskScore: number;
+    riskLevel: ChurnRiskLevel;
+    daysSinceLastOrder: number;
+    avgOrderGap: number;
+    volumeDropPct: number;
+    fact: number;
+}
+
+export interface CoverageMetric {
+    region: string;
+    activeCount: number;
+    okbCount: number;
+    coveragePct: number;
+    gap: number;
+    priorityScore: number;
+}
