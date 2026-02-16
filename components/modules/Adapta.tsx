@@ -20,8 +20,7 @@ import {
   SearchIcon,
   UsersIcon,
   FilterIcon,
-  FactIcon,
-  CloudDownloadIcon // Added icon
+  FactIcon, // Added FactIcon
 } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
@@ -80,9 +79,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   const [selectedOutlier, setSelectedOutlier] = useState<OutlierItem | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [channelSearchTerm, setChannelSearchTerm] = useState('');
-  
-  // ETL State
-  const [isEtlRunning, setIsEtlRunning] = useState(false);
 
   // Determine Effective Period
   const effectiveStart = props.startDate;
@@ -314,22 +310,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     return displayActiveCount.toLocaleString('ru-RU');
   }, [props.processingState.isProcessing, props.processingState.totalRowsProcessed, displayActiveCount]);
 
-  const handleRunEtl = async () => {
-      if (isEtlRunning) return;
-      setIsEtlRunning(true);
-      try {
-          const res = await fetch('/api/run-etl');
-          if (!res.ok) throw new Error('Network error');
-          const data = await res.json();
-          alert(`ETL Процесс: ${data.message}\nОбновлено регионов: ${Object.keys(data.data || {}).length}`);
-      } catch (e) {
-          console.error(e);
-          alert('Ошибка запуска ETL процесса. Проверьте консоль сервера.');
-      } finally {
-          setIsEtlRunning(false);
-      }
-  };
-
   return (
     <div className="space-y-6">
       {/* Header with New TopBar */}
@@ -508,18 +488,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 />
               </div>
             </Motion>
-            
-            {/* ETL Trigger */}
-            <Motion delayMs={250}>
-                <button 
-                    onClick={handleRunEtl}
-                    disabled={isEtlRunning}
-                    className="w-full p-4 rounded-3xl border border-slate-200 bg-white/70 hover:bg-white text-slate-600 hover:text-indigo-700 transition-all shadow-sm active:scale-95 flex items-center justify-center gap-3 font-bold text-sm"
-                >
-                    {isEtlRunning ? <LoaderIcon className="animate-spin" /> : <CloudDownloadIcon />}
-                    {isEtlRunning ? 'Парсинг Росстат...' : 'Обновить статистику (ETL)'}
-                </button>
-            </Motion>
           </div>
 
           {/* Right side */}
@@ -557,7 +525,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                       />
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                       <StatTile
                         label={props.processingState.isProcessing ? "Обработано строк" : "Клиентов (Всего)"}
                         value={rowsToDisplay}
@@ -578,6 +546,46 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         accent="lime"
                         footnote="Гео-объектов (База)"
                       />
+
+                      {/* Unidentified clickable */}
+                      <div
+                        role={props.onUnidentifiedClick ? 'button' : undefined}
+                        tabIndex={props.onUnidentifiedClick ? 0 : -1}
+                        onClick={props.onUnidentifiedClick}
+                        className={[
+                          'rounded-3xl border border-slate-200/70 bg-white/70 p-3.5',
+                          'shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all hover:bg-white hover:shadow-[0_18px_50px_rgba(15,23,42,0.10)]',
+                          props.onUnidentifiedClick ? 'cursor-pointer active:scale-[0.98]' : '',
+                          'flex flex-col justify-between h-full'
+                        ].join(' ')}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="text-[10px] uppercase tracking-[0.18em] text-slate-600 font-bold truncate">
+                            Неопознанные
+                          </div>
+                          {props.onUnidentifiedClick && (
+                            <div className="text-indigo-600">
+                              <SearchIcon small />
+                            </div>
+                          )}
+                        </div>
+                        
+                        <div
+                            className={`mt-1 font-semibold tabular-nums break-words leading-none tracking-tight ${props.unidentifiedCount > 0 ? 'text-amber-700' : 'text-emerald-700'}`}
+                            style={{ fontSize: "clamp(13px, 1.15vw, 18px)" }}
+                            title={props.unidentifiedCount.toLocaleString('ru-RU')}
+                        >
+                          {props.unidentifiedCount.toLocaleString('ru-RU')}
+                        </div>
+
+                        <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.08em]">
+                          {props.unidentifiedCount > 0 ? (
+                            <span className="text-amber-700">⚠️ Ошибка разбора</span>
+                          ) : (
+                            <span className="text-emerald-700">● Всё чисто</span>
+                          )}
+                        </div>
+                      </div>
 
                       <StatTile
                         label="Режим"

@@ -1,6 +1,6 @@
 
 import { useState, useMemo } from 'react';
-import { AggregatedDataRow, FilterState, FilterOptions, SummaryMetrics, MapPoint, OkbDataRow } from '../types';
+import { AggregatedDataRow, FilterState, MapPoint, OkbDataRow } from '../types';
 import {
   applyFilters,
   getFilterOptions,
@@ -176,27 +176,16 @@ export const useAnalytics = (
       return !activeClientAddressSet.has(normalizeAddress(addr));
     });
 
-    let result = potentialOnly;
+    if (filters.region.length === 0) return potentialOnly;
 
-    if (filters.region.length > 0) {
-      result = potentialOnly.filter(row => {
-        const rawRegion = findValueInRow(row, ['регион', 'субъект', 'область']);
-        if (!rawRegion) return false;
-        return filters.region.some(selectedReg =>
-          rawRegion.toLowerCase().includes(selectedReg.toLowerCase()) ||
-          selectedReg.toLowerCase().includes(rawRegion.toLowerCase())
-        );
-      });
-    }
-
-    // Transform to PotentialClient
-    return result.map(row => ({
-        name: findValueInRow(row, ['наименование', 'клиент', 'name']) || 'Потенциальный клиент',
-        address: findAddressInRow(row) || '',
-        type: findValueInRow(row, ['тип', 'канал', 'type']) || 'Не определен',
-        lat: row.lat,
-        lon: row.lon
-    }));
+    return potentialOnly.filter(row => {
+      const rawRegion = findValueInRow(row, ['регион', 'субъект', 'область']);
+      if (!rawRegion) return false;
+      return filters.region.some(selectedReg =>
+        rawRegion.toLowerCase().includes(selectedReg.toLowerCase()) ||
+        selectedReg.toLowerCase().includes(rawRegion.toLowerCase())
+      );
+    });
   }, [okbData, filters.region, activeClientAddressSet]);
 
   const filterOptions = useMemo(() => getFilterOptions(allData), [allData]);

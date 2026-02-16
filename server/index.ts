@@ -48,8 +48,6 @@ import checkRosstat from '../api/check-rosstat-update.ts';
 import geminiProxy from '../api/gemini-proxy.ts';
 // @ts-ignore
 import keepAlive from '../api/keep-alive.ts';
-// @ts-ignore
-import runEtl from '../api/run-etl.ts';
 
 // Load environment variables
 dotenv.config();
@@ -170,7 +168,6 @@ app.all('/api/snapshot', adapt(getFullCache)); // Legacy/Alias
 // NEW ROUTES
 app.all('/api/get-history', adapt(getHistory));
 app.all('/api/sync-google', adapt(syncGoogle));
-app.all('/api/run-etl', adapt(runEtl)); // ETL Route
 
 app.all('/api/start-data-update', adapt(startDataUpdate));
 app.all('/api/check-update-status', adapt(checkUpdateStatus));
