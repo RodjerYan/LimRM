@@ -1,7 +1,8 @@
 
-import React, { useMemo } from 'react';
+import React, { useState } from 'react';
 import { SuggestedAction, ActionType } from '../../types';
 import { AlertIcon, TrendingUpIcon, TargetIcon, WarningIcon, CheckIcon } from '../icons';
+import Modal from '../Modal';
 
 interface NBAPanelProps {
     actions: SuggestedAction[];
@@ -21,7 +22,7 @@ const ActionCard: React.FC<{ action: SuggestedAction; onClick: () => void }> = (
     return (
         <div 
             onClick={onClick}
-            className={`p-4 rounded-2xl border ${style.bg} hover:shadow-md transition-all cursor-pointer relative group`}
+            className={`p-4 rounded-2xl border ${style.bg} hover:shadow-md transition-all cursor-pointer relative group h-full flex flex-col`}
         >
             <div className="flex justify-between items-start mb-2">
                 <div className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider ${style.color}`}>
@@ -32,7 +33,7 @@ const ActionCard: React.FC<{ action: SuggestedAction; onClick: () => void }> = (
                 </div>
             </div>
             
-            <div className="mb-3">
+            <div className="mb-3 flex-grow">
                 <h4 className="text-sm font-bold text-slate-900 truncate" title={action.clientName}>{action.clientName}</h4>
                 <p className="text-xs text-slate-500 truncate">{action.address}</p>
                 <div className="text-[10px] text-slate-400 mt-0.5">РМ: {action.rm}</div>
@@ -42,7 +43,7 @@ const ActionCard: React.FC<{ action: SuggestedAction; onClick: () => void }> = (
                 <strong>Причина:</strong> {action.reason}
             </div>
             
-            <div className={`text-xs font-bold ${style.color} flex items-center gap-1 group-hover:underline`}>
+            <div className={`text-xs font-bold ${style.color} flex items-center gap-1 group-hover:underline mt-auto`}>
                 Действие: {action.recommendedStep}
             </div>
         </div>
@@ -50,9 +51,7 @@ const ActionCard: React.FC<{ action: SuggestedAction; onClick: () => void }> = (
 };
 
 const NBAPanel: React.FC<NBAPanelProps> = ({ actions, onActionClick }) => {
-    // Group top 3 by type for "Focus of the Day"
-    const churnActions = actions.filter(a => a.type === 'churn').slice(0, 3);
-    const growthActions = actions.filter(a => a.type === 'growth' || a.type === 'activation').slice(0, 3);
+    const [showAll, setShowAll] = useState(false);
 
     return (
         <div className="space-y-6">
@@ -64,9 +63,15 @@ const NBAPanel: React.FC<NBAPanelProps> = ({ actions, onActionClick }) => {
                     <h3 className="text-lg font-black text-slate-900">Next Best Actions</h3>
                     <p className="text-xs text-slate-500">Алгоритмические рекомендации на сегодня</p>
                 </div>
-                <div className="ml-auto text-xs font-bold text-slate-400 bg-slate-100 px-3 py-1 rounded-full">
+                
+                <button 
+                    onClick={() => setShowAll(true)}
+                    disabled={actions.length === 0}
+                    className="ml-auto text-xs font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 hover:text-slate-700 px-4 py-1.5 rounded-full transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
                     {actions.length} задач
-                </div>
+                    {actions.length > 0 && <span className="text-slate-400">↗</span>}
+                </button>
             </div>
 
             {actions.length === 0 ? (
@@ -86,6 +91,28 @@ const NBAPanel: React.FC<NBAPanelProps> = ({ actions, onActionClick }) => {
                     ))}
                 </div>
             )}
+
+            <Modal
+                isOpen={showAll}
+                onClose={() => setShowAll(false)}
+                title={`Все рекомендации (${actions.length})`}
+                maxWidth="max-w-7xl"
+            >
+                <div className="p-4 bg-slate-50/50 min-h-[50vh]">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {actions.map((action, idx) => (
+                            <ActionCard 
+                                key={action.clientId + action.type + idx} 
+                                action={action} 
+                                onClick={() => {
+                                    setShowAll(false);
+                                    onActionClick(action);
+                                }} 
+                            />
+                        ))}
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 };
