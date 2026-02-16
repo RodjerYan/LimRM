@@ -42,12 +42,11 @@ async function getAuthClient() {
         throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY JSON.'); 
     }
 
-    // IMPERSONATION: Act as rodjeryan@gmail.com
+    // Reverted: Removed 'subject' to fix 401 error for personal Gmail accounts
     return new google.auth.JWT({
         email: credentials.client_email,
         key: credentials.private_key,
-        scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'],
-        subject: "rodjeryan@gmail.com"
+        scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     });
 }
 

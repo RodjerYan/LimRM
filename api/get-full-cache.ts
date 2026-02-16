@@ -31,12 +31,11 @@ async function getDriveClient() {
         throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY');
     }
 
-    // IMPERSONATION: Act as rodjeryan@gmail.com to bypass Service Account quota limits
+    // Reverted: Removed 'subject' which causes 401 error for non-Workspace accounts.
     const auth = new google.auth.JWT({
         email: credentials.client_email,
         key: credentials.private_key,
-        scopes: SCOPES,
-        subject: "rodjeryan@gmail.com"
+        scopes: SCOPES
     });
 
     return google.drive({ version: 'v3', auth });
