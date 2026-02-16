@@ -239,6 +239,10 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
             
             lastSavedChunksRef.current.clear();
 
+            // Progress tracking variables
+            let chunksProcessed = 0;
+            const totalChunks = fileList.length;
+
             // --- WORKER SETUP ---
             const worker = new Worker(new URL('../services/processing.worker.ts', import.meta.url), { type: 'module' });
             
@@ -288,20 +292,13 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                             const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${item.file.id}`);
                             const text = await res.text();
                             
+                            // Update progress counter
+                            chunksProcessed++;
+                            const chunkProgress = Math.min(99, Math.round((chunksProcessed / totalChunks) * 100));
+
                             if (text && text.trim().length > 0) {
                                 lastSavedChunksRef.current.set(item.index, text);
                                 const chunkData = JSON.parse(text);
-                                
-                                // --- DEEP DEBUG LOGGING FOR SPECIFIC FILES ---
-                                const debugThis =
-                                  item.file.name?.includes('snapshot38') ||
-                                  item.file.name?.includes('snapshot42');
-
-                                if (debugThis) {
-                                  console.log(`[DEBUG ${item.file.name}] chunk keys:`, Object.keys(chunkData));
-                                  console.log(`[DEBUG ${item.file.name}] typeof rows:`, typeof chunkData.rows, 'isArray:', Array.isArray(chunkData.rows));
-                                  console.log(`[DEBUG ${item.file.name}] typeof aggregatedData:`, typeof chunkData.aggregatedData, 'isArray:', Array.isArray(chunkData.aggregatedData));
-                                }
                                 
                                 let newRows: any[] = [];
                                 if (Array.isArray(chunkData.rows)) newRows = chunkData.rows;
@@ -338,22 +335,22 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                     // Object Raw: Array of objects (JSON export)
                                     const isObjectRaw = !isGroupSnapshot && !isPointSnapshot && typeof firstRow === 'object' && !Array.isArray(firstRow);
 
-                                    console.log(`Processing chunk ${item.file.name}: ${newRows.length} rows (${isGroupSnapshot ? 'GroupSnapshot' : isPointSnapshot ? 'PointSnapshot' : isRawArray ? 'Raw' : isObjectRaw ? 'ObjectRaw' : 'Unknown'})`);
+                                    // console.log(`Processing chunk ${item.file.name}: ${newRows.length} rows (${isGroupSnapshot ? 'GroupSnapshot' : isPointSnapshot ? 'PointSnapshot' : isRawArray ? 'Raw' : isObjectRaw ? 'ObjectRaw' : 'Unknown'})`);
                                     
                                     if (isGroupSnapshot) {
                                         worker.postMessage({
                                             type: 'RESTORE_CHUNK',
-                                            payload: { chunkData: newRows }
+                                            payload: { chunkData: newRows, progress: chunkProgress }
                                         });
                                     } else if (isPointSnapshot) {
                                         // This handles the "flat list of points" format
-                                        console.log(`[Worker] Dispatching PointSnapshot chunk ${item.file.name}`);
                                         worker.postMessage({
                                             type: 'PROCESS_CHUNK',
                                             payload: {
                                                 rawData: newRows,
                                                 isFirstChunk: item.index === 0,
-                                                objectKind: 'POINT_SNAPSHOT'
+                                                objectKind: 'POINT_SNAPSHOT',
+                                                progress: chunkProgress
                                             }
                                         });
                                     } else if (isRawArray) {
@@ -361,22 +358,23 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                             type: 'PROCESS_CHUNK',
                                             payload: {
                                                 rawData: newRows,
-                                                isFirstChunk: item.index === 0
+                                                isFirstChunk: item.index === 0,
+                                                progress: chunkProgress
                                             }
                                         });
                                     } else if (isObjectRaw) {
                                         // HANDLE ARRAY OF OBJECTS (JSON export of sales lines)
-                                        console.log(`[Worker] Dispatching ObjectRaw chunk ${item.file.name}`);
                                         worker.postMessage({
                                             type: 'PROCESS_CHUNK',
                                             payload: {
                                                 rawData: newRows,
                                                 isFirstChunk: item.index === 0,
-                                                isObjectMode: true // Flag to tell worker to skip array index mapping
+                                                isObjectMode: true,
+                                                progress: chunkProgress
                                             }
                                         });
                                     } else {
-                                        console.warn(`❌ SKIPPING chunk ${item.file.name} to avoid worker crash. Unknown format. First row:`, firstRow);
+                                        console.warn(`❌ SKIPPING chunk ${item.file.name} to avoid worker crash. Unknown format.`);
                                     }
                                 }
 

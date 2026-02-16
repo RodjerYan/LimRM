@@ -313,7 +313,7 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     postMessage({ type: 'progress', payload: { percentage: 5, message: statusMsg, totalProcessed: state_processedRowsCount } });
 }
 
-function restoreChunk(payload: { chunkData: any }, postMessage: PostMessageFn) {
+function restoreChunk(payload: { chunkData: any, progress?: number }, postMessage: PostMessageFn) {
     const raw = payload.chunkData;
     const rows = Array.isArray(raw) 
         ? raw 
@@ -423,7 +423,10 @@ function restoreChunk(payload: { chunkData: any }, postMessage: PostMessageFn) {
     
     if (state_seenRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
         state_lastEmitCount = state_seenRowsCount;
-        const currentProgress = Math.min(98, 10 + (state_seenRowsCount / 200000) * 85); 
+        
+        // Use passed progress or fallback to formula
+        const currentProgress = payload.progress ?? Math.min(98, 10 + (state_seenRowsCount / 200000) * 85);
+        
         postMessage({ 
             type: 'progress', 
             payload: { percentage: currentProgress, message: `Синхронизация снимка: ${state_processedRowsCount.toLocaleString()}...`, totalProcessed: state_processedRowsCount } 
@@ -431,8 +434,8 @@ function restoreChunk(payload: { chunkData: any }, postMessage: PostMessageFn) {
     }
 }
 
-function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName?: string, isObjectMode?: boolean, objectKind?: 'POINT_SNAPSHOT' | 'RAW_ROWS' }, postMessage: PostMessageFn) {
-    const { rawData, isFirstChunk, isObjectMode, objectKind } = payload;
+function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName?: string, isObjectMode?: boolean, objectKind?: 'POINT_SNAPSHOT' | 'RAW_ROWS', progress?: number }, postMessage: PostMessageFn) {
+    const { rawData, isFirstChunk, isObjectMode, objectKind, progress } = payload;
     if (!rawData || rawData.length === 0) return;
     
     // --- SPECIAL HANDLING FOR FLAT POINT SNAPSHOTS ---
@@ -559,7 +562,9 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             }
         }
         
-        const currentProgress = Math.min(98, 10 + (state_seenRowsCount / 3500000) * 85); 
+        // Use passed progress or fallback to formula
+        const currentProgress = progress ?? Math.min(98, 10 + (state_seenRowsCount / 3500000) * 85);
+        
         postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая обработка: ${state_processedRowsCount.toLocaleString()}...`, totalProcessed: state_processedRowsCount } });
         return;
     }
@@ -819,7 +824,8 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         });
     }
 
-    const currentProgress = Math.min(98, 10 + (state_seenRowsCount / 3500000) * 85); 
+    // Use passed progress or fallback to formula
+    const currentProgress = progress ?? Math.min(98, 10 + (state_seenRowsCount / 3500000) * 85); 
     postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая обработка: ${state_processedRowsCount.toLocaleString()}...`, totalProcessed: state_processedRowsCount } });
 }
 

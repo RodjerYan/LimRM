@@ -213,6 +213,15 @@ export type WorkerInputChunk = {
         // NEW: Discriminator for processing logic
         objectKind?: 'POINT_SNAPSHOT' | 'RAW_ROWS'; 
         isObjectMode?: boolean; // Legacy/Backup flag
+        progress?: number; // Main thread calculated progress percentage (0-100)
+    };
+};
+
+export type WorkerInputRestore = {
+    type: 'RESTORE_CHUNK';
+    payload: {
+        chunkData: any;
+        progress?: number;
     };
 };
 
@@ -246,6 +255,7 @@ export type WorkerMessage =
     | WorkerStreamFinish
     | WorkerInputFile
     | WorkerInputChunk
+    | WorkerInputRestore
     | WorkerInputInit
     | WorkerInputFinalize;
 
