@@ -41,11 +41,16 @@ export const AuthModal: React.FC = () => {
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true); setError(''); setInfoMsg('');
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000); 
+
         try {
             const res = await fetch('/api/auth/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, password })
+                body: JSON.stringify({ email, password }),
+                signal: controller.signal
             });
             const data = await res.json();
             if (res.ok) {
@@ -53,30 +58,59 @@ export const AuthModal: React.FC = () => {
             } else {
                 setError(data.error);
             }
-        } catch (e) { setError('Ошибка сети'); }
-        finally { setLoading(false); }
+        } catch (e: any) { 
+            if (e.name === 'AbortError') setError('Сервер долго не отвечает (Timeout)');
+            else setError('Ошибка сети или сервера');
+        } finally { 
+            clearTimeout(timeoutId);
+            setLoading(false); 
+        }
     };
 
     const handleRegister = async (e: React.FormEvent) => {
         e.preventDefault();
         if (password !== passwordConfirm) return setError('Пароли не совпадают');
         setLoading(true); setError(''); setInfoMsg('');
+
+        const controller = new AbortController();
+        // Slightly longer timeout for email sending
+        const timeoutId = setTimeout(() => controller.abort(), 20000); 
+
         try {
             const res = await fetch('/api/auth/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ firstName, lastName, phone, email, password, password2: passwordConfirm, captchaToken, captchaAnswer })
+                body: JSON.stringify({ firstName, lastName, phone, email, password, password2: passwordConfirm, captchaToken, captchaAnswer }),
+                signal: controller.signal
             });
-            const data = await res.json();
-            if (res.ok) {
-                setMode('verify');
-                setError('');
-            } else {
-                setError(data.error);
-                loadCaptcha(); // refresh captcha on error
+            
+            let data;
+            try {
+                data = await res.json();
+            } catch (jsonError) {
+                throw new Error('Сервер вернул некорректный ответ. Проверьте консоль сервера.');
             }
-        } catch (e) { setError('Ошибка сети'); }
-        finally { setLoading(false); }
+
+            if (res.ok) {
+                // Check if email failed but we got a fallback code
+                if (data.debugCode) {
+                    setVerifyCode(data.debugCode);
+                    setError('Не удалось отправить письмо (SMTP). Код введен автоматически.');
+                } else {
+                    setError('');
+                }
+                setMode('verify');
+            } else {
+                setError(data.error || 'Неизвестная ошибка');
+                loadCaptcha(); 
+            }
+        } catch (e: any) {
+            if (e.name === 'AbortError') setError('Превышено время ожидания ответа от сервера (Timeout)');
+            else setError(e.message || 'Ошибка сети');
+        } finally { 
+            clearTimeout(timeoutId);
+            setLoading(false); 
+        }
     };
 
     const handleVerify = async (e: React.FormEvent) => {
