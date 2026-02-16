@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import Modal from '../Modal';
 import { useAuth } from './AuthContext';
-import { LoaderIcon, CheckIcon, ErrorIcon } from '../icons';
+import { LoaderIcon, CheckIcon, ErrorIcon, InfoIcon } from '../icons';
 
 export const AuthModal: React.FC = () => {
     const { login } = useAuth();
@@ -21,6 +21,7 @@ export const AuthModal: React.FC = () => {
     const [captchaAnswer, setCaptchaAnswer] = useState('');
 
     const [error, setError] = useState('');
+    const [infoMsg, setInfoMsg] = useState('');
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
@@ -39,7 +40,7 @@ export const AuthModal: React.FC = () => {
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
-        setLoading(true); setError('');
+        setLoading(true); setError(''); setInfoMsg('');
         try {
             const res = await fetch('/api/auth/login', {
                 method: 'POST',
@@ -59,7 +60,7 @@ export const AuthModal: React.FC = () => {
     const handleRegister = async (e: React.FormEvent) => {
         e.preventDefault();
         if (password !== passwordConfirm) return setError('Пароли не совпадают');
-        setLoading(true); setError('');
+        setLoading(true); setError(''); setInfoMsg('');
         try {
             const res = await fetch('/api/auth/register', {
                 method: 'POST',
@@ -80,7 +81,7 @@ export const AuthModal: React.FC = () => {
 
     const handleVerify = async (e: React.FormEvent) => {
         e.preventDefault();
-        setLoading(true); setError('');
+        setLoading(true); setError(''); setInfoMsg('');
         try {
             const res = await fetch('/api/auth/verify', {
                 method: 'POST',
@@ -141,7 +142,10 @@ export const AuthModal: React.FC = () => {
 
                 {mode === 'verify' && (
                     <form onSubmit={handleVerify}>
-                        <p className="text-sm text-slate-600 mb-4">На почту <strong>{email}</strong> отправлен код подтверждения.</p>
+                        <p className="text-sm text-slate-600 mb-4">
+                            На почту <strong>{email}</strong> отправлен код подтверждения.
+                            <br/><span className="text-xs text-slate-400">(Проверьте также папку Спам)</span>
+                        </p>
                         <input type="text" placeholder="Код из письма" value={verifyCode} onChange={e => setVerifyCode(e.target.value)} className={inputClass} required />
                         <button type="submit" className={btnClass} disabled={loading}>{loading && <LoaderIcon small />} Подтвердить</button>
                         <div className="mt-4 text-center">
