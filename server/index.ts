@@ -214,24 +214,35 @@ app.listen(PORT, () => {
     console.log(`[Server] Running on port ${PORT}`);
     console.log(`[Server] Health Check: OK`);
 
-    // --- SELF-PING MECHANISM FOR RENDER ---
-    // Prevent server from sleeping by pinging itself every 5 minutes
-    const SELF_PING_INTERVAL = 300000; // 5 minutes
-    const pingUrl = `http://localhost:${PORT}/api/keep-alive`;
-
-    console.log(`[Server] Starting self-ping loop to ${pingUrl} every 5 minutes...`);
+    // --- SELF-PING MECHANISM FOR RENDER (PREVENT SLEEP) ---
+    // Render free tier sleeps after 15 minutes of inactivity.
+    // We ping the EXTERNAL URL to simulate incoming traffic.
+    const SELF_PING_INTERVAL = 14 * 60 * 1000; // 14 minutes (safe buffer before 15m timeout)
     
-    setInterval(() => {
+    // RENDER_EXTERNAL_URL is automatically set by Render
+    const pingHost = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+    const pingUrl = `${pingHost}/api/keep-alive`;
+
+    console.log(`[Server] Starting Keep-Alive Trigger to ${pingUrl} every ${SELF_PING_INTERVAL/60000} minutes...`);
+    
+    const triggerKeepAlive = () => {
+        const timestamp = new Date().toISOString();
         fetch(pingUrl)
             .then(res => {
                 if (res.ok) {
-                    // console.debug(`[Self-Ping] Success: ${res.status}`); // Uncomment for verbose logs
+                    // console.debug(`[Keep-Alive] Success at ${timestamp}`);
                 } else {
-                    console.warn(`[Self-Ping] Warning: Received status ${res.status}`);
+                    console.warn(`[Keep-Alive] Warning: Received status ${res.status} at ${timestamp}`);
                 }
             })
             .catch(err => {
-                console.error(`[Self-Ping] Error: ${err.message}`);
+                console.error(`[Keep-Alive] Error at ${timestamp}: ${err.message}`);
             });
-    }, SELF_PING_INTERVAL);
+    };
+
+    // Initial ping after startup (delay to ensure server is ready)
+    setTimeout(triggerKeepAlive, 10000);
+
+    // Periodic ping
+    setInterval(triggerKeepAlive, SELF_PING_INTERVAL);
 });

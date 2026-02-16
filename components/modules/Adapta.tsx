@@ -19,6 +19,7 @@ import {
   LoaderIcon,
   SearchIcon,
   UsersIcon,
+  FilterIcon, // Added icon
 } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
@@ -49,7 +50,7 @@ interface AdaptaProps {
   onStartDateChange: (date: string) => void;
   onEndDateChange: (date: string) => void;
 
-  // Load Props (Sync) - Now Mandatory for strict control
+  // Load Props (Sync)
   loadStartDate: string;
   loadEndDate: string;
   onLoadStartDateChange: (date: string) => void;
@@ -60,6 +61,10 @@ interface AdaptaProps {
   onConsumeOpenChannelRequest?: () => void;
   onTabChange?: (tab: string) => void;
   setIsSearchOpen?: (isOpen: boolean) => void;
+
+  // Filtering
+  selectedRm?: string;
+  onRmChange?: (rm: string) => void;
 }
 
 interface OutlierItem {
@@ -74,7 +79,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [channelSearchTerm, setChannelSearchTerm] = useState('');
 
-  // Determine Effective Period: Use Analysis Dates (Filter) strictly for visualization
+  // Determine Effective Period
   const effectiveStart = props.startDate;
   const effectiveEnd = props.endDate;
 
@@ -84,12 +89,20 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         // console.log('[ADAPTA] Data Loaded. Rows:', props.uploadedData.length);
     }
   }, [props.uploadedData]);
-  // ---------------------
 
-  // Detect if we actually have temporal data to filter (Daily OR Monthly)
+  // Extract unique RMs for the dropdown
+  const availableRMs = useMemo(() => {
+      if (!props.uploadedData) return [];
+      const rms = new Set<string>();
+      props.uploadedData.forEach(row => {
+          if (row.rm) rms.add(row.rm);
+      });
+      return Array.from(rms).sort();
+  }, [props.uploadedData]);
+
+  // Detect if we actually have temporal data to filter
   const hasTemporalData = useMemo(() => {
       if (!props.uploadedData || props.uploadedData.length === 0) return false;
-      // Check first 20 rows as a heuristic
       return props.uploadedData.slice(0, 20).some(row => 
           row.clients.some(c => 
             (c.dailyFact && Object.keys(c.dailyFact).length > 0) || 
@@ -98,7 +111,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       );
   }, [props.uploadedData]);
 
-  // Handle external request to open a channel
   useEffect(() => {
     if (props.openChannelRequest) {
       setSelectedChannel(props.openChannelRequest);
@@ -106,13 +118,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     }
   }, [props.openChannelRequest, props.onConsumeOpenChannelRequest]);
 
-  // Helper to get client fact for the selected period with Daily Precision
   const getClientFact = useCallback((client: MapPoint) => {
     const fStart = toDayKey(effectiveStart);
     const fEnd = toDayKey(effectiveEnd);
     const hasFilter = Boolean(fStart || fEnd);
 
-    // 1) Daily Fact (Best Precision)
     if (client.dailyFact && Object.keys(client.dailyFact).length > 0) {
         let sum = 0;
         for (const [dayKey, val] of Object.entries(client.dailyFact)) {
@@ -129,7 +139,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         return sum;
     }
 
-    // 2) Monthly Fact (Legacy Fallback)
     if (client.monthlyFact && Object.keys(client.monthlyFact).length > 0) {
         let sum = 0;
         const startMonth = fStart ? fStart.slice(0, 7) : null;
@@ -137,7 +146,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
         for (const [monthKey, val] of Object.entries(client.monthlyFact)) {
              if (monthKey === 'unknown') continue;
-             // Normalize legacy keys if needed
              const mk = monthKey.length > 7 ? monthKey.slice(0, 7) : monthKey;
              
              if (hasFilter) {
@@ -149,12 +157,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         return sum;
     }
 
-    // 3) No temporal data: Return total if no breakdown available
-    // Note: This means the filter effectively does nothing for this client
     return client.fact || 0;
   }, [effectiveStart, effectiveEnd]);
 
-  // 1. Total Universe (All Loaded Clients, ignoring date filter)
+  // 1. Total Universe
   const totalClientKeys = useMemo(() => {
       const set = new Set<string>();
       props.uploadedData?.forEach(row => {
@@ -163,11 +169,14 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       return set;
   }, [props.uploadedData]);
 
-  // 2. Period Universe (Clients with sales > 0 in selected period)
+  // 2. Period Universe (Filtered by Date AND RM)
   const periodClientKeys = useMemo(() => {
     const set = new Set<string>();
     if (props.uploadedData) {
       props.uploadedData.forEach((row) => {
+        // RM Filter Check
+        if (props.selectedRm && row.rm !== props.selectedRm) return;
+
         row.clients.forEach((c) => {
           const fact = getClientFact(c);
           if (fact > 0.001) set.add(c.key);
@@ -175,12 +184,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       });
     }
     return set;
-  }, [props.uploadedData, getClientFact]);
+  }, [props.uploadedData, getClientFact, props.selectedRm]);
 
   const totalUniqueCount = totalClientKeys.size;
   const periodUniqueCount = periodClientKeys.size;
-
-  // Display Total Count in the UI to prevent "empty screen" feeling
   const displayActiveCount = props.uploadedData ? totalUniqueCount : props.activeClientsCount;
 
   const healthScore = useMemo(() => {
@@ -196,6 +203,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     if (!props.uploadedData || props.uploadedData.length === 0) return [];
 
     const relevantData = props.uploadedData
+      .filter(row => !props.selectedRm || row.rm === props.selectedRm) // Apply RM Filter
       .map((row) => {
         const activeClients = row.clients
           .map((client) => ({
@@ -215,7 +223,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       .filter((row) => row.fact > 0);
 
     return detectOutliers(relevantData);
-  }, [props.uploadedData, getClientFact]);
+  }, [props.uploadedData, getClientFact, props.selectedRm]);
 
   const channelStats = useMemo(() => {
     if (!props.uploadedData || props.uploadedData.length === 0) return [];
@@ -223,8 +231,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const globalUniqueKeys = new Set<string>();
 
     props.uploadedData.forEach((row) => {
+      // Apply RM Filter
+      if (props.selectedRm && row.rm !== props.selectedRm) return;
+
       row.clients.forEach((client) => {
-        // Only count clients that have sales in the CURRENT period
         if (!periodClientKeys.has(client.key)) return;
 
         const effectiveFact = getClientFact(client);
@@ -246,7 +256,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         percentage: totalPeriodCount > 0 ? (data.uniqueKeys.size / totalPeriodCount) * 100 : 0,
       }))
       .sort((a, b) => b.count - a.count);
-  }, [props.uploadedData, getClientFact, periodClientKeys]);
+  }, [props.uploadedData, getClientFact, periodClientKeys, props.selectedRm]);
 
   const groupedChannelData = useMemo(() => {
     if (!selectedChannel || !props.uploadedData) return null;
@@ -254,6 +264,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const safeLower = (val: any) => (val || '').toString().toLowerCase();
 
     props.uploadedData.forEach((row) => {
+      // Apply RM Filter
+      if (props.selectedRm && row.rm !== props.selectedRm) return;
+
       row.clients.forEach((c) => {
         if (!periodClientKeys.has(c.key)) return;
 
@@ -286,7 +299,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       hierarchy[rm][city].push(c);
     });
     return hierarchy;
-  }, [selectedChannel, props.uploadedData, channelSearchTerm, getClientFact, periodClientKeys]);
+  }, [selectedChannel, props.uploadedData, channelSearchTerm, getClientFact, periodClientKeys, props.selectedRm]);
 
   const rowsToDisplay = useMemo(() => {
     if (props.processingState.isProcessing) {
@@ -297,13 +310,12 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
   return (
     <div className="space-y-6">
-      {/* Header with New TopBar (No Extra Buttons) */}
+      {/* Header with New TopBar */}
       <Motion delayMs={0}>
         <div data-tour="topbar">
             <TopBar
                 title="ADAPTA"
                 subtitle="Live Data Ingestion & Quality Control"
-                // STRICT BINDING: Use analysis dates (Filter) for the main controls to ensure data visibility
                 startDate={props.startDate}
                 endDate={props.endDate}
                 onStartDateChange={props.onStartDateChange}
@@ -313,6 +325,23 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                     setActiveTab('ingest');
                     if (props.onForceUpdate) props.onForceUpdate();
                 }}
+                extraControls={
+                   availableRMs.length > 0 && props.onRmChange ? (
+                       <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 h-9">
+                          <FilterIcon />
+                          <select 
+                             value={props.selectedRm || ''} 
+                             onChange={(e) => props.onRmChange!(e.target.value)}
+                             className="bg-transparent text-sm text-slate-800 outline-none w-[160px] cursor-pointer"
+                          >
+                             <option value="">Все менеджеры</option>
+                             {availableRMs.map(rm => (
+                                 <option key={rm} value={rm}>{rm}</option>
+                             ))}
+                          </select>
+                       </div>
+                   ) : null
+                }
             />
         </div>
       </Motion>
@@ -338,24 +367,24 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         </div>
       </Motion>
 
-      {/* Logic: Database exists (displayActiveCount > 0), but Filter hides everyone (periodUniqueCount === 0) */}
+      {/* Logic: Database exists but Filter hides everything */}
       {displayActiveCount > 0 && periodUniqueCount === 0 && (
         <Motion delayMs={80}>
           <EmptyState
             kind="noResults"
             tone="info"
             title="По выбранному периоду данных нет"
-            description={`В базе ${displayActiveCount.toLocaleString()} клиентов, но в выбранном периоде продаж не найдено.`}
+            description={`В базе ${displayActiveCount.toLocaleString()} клиентов, но в выбранном периоде (или для выбранного РМ) продаж не найдено.`}
             action={
               <button
-                // CORRECT FIX: Reset the FILTER dates
                 onClick={() => { 
                     props.onStartDateChange(''); 
                     props.onEndDateChange(''); 
+                    if (props.onRmChange) props.onRmChange('');
                 }}
                 className="rounded-2xl px-4 py-2.5 text-sm font-semibold bg-gradient-to-r from-indigo-600 to-sky-500 text-white shadow-[0_14px_40px_rgba(99,102,241,0.22)] hover:from-indigo-500 hover:to-sky-400 transition-all"
               >
-                Сбросить период
+                Сбросить фильтры
               </button>
             }
           />
@@ -572,7 +601,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
               <div data-tour="channels">
                 {channelStats.length > 0 ? (
                   <ChartCard
-                    title="Структура каналов сбыта (в периоде)"
+                    title={props.selectedRm ? `Структура каналов сбыта: ${props.selectedRm}` : "Структура каналов сбыта (в периоде)"}
                     subtitle="Распределение уникальных торговых точек по каналам"
                   >
                     <div className="flex flex-col gap-4">
@@ -619,7 +648,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         kind="empty"
                         tone="neutral"
                         title="Нет данных для каналов"
-                        description="Загрузите данные или сбросьте фильтры периода."
+                        description={props.selectedRm ? "Нет продаж для выбранного менеджера в этот период." : "Загрузите данные или сбросьте фильтры периода."}
                       />
                     </CardBody>
                   </Card>

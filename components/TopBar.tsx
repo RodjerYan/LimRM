@@ -11,7 +11,8 @@ interface TopBarProps {
   onEndDateChange: (v: string) => void;
   onSave?: () => void;
   onCloudSync?: () => void;
-  isLoading?: boolean; // Added to support loading spinner logic
+  isLoading?: boolean;
+  extraControls?: React.ReactNode; // New prop for custom controls
 }
 
 const TopBar: React.FC<TopBarProps> = ({
@@ -23,7 +24,8 @@ const TopBar: React.FC<TopBarProps> = ({
   onEndDateChange,
   onSave,
   onCloudSync,
-  isLoading
+  isLoading,
+  extraControls
 }) => {
   return (
     <div className="w-full bg-white/80 backdrop-blur-xl border border-slate-200/70 rounded-3xl px-6 py-4 shadow-sm">
@@ -44,6 +46,9 @@ const TopBar: React.FC<TopBarProps> = ({
 
         {/* RIGHT BLOCK */}
         <div className="flex flex-wrap items-center gap-3">
+
+          {/* EXTRA CONTROLS (e.g. RM Selector) */}
+          {extraControls}
 
           {/* PERIOD */}
           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 h-9 transition-colors hover:bg-slate-100 hover:border-slate-300">

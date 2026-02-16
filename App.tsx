@@ -193,6 +193,10 @@ const AppContent: React.FC = () => {
                                 onConsumeOpenChannelRequest={() => setOpenChannelRequest(null)}
                                 onTabChange={setActiveModule}
                                 setIsSearchOpen={setIsSearchOpen}
+                                
+                                // Filtering
+                                selectedRm={filters.rm}
+                                onRmChange={(rm) => setFilters(prev => ({ ...prev, rm }))}
                             />
                         )}
 
