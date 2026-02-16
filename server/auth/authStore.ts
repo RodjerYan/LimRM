@@ -44,6 +44,7 @@ async function getDbFileId() {
 
     const drive = getDrive();
     try {
+        console.log(`[AUTH-DB] Searching for ${DB_FILENAME} in ${USER_PROVIDED_ROOT_ID}...`);
         const list = await drive.files.list({
             q: `'${USER_PROVIDED_ROOT_ID}' in parents and name = '${DB_FILENAME}' and trashed = false`,
             fields: "files(id)",
@@ -53,17 +54,15 @@ async function getDbFileId() {
 
         if (list.data.files && list.data.files.length > 0) {
             _dbFileId = list.data.files[0].id!;
+            console.log(`[AUTH-DB] Found DB file ID: ${_dbFileId}`);
             return _dbFileId;
         }
     } catch (e) {
-        console.error("[AUTH] Error finding DB file:", e);
+        console.error("[AUTH-DB] Error finding DB file:", e);
     }
     
-    // If we reach here, the file doesn't exist.
-    // We cannot create it (Quota Error). We must throw a clear error for the user.
     throw new Error(
-        `CRITICAL: Database file '${DB_FILENAME}' not found in folder '${USER_PROVIDED_ROOT_ID}'. ` +
-        `Please create a file named '${DB_FILENAME}' manually in that Google Drive folder with content: {"users": [], "pending": []}`
+        `CRITICAL: Database file '${DB_FILENAME}' not found in folder '${USER_PROVIDED_ROOT_ID}'.`
     );
 }
 
@@ -72,13 +71,15 @@ async function readDb(): Promise<DatabaseSchema> {
     const drive = getDrive();
     
     try {
+        console.log(`[AUTH-DB] Reading DB content...`);
         const res = await drive.files.get({
             fileId: fileId,
             alt: 'media',
             supportsAllDrives: true
-        }, { responseType: 'json' }); // Important: axios adapter handles json parsing
+        }, { responseType: 'json' }); 
         
         const data = res.data as any;
+        console.log(`[AUTH-DB] DB Read success. Users: ${data?.users?.length || 0}, Pending: ${data?.pending?.length || 0}`);
         
         // Ensure structure
         if (!data || typeof data !== 'object') return { users: [], pending: [] };
@@ -87,8 +88,7 @@ async function readDb(): Promise<DatabaseSchema> {
         
         return data as DatabaseSchema;
     } catch (e) {
-        console.error("[AUTH] Failed to read DB:", e);
-        // If read fails (e.g. empty file), return default structure to attempt overwrite fix
+        console.error("[AUTH-DB] Failed to read DB:", e);
         return { users: [], pending: [] };
     }
 }
@@ -97,17 +97,24 @@ async function saveDb(data: DatabaseSchema): Promise<void> {
     const fileId = await getDbFileId();
     const drive = getDrive();
 
+    const body = JSON.stringify(data, null, 2);
+
     try {
+        console.log(`[AUTH-DB] Saving DB content (${Buffer.byteLength(body, "utf8")} bytes)...`);
+
+        // Using standard googleapis signature: params object containing media
         await drive.files.update({
             fileId: fileId,
+            supportsAllDrives: true,
             media: {
                 mimeType: "application/json",
-                body: JSON.stringify(data, null, 2)
-            },
-            supportsAllDrives: true
+                body: body
+            }
         });
+
+        console.log(`[AUTH-DB] Save success.`);
     } catch (e) {
-        console.error("[AUTH] Failed to save DB:", e);
+        console.error("[AUTH-DB] Failed to save DB:", e);
         throw new Error("DB_SAVE_FAILED");
     }
 }
@@ -122,7 +129,6 @@ export async function createPendingUser(profile: UserProfile, secrets: UserSecre
     db.pending.push(newUser);
     
     await saveDb(db);
-    console.log(`[AUTH] Pending user ${profile.email} saved to ${DB_FILENAME}`);
 }
 
 export async function getPendingUser(email: string) {

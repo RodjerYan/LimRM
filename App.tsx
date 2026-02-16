@@ -22,6 +22,7 @@ import { RoleProvider } from './components/auth/RoleProvider';
 import { AuthProvider, useAuth } from './components/auth/AuthContext';
 import { AuthModal } from './components/auth/AuthModal';
 import { AdminUsersModal } from './components/auth/AdminUsersModal';
+import NotFoundPage from './components/NotFoundPage';
 
 // Enhanced UX imports
 import GlobalSearch from './components/GlobalSearch';
@@ -37,11 +38,15 @@ const AppContent: React.FC = () => {
 
     const { user, isLoading: authLoading } = useAuth();
     const [showAdminModal, setShowAdminModal] = useState(false);
+    
+    // Auth Flow State
+    const [authCancelled, setAuthCancelled] = useState(false);
+    const [authInitialMode, setAuthInitialMode] = useState<'login' | 'register'>('login');
 
-    // Block access if not logged in
-    if (authLoading) return <div className="h-screen w-full flex items-center justify-center bg-slate-50 text-slate-400">Загрузка профиля...</div>;
-    if (!user) return <AuthModal />;
-
+    // -- Global Search Logic --
+    const [isSearchOpen, setIsSearchOpen] = useState(false);
+    const [openChannelRequest, setOpenChannelRequest] = useState<string | null>(null);
+    
     const {
         activeModule, setActiveModule,
         allData,
@@ -74,10 +79,6 @@ const AppContent: React.FC = () => {
         loadStartDate, setLoadStartDate,
         loadEndDate, setLoadEndDate
     } = useAppLogic();
-
-    // -- Global Search Logic --
-    const [isSearchOpen, setIsSearchOpen] = useState(false);
-    const [openChannelRequest, setOpenChannelRequest] = useState<string | null>(null);
 
     const handleLoadStartDateChange = (date: string) => {
         setLoadStartDate(date);
@@ -148,6 +149,27 @@ const AppContent: React.FC = () => {
         const intervalId = setInterval(pingServer, 300000); 
         return () => clearInterval(intervalId);
     }, []);
+
+    // --- AUTH LOGIC BLOCK ---
+    if (authLoading) return <div className="h-screen w-full flex items-center justify-center bg-slate-50 text-slate-400">Загрузка профиля...</div>;
+    
+    if (!user) {
+        if (authCancelled) {
+            return (
+                <NotFoundPage 
+                    onLogin={() => { setAuthInitialMode('login'); setAuthCancelled(false); }}
+                    onRegister={() => { setAuthInitialMode('register'); setAuthCancelled(false); }}
+                />
+            );
+        }
+        return (
+            <AuthModal 
+                onCancel={() => setAuthCancelled(true)} 
+                initialMode={authInitialMode}
+            />
+        );
+    }
+    // ------------------------
 
     return (
         <div className="app-premium-bg">

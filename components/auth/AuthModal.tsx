@@ -4,9 +4,14 @@ import Modal from '../Modal';
 import { useAuth } from './AuthContext';
 import { LoaderIcon, CheckIcon, ErrorIcon, InfoIcon } from '../icons';
 
-export const AuthModal: React.FC = () => {
+interface AuthModalProps {
+    onCancel?: () => void;
+    initialMode?: 'login' | 'register';
+}
+
+export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'login' }) => {
     const { login } = useAuth();
-    const [mode, setMode] = useState<'login' | 'register' | 'verify'>('login');
+    const [mode, setMode] = useState<'login' | 'register' | 'verify'>(initialMode);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [firstName, setFirstName] = useState('');
@@ -23,6 +28,10 @@ export const AuthModal: React.FC = () => {
     const [error, setError] = useState('');
     const [infoMsg, setInfoMsg] = useState('');
     const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        setMode(initialMode);
+    }, [initialMode]);
 
     useEffect(() => {
         if (mode === 'register') loadCaptcha();
@@ -95,7 +104,6 @@ export const AuthModal: React.FC = () => {
                 // Check if email failed but we got a fallback code
                 if (data.debugCode) {
                     setVerifyCode(data.debugCode);
-                    // Display the specific SMTP error message
                     setError(`Ошибка почты: ${data.mailError || 'Не удалось отправить'}. Код подставлен автоматически.`);
                 } else {
                     setError('');
@@ -137,7 +145,13 @@ export const AuthModal: React.FC = () => {
     const btnClass = "w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-500 transition-colors disabled:opacity-50 flex justify-center items-center gap-2";
 
     return (
-        <Modal isOpen={true} onClose={() => {}} title={mode === 'login' ? 'Вход в систему' : mode === 'register' ? 'Регистрация' : 'Подтверждение'} maxWidth="max-w-md" zIndex="z-[10000]">
+        <Modal 
+            isOpen={true} 
+            onClose={() => { if(onCancel) onCancel(); }} 
+            title={mode === 'login' ? 'Вход в систему' : mode === 'register' ? 'Регистрация' : 'Подтверждение'} 
+            maxWidth="max-w-md" 
+            zIndex="z-[10000]"
+        >
             <div className="p-2">
                 {error && <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm mb-4 font-medium flex items-center gap-2 break-words"><ErrorIcon small/> {error}</div>}
                 

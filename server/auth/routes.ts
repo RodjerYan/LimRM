@@ -56,11 +56,14 @@ function verifyCaptcha(token: string, answer: string) {
 
 // --- REGISTER ---
 r.post("/register", async (req, res) => {
+  const email = normEmail(req.body.email);
+  console.log(`[AUTH] 🟢 Начало регистрации для: ${email}`);
+
   try {
     const firstName = normName(req.body.firstName);
     const lastName = normName(req.body.lastName);
     const phone = normName(req.body.phone);
-    const email = normEmail(req.body.email);
+    
     const password = String(req.body.password || "");
     const password2 = String(req.body.password2 || "");
     const captchaToken = String(req.body.captchaToken || "");
@@ -73,8 +76,12 @@ r.post("/register", async (req, res) => {
     if (password.length < 6) return res.status(400).json({ error: "Пароль слишком короткий" });
     if (password !== password2) return res.status(400).json({ error: "Пароли не совпадают" });
 
+    console.log(`[AUTH] Проверка существования пользователя...`);
     const active = await getActiveUser(email);
-    if (active) return res.status(409).json({ error: "Пользователь уже зарегистрирован" });
+    if (active) {
+        console.log(`[AUTH] Пользователь уже существует.`);
+        return res.status(409).json({ error: "Пользователь уже зарегистрирован" });
+    }
 
     const role: "admin" | "user" = email === ADMIN_EMAIL ? "admin" : "user";
     const { salt, hash } = hashPassword(password);
@@ -101,10 +108,14 @@ r.post("/register", async (req, res) => {
     };
 
     // 1. Write to DB
+    console.log(`[AUTH] Сохранение заявки в БД (Google Drive)...`);
     await createPendingUser(profile, secrets);
+    console.log(`[AUTH] Заявка сохранена.`);
     
     // 2. Try send email
+    console.log(`[AUTH] Попытка отправки письма...`);
     const mailResult = await sendVerifyCode(email, code);
+    console.log(`[AUTH] Результат отправки: ${mailResult.success ? 'OK' : 'FAIL'}`, mailResult.error || '');
 
     // 3. Respond
     if (mailResult.success) {
@@ -119,7 +130,7 @@ r.post("/register", async (req, res) => {
     }
 
   } catch (e: any) {
-    console.error("[AUTH/register] CRITICAL ERROR:", e);
+    console.error("[AUTH/register] 🔴 CRITICAL ERROR:", e);
     const msg = String(e?.message || "");
     
     if (msg.includes("GOOGLE_SERVICE_ACCOUNT_KEY")) {
@@ -135,6 +146,7 @@ r.post("/verify", async (req, res) => {
   try {
     const email = normEmail(req.body.email);
     const code = String(req.body.code || "").trim();
+    console.log(`[AUTH] Подтверждение кода для: ${email}`);
 
     const pending = await getPendingUser(email);
     if (!pending) return res.status(404).json({ error: "Заявка не найдена или уже подтверждена" });
@@ -150,9 +162,12 @@ r.post("/verify", async (req, res) => {
       return res.status(400).json({ error: "Неверный код" });
     }
 
+    console.log(`[AUTH] Код верен. Активация пользователя...`);
     await activateUser(email);
+    
     const active = await getActiveUser(email);
     if (!active) return res.status(500).json({ error: "Ошибка активации" });
+    console.log(`[AUTH] Пользователь активирован.`);
 
     const token = signToken({
       email: active.profile.email,
