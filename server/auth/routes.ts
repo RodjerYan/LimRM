@@ -2,17 +2,13 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { Buffer } from "buffer";
-import { hashPassword, verifyPassword, hashCode, verifyCode } from "./password";
+import { hashPassword, verifyPassword, hashCode } from "./password";
 import { signToken } from "./jwt";
-import { sendVerifyCode } from "./mailer";
 import {
-  createPendingUser,
-  getPendingUser,
+  createUser,
   getActiveUser,
-  activateUser,
   listUsers,
   setRole,
-  updatePendingVerifyCode,
   UserProfile,
   UserSecrets
 } from "./authStore";
@@ -21,7 +17,6 @@ import { requireAuth, requireAdmin } from "./middleware";
 const r = Router();
 
 const ADMIN_EMAIL = "rodjeryan@gmail.com";
-const CODE_TTL_MIN = 15;
 
 function normEmail(s: any) { return String(s || "").trim().toLowerCase(); }
 function normName(s: any) { return String(s || "").trim(); }
@@ -56,10 +51,10 @@ function verifyCaptcha(token: string, answer: string) {
   } catch { return false; }
 }
 
-// --- REGISTER ---
+// --- REGISTER (DIRECT) ---
 r.post("/register", async (req, res) => {
   const email = normEmail(req.body.email);
-  console.log(`[AUTH] 🟢 Начало регистрации для: ${email}`);
+  console.log(`[AUTH] 🟢 Регистрация: ${email}`);
 
   try {
     const firstName = normName(req.body.firstName);
@@ -78,18 +73,13 @@ r.post("/register", async (req, res) => {
     if (password.length < 6) return res.status(400).json({ error: "Пароль слишком короткий" });
     if (password !== password2) return res.status(400).json({ error: "Пароли не совпадают" });
 
-    console.log(`[AUTH] Проверка существования пользователя...`);
     const active = await getActiveUser(email);
     if (active) {
-        console.log(`[AUTH] Пользователь уже существует.`);
         return res.status(409).json({ error: "Пользователь уже зарегистрирован" });
     }
 
     const role: "admin" | "user" = email === ADMIN_EMAIL ? "admin" : "user";
     const { salt, hash } = hashPassword(password);
-    const code = String(100000 + Math.floor(Math.random() * 900000));
-    const codeHashed = hashCode(code);
-    const expiresAt = new Date(Date.now() + CODE_TTL_MIN * 60 * 1000).toISOString();
 
     const profile: UserProfile = {
       email,
@@ -97,132 +87,35 @@ r.post("/register", async (req, res) => {
       lastName,
       phone,
       role,
-      status: "pending",
+      status: "active", // Direct active status
       createdAt: new Date().toISOString(),
     };
 
     const secrets: UserSecrets = {
       passwordHash: hash,
-      passwordSalt: salt,
-      verifyCodeHash: codeHashed.hash,
-      verifyCodeSalt: codeHashed.salt,
-      verifyCodeExpiresAt: expiresAt,
+      passwordSalt: salt
     };
 
-    // 1. Write to DB
-    console.log(`[AUTH] Сохранение заявки в БД (Google Drive)...`);
-    await createPendingUser(profile, secrets);
-    console.log(`[AUTH] Заявка сохранена.`);
+    // Write directly to users DB
+    console.log(`[AUTH] Сохранение пользователя в БД...`);
+    await createUser(profile, secrets);
+    console.log(`[AUTH] Пользователь создан.`);
     
-    // 2. Try send email
-    console.log(`[AUTH] Попытка отправки письма...`);
-    const mailResult = await sendVerifyCode(email, code);
-    console.log(`[AUTH] Результат отправки: ${mailResult.success ? 'OK' : 'FAIL'}`, mailResult.error || '');
-
-    // 3. Respond
-    if (mailResult.success) {
-        res.json({ ok: true });
-    } else {
-        // If mail failed, return fallback code AND the error message for diagnostics
-        res.json({ 
-            ok: true, 
-            debugCode: code, 
-            mailError: mailResult.error 
-        });
-    }
+    res.json({ ok: true });
 
   } catch (e: any) {
-    console.error("[AUTH/register] 🔴 CRITICAL ERROR:", e);
+    console.error("[AUTH/register] 🔴 ERROR:", e);
     const msg = String(e?.message || "");
+    
+    if (msg.includes("USER_ALREADY_EXISTS")) {
+        return res.status(409).json({ error: "Пользователь уже существует" });
+    }
     
     if (msg.includes("GOOGLE_SERVICE_ACCOUNT_KEY")) {
        return res.status(500).json({ error: "Ошибка сервера: Не настроен ключ Google Service Account." });
     }
     
     res.status(500).json({ error: `Ошибка регистрации: ${msg}` });
-  }
-});
-
-// --- RESEND CODE ---
-r.post("/resend-code", async (req, res) => {
-  try {
-    const email = normEmail(req.body.email);
-    if (!email.includes("@")) return res.status(400).json({ error: "Некорректный email" });
-
-    const pending = await getPendingUser(email);
-    if (!pending) return res.status(404).json({ error: "Заявка не найдена или уже подтверждена" });
-
-    // Generate new code
-    const code = String(100000 + Math.floor(Math.random() * 900000));
-    const codeHashed = hashCode(code);
-    const expiresAt = new Date(Date.now() + CODE_TTL_MIN * 60 * 1000).toISOString();
-
-    // Update pending record
-    await updatePendingVerifyCode(email, {
-      verifyCodeHash: codeHashed.hash,
-      verifyCodeSalt: codeHashed.salt,
-      verifyCodeExpiresAt: expiresAt,
-    });
-
-    // Try send email
-    const mailResult = await sendVerifyCode(email, code);
-
-    if (mailResult.success) {
-      return res.json({ ok: true, delivery: "email" });
-    }
-
-    // fallback mode
-    return res.json({
-      ok: true,
-      delivery: "fallback",
-      debugCode: code,
-      mailError: mailResult.error || "MAIL_FAIL",
-    });
-  } catch (e: any) {
-    console.error("[AUTH/resend-code] ERROR:", e);
-    return res.status(500).json({ error: "Ошибка повторной отправки" });
-  }
-});
-
-// --- VERIFY ---
-r.post("/verify", async (req, res) => {
-  try {
-    const email = normEmail(req.body.email);
-    const code = String(req.body.code || "").trim();
-    console.log(`[AUTH] Подтверждение кода для: ${email}`);
-
-    const pending = await getPendingUser(email);
-    if (!pending) return res.status(404).json({ error: "Заявка не найдена или уже подтверждена" });
-
-    const s = pending.secrets;
-    if (!s.verifyCodeHash || !s.verifyCodeSalt || !s.verifyCodeExpiresAt) {
-      return res.status(400).json({ error: "Код не был сгенерирован" });
-    }
-    if (Date.now() > Date.parse(s.verifyCodeExpiresAt)) {
-      return res.status(400).json({ error: "Срок действия кода истек" });
-    }
-    if (!verifyCode(code, s.verifyCodeSalt, s.verifyCodeHash)) {
-      return res.status(400).json({ error: "Неверный код" });
-    }
-
-    console.log(`[AUTH] Код верен. Активация пользователя...`);
-    await activateUser(email);
-    
-    const active = await getActiveUser(email);
-    if (!active) return res.status(500).json({ error: "Ошибка активации" });
-    console.log(`[AUTH] Пользователь активирован.`);
-
-    const token = signToken({
-      email: active.profile.email,
-      role: active.profile.role,
-      lastName: active.profile.lastName,
-      firstName: active.profile.firstName,
-    });
-
-    res.json({ ok: true, token, me: active.profile });
-  } catch (e) {
-    console.error("[AUTH/verify]", e);
-    res.status(500).json({ error: "Ошибка подтверждения" });
   }
 });
 
@@ -234,7 +127,10 @@ r.post("/login", async (req, res) => {
 
     const active = await getActiveUser(email);
     if (!active) return res.status(404).json({ error: "Пользователь не найден" });
-    if (active.profile.status !== "active") return res.status(403).json({ error: "Учетная запись не подтверждена" });
+    
+    // Allow login if user exists in the main DB (no explicit status check needed if we only save active users there)
+    // But keeping safeguard:
+    if (active.profile.status !== "active") return res.status(403).json({ error: "Учетная запись не активна" });
 
     if (!verifyPassword(password, active.secrets.passwordSalt, active.secrets.passwordHash)) {
       return res.status(400).json({ error: "Неверный пароль" });

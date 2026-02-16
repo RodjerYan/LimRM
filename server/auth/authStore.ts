@@ -23,6 +23,7 @@ export type UserProfile = {
 export type UserSecrets = {
   passwordHash: string;
   passwordSalt: string;
+  // Verification fields are no longer mandatory for creation but kept for type compatibility if needed later
   verifyCodeHash?: string;
   verifyCodeSalt?: string;
   verifyCodeExpiresAt?: string;
@@ -79,7 +80,7 @@ async function readDb(): Promise<DatabaseSchema> {
         }, { responseType: 'json' }); 
         
         const data = res.data as any;
-        console.log(`[AUTH-DB] DB Read success. Users: ${data?.users?.length || 0}, Pending: ${data?.pending?.length || 0}`);
+        console.log(`[AUTH-DB] DB Read success. Users: ${data?.users?.length || 0}`);
         
         // Ensure structure
         if (!data || typeof data !== 'object') return { users: [], pending: [] };
@@ -102,7 +103,6 @@ async function saveDb(data: DatabaseSchema): Promise<void> {
     try {
         console.log(`[AUTH-DB] Saving DB content (${Buffer.byteLength(body, "utf8")} bytes)...`);
 
-        // Using standard googleapis signature: params (1st arg), media (2nd arg)
         await drive.files.update(
             { 
                 fileId: fileId, 
@@ -121,42 +121,30 @@ async function saveDb(data: DatabaseSchema): Promise<void> {
     }
 }
 
-export async function createPendingUser(profile: UserProfile, secrets: UserSecrets) {
+// Renamed from createPendingUser to createUser - saves directly to active users
+export async function createUser(profile: UserProfile, secrets: UserSecrets) {
     const db = await readDb();
     
-    // Remove any existing pending request for this email
-    db.pending = db.pending.filter(u => u.email.toLowerCase() !== profile.email.toLowerCase());
+    // Check if user already exists
+    const existing = db.users.find(u => u.email.toLowerCase() === profile.email.toLowerCase());
+    if (existing) {
+        throw new Error("USER_ALREADY_EXISTS");
+    }
     
     const newUser: StoredUser = { ...profile, ...secrets };
-    db.pending.push(newUser);
+    db.users.push(newUser);
     
     await saveDb(db);
 }
 
+// Deprecated / Unused
 export async function updatePendingVerifyCode(email: string, patch: Partial<UserSecrets>) {
-  const db = await readDb();
-  const idx = db.pending.findIndex(u => u.email.toLowerCase() === email.toLowerCase());
-  if (idx === -1) throw new Error("PENDING_NOT_FOUND");
-
-  db.pending[idx] = {
-    ...db.pending[idx],
-    ...patch,
-  };
-
-  await saveDb(db);
+  // No-op in new flow
 }
 
 export async function getPendingUser(email: string) {
-    const db = await readDb();
-    const user = db.pending.find(u => u.email.toLowerCase() === email.toLowerCase());
-    
-    if (!user) return null;
-    
-    // Split back into profile and secrets
-    const { passwordHash, passwordSalt, verifyCodeHash, verifyCodeSalt, verifyCodeExpiresAt, ...profile } = user;
-    const secrets = { passwordHash, passwordSalt, verifyCodeHash, verifyCodeSalt, verifyCodeExpiresAt };
-    
-    return { profile, secrets };
+    // No-op in new flow
+    return null;
 }
 
 export async function getActiveUser(email: string) {
@@ -171,27 +159,9 @@ export async function getActiveUser(email: string) {
     return { profile, secrets };
 }
 
+// Deprecated
 export async function activateUser(email: string) {
-    const db = await readDb();
-    const pendingIdx = db.pending.findIndex(u => u.email.toLowerCase() === email.toLowerCase());
-    
-    if (pendingIdx === -1) throw new Error("PENDING_NOT_FOUND");
-    
-    const userToActivate = db.pending[pendingIdx];
-    userToActivate.status = 'active';
-    
-    // Check if already in users (duplicate safety)
-    const existingIdx = db.users.findIndex(u => u.email.toLowerCase() === email.toLowerCase());
-    if (existingIdx !== -1) {
-        db.users[existingIdx] = userToActivate; // Update existing
-    } else {
-        db.users.push(userToActivate);
-    }
-    
-    // Remove from pending
-    db.pending.splice(pendingIdx, 1);
-    
-    await saveDb(db);
+    // No-op
 }
 
 export async function setRole(email: string, role: Role) {

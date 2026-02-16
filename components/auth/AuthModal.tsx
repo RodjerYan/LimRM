@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import Modal from '../Modal';
 import { useAuth } from './AuthContext';
-import { LoaderIcon, CheckIcon, ErrorIcon, InfoIcon } from '../icons';
+import { LoaderIcon, CheckIcon, ErrorIcon } from '../icons';
 
 interface AuthModalProps {
     onCancel?: () => void;
@@ -11,14 +11,15 @@ interface AuthModalProps {
 
 export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'login' }) => {
     const { login } = useAuth();
-    const [mode, setMode] = useState<'login' | 'register' | 'verify'>(initialMode);
+    const [mode, setMode] = useState<'login' | 'register'>(initialMode);
+    
+    // Form State
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [firstName, setFirstName] = useState('');
     const [lastName, setLastName] = useState('');
     const [phone, setPhone] = useState('');
     const [passwordConfirm, setPasswordConfirm] = useState('');
-    const [verifyCode, setVerifyCode] = useState('');
     
     // Captcha
     const [captchaToken, setCaptchaToken] = useState('');
@@ -26,12 +27,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'l
     const [captchaAnswer, setCaptchaAnswer] = useState('');
 
     const [error, setError] = useState('');
-    const [infoMsg, setInfoMsg] = useState('');
-    const [mailHint, setMailHint] = useState<string | null>(null);
+    const [successMsg, setSuccessMsg] = useState('');
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
         setMode(initialMode);
+        setError('');
+        setSuccessMsg('');
     }, [initialMode]);
 
     useEffect(() => {
@@ -50,29 +52,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'l
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
-        setLoading(true); setError(''); setInfoMsg('');
+        setLoading(true); setError(''); setSuccessMsg('');
         
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000); 
-
         try {
             const res = await fetch('/api/auth/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, password }),
-                signal: controller.signal
             });
             const data = await res.json();
             if (res.ok) {
                 login(data.token, data.me);
             } else {
-                setError(data.error);
+                setError(data.error || 'Ошибка входа');
             }
         } catch (e: any) { 
-            if (e.name === 'AbortError') setError('Сервер долго не отвечает (Timeout)');
-            else setError('Ошибка сети или сервера');
+            setError('Ошибка сети или сервера');
         } finally { 
-            clearTimeout(timeoutId);
             setLoading(false); 
         }
     };
@@ -80,99 +76,34 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'l
     const handleRegister = async (e: React.FormEvent) => {
         e.preventDefault();
         if (password !== passwordConfirm) return setError('Пароли не совпадают');
-        setLoading(true); setError(''); setInfoMsg(''); setMailHint(null);
-
-        const controller = new AbortController();
-        // Slightly longer timeout for email sending
-        const timeoutId = setTimeout(() => controller.abort(), 20000); 
+        setLoading(true); setError(''); setSuccessMsg('');
 
         try {
             const res = await fetch('/api/auth/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ firstName, lastName, phone, email, password, password2: passwordConfirm, captchaToken, captchaAnswer }),
-                signal: controller.signal
             });
             
             let data;
-            try {
-                data = await res.json();
-            } catch (jsonError) {
-                throw new Error('Сервер вернул некорректный ответ. Проверьте консоль сервера.');
-            }
+            try { data = await res.json(); } catch(e) {}
 
             if (res.ok) {
-                // Check if email failed but we got a fallback code
-                if (data.debugCode) {
-                    setVerifyCode(data.debugCode);
-                    setMailHint(`Почта недоступна: ${data.mailError || 'Не удалось отправить'}. Код подставлен автоматически.`);
-                    setError('');
-                } else {
-                    setError('');
-                    setMailHint(null);
-                }
-                setMode('verify');
+                // Success: Switch to Login
+                setMode('login');
+                setSuccessMsg('Регистрация успешна! Теперь вы можете войти.');
+                // Clear sensitive fields
+                setPassword('');
+                setPasswordConfirm('');
             } else {
-                setError(data.error || 'Неизвестная ошибка');
+                setError(data?.error || 'Ошибка регистрации');
                 loadCaptcha(); 
             }
         } catch (e: any) {
-            if (e.name === 'AbortError') setError('Превышено время ожидания ответа от сервера (Timeout)');
-            else setError(e.message || 'Ошибка сети');
+            setError(e.message || 'Ошибка сети');
         } finally { 
-            clearTimeout(timeoutId);
             setLoading(false); 
         }
-    };
-
-    const handleResendCode = async () => {
-        setLoading(true); setError(''); setMailHint(null);
-        try {
-            const res = await fetch('/api/auth/resend-code', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email })
-            });
-
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || `HTTP_${res.status}`);
-
-            if (data.delivery === 'email') {
-                setMailHint('Код отправлен на почту повторно.');
-            } else {
-                // Fallback mode
-                const c = String(data.debugCode || '');
-                if (c) {
-                    setVerifyCode(c);
-                    setMailHint(`Почта недоступна: ${data.mailError || ''}. Код подставлен автоматически.`);
-                } else {
-                    setMailHint('Почта недоступна. Попробуйте позже.');
-                }
-            }
-        } catch (e: any) {
-            setError(e.message || 'Ошибка повторной отправки');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleVerify = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setLoading(true); setError(''); setInfoMsg('');
-        try {
-            const res = await fetch('/api/auth/verify', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, code: verifyCode })
-            });
-            const data = await res.json();
-            if (res.ok) {
-                login(data.token, data.me);
-            } else {
-                setError(data.error);
-            }
-        } catch (e) { setError('Ошибка сети'); }
-        finally { setLoading(false); }
     };
 
     const inputClass = "w-full p-3 border border-slate-200 rounded-xl mb-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none";
@@ -182,13 +113,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'l
         <Modal 
             isOpen={true} 
             onClose={() => { if(onCancel) onCancel(); }} 
-            title={mode === 'login' ? 'Вход в систему' : mode === 'register' ? 'Регистрация' : 'Подтверждение'} 
+            title={mode === 'login' ? 'Вход в систему' : 'Регистрация'} 
             maxWidth="max-w-md" 
             zIndex="z-[10000]"
         >
             <div className="p-2">
                 {error && <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm mb-4 font-medium flex items-center gap-2 break-words"><ErrorIcon small/> {error}</div>}
-                {mailHint && <div className="bg-blue-50 text-blue-600 p-3 rounded-xl text-sm mb-4 font-medium break-words">{mailHint}</div>}
+                {successMsg && <div className="bg-emerald-50 text-emerald-600 p-3 rounded-xl text-sm mb-4 font-medium flex items-center gap-2"><CheckIcon small/> {successMsg}</div>}
                 
                 {mode === 'login' && (
                     <form onSubmit={handleLogin}>
@@ -196,7 +127,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'l
                         <input type="password" placeholder="Пароль" value={password} onChange={e => setPassword(e.target.value)} className={inputClass} required />
                         <button type="submit" className={btnClass} disabled={loading}>{loading && <LoaderIcon small />} Войти</button>
                         <div className="mt-4 text-center text-sm text-slate-500">
-                            Нет аккаунта? <button type="button" onClick={() => setMode('register')} className="text-indigo-600 font-bold hover:underline">Зарегистрироваться</button>
+                            Нет аккаунта? <button type="button" onClick={() => { setMode('register'); setError(''); setSuccessMsg(''); }} className="text-indigo-600 font-bold hover:underline">Зарегистрироваться</button>
                         </div>
                     </form>
                 )}
@@ -219,35 +150,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'l
 
                         <button type="submit" className={btnClass} disabled={loading}>{loading && <LoaderIcon small />} Зарегистрироваться</button>
                         <div className="mt-4 text-center text-sm text-slate-500">
-                            Есть аккаунт? <button type="button" onClick={() => setMode('login')} className="text-indigo-600 font-bold hover:underline">Войти</button>
-                        </div>
-                    </form>
-                )}
-
-                {mode === 'verify' && (
-                    <form onSubmit={handleVerify}>
-                        <p className="text-sm text-slate-600 mb-4">
-                          {mailHint
-                            ? <>Почта недоступна. Используйте код ниже (он подставлен автоматически) или нажмите “Отправить код ещё раз”.</>
-                            : <>На почту <strong>{email}</strong> отправлен код подтверждения.<br/><span className="text-xs text-slate-400">(Проверьте также папку Спам)</span></>
-                          }
-                        </p>
-                        <input type="text" placeholder="Код из письма" value={verifyCode} onChange={e => setVerifyCode(e.target.value)} className={inputClass} required />
-                        <button type="submit" className={btnClass} disabled={loading}>{loading && <LoaderIcon small />} Подтвердить</button>
-                        
-                        <div className="mt-3">
-                            <button 
-                                type="button" 
-                                disabled={loading} 
-                                onClick={handleResendCode}
-                                className="w-full py-2 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-colors text-xs disabled:opacity-50"
-                            >
-                                {loading ? "..." : "Отправить код ещё раз"}
-                            </button>
-                        </div>
-
-                        <div className="mt-4 text-center">
-                            <button type="button" onClick={() => setMode('register')} className="text-xs text-slate-400 hover:text-slate-600">Назад к регистрации</button>
+                            Есть аккаунт? <button type="button" onClick={() => { setMode('login'); setError(''); setSuccessMsg(''); }} className="text-indigo-600 font-bold hover:underline">Войти</button>
                         </div>
                     </form>
                 )}
