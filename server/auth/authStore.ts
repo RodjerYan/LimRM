@@ -232,4 +232,13 @@ export async function listUsers() {
     }).sort((a, b) => a.lastName.localeCompare(b.lastName, "ru"));
 }
 
+export async function getUserCount() {
+    try {
+        const db = await readDb();
+        return db.users.length;
+    } catch {
+        return 0;
+    }
+}
+
 export async function ensureAuthRoots() { return { usersId: "", pendingId: "" }; }

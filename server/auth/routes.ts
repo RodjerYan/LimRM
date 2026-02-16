@@ -10,6 +10,7 @@ import {
   listUsers,
   setRole,
   deleteUser,
+  getUserCount,
   UserProfile,
   UserSecrets
 } from "./authStore";
@@ -147,8 +148,10 @@ r.post("/login", async (req, res) => {
       lastName: active.profile.lastName,
       firstName: active.profile.firstName,
     });
+    
+    const count = await getUserCount();
 
-    res.json({ ok: true, token, me: active.profile });
+    res.json({ ok: true, token, me: active.profile, totalUsers: count });
   } catch (e) {
     console.error("[AUTH/login] Critical Exception:", e);
     res.status(500).json({ error: "Внутренняя ошибка сервера" });
@@ -160,7 +163,9 @@ r.get("/me", requireAuth, async (req, res) => {
   const email = req.user!.email;
   const active = await getActiveUser(email);
   if (!active) return res.status(404).json({ error: "Пользователь не найден" });
-  res.json({ ok: true, me: active.profile });
+  
+  const count = await getUserCount();
+  res.json({ ok: true, me: active.profile, totalUsers: count });
 });
 
 // --- ADMIN: LIST USERS ---

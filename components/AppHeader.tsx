@@ -27,7 +27,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
     queueLength = 0,
     onOpenAdmin
 }) => {
-    const { user, logout } = useAuth();
+    const { user, logout, totalUsers } = useAuth();
 
     return (
         <div className="sticky top-0 z-30 px-4 md:px-6 lg:px-8 py-4">
@@ -110,9 +110,8 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
 
                         <div className="flex items-center gap-3">
                             <div className="flex flex-col items-end">
-                                <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Active Clients</span>
-                                {/* REMOVED font-mono to prevent wide gap in numbers like "1 704" */}
-                                <span className="text-slate-900 font-black text-base">{activeClientsCount.toLocaleString('ru-RU')}</span>
+                                <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Пользователи</span>
+                                <span className="text-slate-900 font-black text-base">{totalUsers}</span>
                             </div>
                             <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-600 to-sky-500 flex items-center justify-center font-black text-white shadow-[0_10px_25px_rgba(99,102,241,0.25)]">
                                 L

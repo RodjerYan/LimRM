@@ -62,7 +62,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'l
             });
             const data = await res.json();
             if (res.ok) {
-                login(data.token, data.me);
+                login(data.token, data.me, data.totalUsers);
             } else {
                 setError(data.error || 'Ошибка входа');
             }
