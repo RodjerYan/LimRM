@@ -200,16 +200,20 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
     }
     return (
         <div className="p-3 bg-white/95 backdrop-blur-md rounded-lg border border-gray-200 text-gray-900 max-w-[200px] shadow-lg">
-            <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-500">Легенда</h4>
-            <div className="flex items-center mb-1.5">
-                <span className="inline-block w-4 h-2 mr-2 border border-gray-400 bg-transparent"></span>
-                <span className="text-xs font-medium">Граница региона</span>
-            </div>
+            <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-500">Статус ТТ</h4>
             <div className="flex items-center mb-1.5">
                 <span className="inline-block w-3 h-3 rounded-full mr-2 bg-emerald-500 shadow-sm"></span>
-                <span className="text-xs font-medium">Активные ТТ</span>
+                <span className="text-xs font-medium">Активна (&lt;6 мес)</span>
             </div>
             <div className="flex items-center mb-1.5">
+                <span className="inline-block w-3 h-3 rounded-full mr-2 bg-amber-500 shadow-sm"></span>
+                <span className="text-xs font-medium">Риск (6-12 мес)</span>
+            </div>
+            <div className="flex items-center mb-1.5">
+                <span className="inline-block w-3 h-3 rounded-full mr-2 bg-red-500 shadow-sm"></span>
+                <span className="text-xs font-medium">Потеряна (&gt;12 мес)</span>
+            </div>
+            <div className="flex items-center mb-1.5 mt-2 pt-2 border-t border-gray-200">
                 <span className="inline-block w-3 h-3 rounded-full mr-2 bg-blue-500 shadow-sm"></span>
                 <span className="text-xs font-medium">Потенциал (ОКБ)</span>
             </div>
@@ -256,6 +260,32 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [localTheme, setLocalTheme] = useState<Theme>(theme ?? 'light');
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [overlayMode, setOverlayMode] = useState<OverlayMode>('sales');
+
+    // Helper to determine the latest sale date in a group of clients
+    const getLastSaleDateForGroup = useCallback((clients: MapPoint[]): Date | null => {
+        let maxDate: Date | null = null;
+        
+        clients.forEach(client => {
+            const checkDate = (dateStr: string) => {
+                if (dateStr === 'unknown') return;
+                const d = new Date(dateStr);
+                if (!isNaN(d.getTime())) {
+                    if (!maxDate || d > maxDate) {
+                        maxDate = d;
+                    }
+                }
+            };
+
+            if (client.dailyFact) {
+                Object.keys(client.dailyFact).forEach(checkDate);
+            }
+            if (client.monthlyFact) {
+                Object.keys(client.monthlyFact).forEach(checkDate);
+            }
+        });
+        
+        return maxDate;
+    }, []);
 
     useEffect(() => {
         const fetchGeoData = async () => {
@@ -660,6 +690,29 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         case 'B': markerColor = '#10b981'; markerBorder = '#047857'; markerRadius = groupClients.length > 1 ? 7 : 5; break;
                         default: markerColor = '#9ca3af'; markerBorder = '#4b5563'; markerRadius = groupClients.length > 1 ? 5 : 3; break;
                     }
+                } else {
+                    // Logic for Sales Recency (Active / Warning / Lost)
+                    const lastSaleDate = getLastSaleDateForGroup(groupClients);
+                    if (lastSaleDate) {
+                        const now = new Date();
+                        const diffTime = Math.abs(now.getTime() - lastSaleDate.getTime());
+                        const diffMonths = diffTime / (1000 * 60 * 60 * 24 * 30.44); // Approx months
+
+                        if (diffMonths > 12) {
+                            markerColor = '#ef4444'; // Red
+                            markerBorder = '#b91c1c';
+                        } else if (diffMonths > 6) {
+                            markerColor = '#f59e0b'; // Yellow
+                            markerBorder = '#b45309';
+                        } else {
+                            markerColor = '#10b981'; // Green
+                            markerBorder = '#047857';
+                        }
+                    } else {
+                        // Default to Green if no date is found but client is in active list
+                        markerColor = '#10b981'; 
+                        markerBorder = '#047857';
+                    }
                 }
 
                 const marker = L.circleMarker([lat, lon], {
@@ -685,7 +738,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         layerControl.current.addOverlay(activeClientMarkersLayer.current, '<span class="text-emerald-500 font-bold">●</span> Активные ТТ');
 
         if (pointsForBounds.length > 0 && !flyToClientKey) { map.fitBounds(L.latLngBounds(pointsForBounds).pad(0.1)); }
-    }, [potentialClients, activeClients, overlayMode]);
+    }, [potentialClients, activeClients, overlayMode, getLastSaleDateForGroup]);
 
     useEffect(() => {
         if (geoJsonData && mapInstance.current && geoJsonLayer.current === null) {
