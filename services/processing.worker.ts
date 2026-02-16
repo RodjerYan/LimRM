@@ -116,6 +116,14 @@ const parseCleanFloat = (val: any): number => {
     return isNaN(floatVal) ? 0 : floatVal;
 };
 
+// Strict check for "Unidentified" status text
+const isSpecificErrorMarker = (v: any): boolean => {
+    if (!v) return false;
+    const s = String(v).toLowerCase().trim();
+    // Only return true if the value explicitly contains error keywords
+    return s.includes('не определен') || s.includes('не определён') || s.includes('некорректный');
+};
+
 const isBadCoordCell = (v: any): boolean => {
     if (v === null || v === undefined) return true;
 
@@ -656,8 +664,6 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         const latRaw = findValueInRowLocal(row, ['широта', 'lat', 'latitude', 'широта (lat)', 'geo_lat', 'y', 'lat_clean']);
         const lonRaw = findValueInRowLocal(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x', 'lon_clean']);
         
-        const coordsColumnBad = isBadCoordCell(latRaw) || isBadCoordCell(lonRaw);
-
         const rowLat = parseCleanFloat(latRaw);
         const rowLon = parseCleanFloat(lonRaw);
         const hasRowCoords = (rowLat !== 0) && (rowLon !== 0);
@@ -672,10 +678,11 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
 
         // "Неопознанные" = проблема ИМЕННО В ИСХОДНЫХ КОЛОНКАХ lat/lon
         // (даже если координаты потом восстановились из cache/OKB — строка всё равно проблемная)
-        const coordsProblem = coordsColumnBad || !hasRowCoords;
+        // STRICT FILTER: Only add to list if explicit text marker found
+        const isUnidentifiedByText = isSpecificErrorMarker(latRaw) || isSpecificErrorMarker(lonRaw);
 
         // Дедуп по адресу+имя (чтобы не раздувалось)
-        if (coordsProblem) {
+        if (isUnidentifiedByText) {
             const dedupKey = `${normAddr}#${(clientName || '').toLowerCase().replace(/[^a-zа-я0-9]/g, '')}`;
             if (!state_unidentifiedKeySet.has(dedupKey)) {
                 state_unidentifiedKeySet.add(dedupKey);

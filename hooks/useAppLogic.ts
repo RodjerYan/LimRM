@@ -4,7 +4,7 @@ import {
     OkbDataRow, MapPoint, UnidentifiedRow,
     OkbStatus, UpdateJobStatus, AggregatedDataRow
 } from '../types';
-import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
+import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
 import { saveAnalyticsState, loadAnalyticsState } from '../utils/db';
 import { enrichWithAbcCategories } from '../utils/analytics';
 
@@ -12,6 +12,19 @@ import { enrichWithAbcCategories } from '../utils/analytics';
 import { useDataSync } from './useDataSync';
 import { useGeocoding } from './useGeocoding';
 import { useAnalytics } from './useAnalytics';
+
+// Helper for strict error filtering
+const isStrictErrorStatus = (row: any): boolean => {
+    const lat = findValueInRow(row, ['широта', 'lat', 'latitude', 'geo_lat']);
+    const lon = findValueInRow(row, ['долгота', 'lon', 'longitude', 'geo_lon']);
+    
+    const check = (v: string) => {
+        const s = String(v || '').toLowerCase().trim();
+        return s.includes('не определен') || s.includes('не определён') || s.includes('некорректный');
+    };
+    
+    return check(lat) || check(lon);
+};
 
 export const useAppLogic = () => {
     const [activeModule, setActiveModule] = useState('adapta');
@@ -249,9 +262,13 @@ export const useAppLogic = () => {
     // --- FILTERED UNIDENTIFIED ROWS ---
     // Combine parsing failures and geocoding failures
     const combinedUnidentifiedRows = useMemo(() => {
-        const parsingFailures = unidentifiedRows;
+        // Only include those that strictly match error messages
+        const parsingFailures = unidentifiedRows.filter(r => isStrictErrorStatus(r.rowData));
+        
         const geocodingFailures = allData.flatMap(group => group.clients)
             .filter(c => (!c.lat || !c.lon) && !c.isGeocoding)
+            // Strict filter: check original row content for specific error markers
+            .filter(c => isStrictErrorStatus(c.originalRow))
             .map(c => ({
                 rm: c.rm,
                 rowData: c.originalRow || {},
