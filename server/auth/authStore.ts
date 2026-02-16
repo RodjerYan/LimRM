@@ -197,6 +197,19 @@ export async function getActiveUser(email: string) {
     return { profile, secrets };
 }
 
+export async function deleteUser(email: string) {
+    const db = await readDb();
+    const initialLen = db.users.length;
+    
+    db.users = db.users.filter(u => u.email.toLowerCase() !== email.toLowerCase());
+    
+    if (db.users.length === initialLen) {
+        throw new Error("USER_NOT_FOUND");
+    }
+    
+    await saveDb(db);
+}
+
 export async function activateUser(email: string) {
     // No-op
 }

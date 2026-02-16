@@ -9,6 +9,7 @@ import {
   getActiveUser,
   listUsers,
   setRole,
+  deleteUser,
   UserProfile,
   UserSecrets
 } from "./authStore";
@@ -180,6 +181,27 @@ r.post("/admin/set-role", requireAuth, requireAdmin, async (req, res) => {
 
   await setRole(email, role as any);
   res.json({ ok: true });
+});
+
+// --- ADMIN: DELETE USER ---
+r.delete("/admin/delete-user", requireAuth, requireAdmin, async (req, res) => {
+    const email = normEmail(req.body.email);
+
+    if (email === ADMIN_EMAIL) {
+        return res.status(400).json({ error: "Нельзя удалить главного администратора" });
+    }
+    if (email === req.user?.email) {
+        return res.status(400).json({ error: "Нельзя удалить самого себя" });
+    }
+
+    try {
+        await deleteUser(email);
+        res.json({ ok: true });
+    } catch (e: any) {
+        if (e.message === "USER_NOT_FOUND") return res.status(404).json({ error: "Пользователь не найден" });
+        console.error("[AUTH] Delete user error:", e);
+        res.status(500).json({ error: "Ошибка удаления пользователя" });
+    }
 });
 
 export default r;
