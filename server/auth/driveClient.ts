@@ -20,8 +20,8 @@ function getServiceAccountKey(): any {
 export function getDrive() {
   const key = getServiceAccountKey();
   
-  // Reverted: 'subject' is removed because personal @gmail.com accounts 
-  // do not support Domain-Wide Delegation.
+  // Standard Service Account Auth
+  // We rely on the folder being shared with the service account email.
   const auth = new google.auth.JWT({
     email: key.client_email,
     key: key.private_key,

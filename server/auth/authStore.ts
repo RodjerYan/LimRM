@@ -2,7 +2,8 @@
 import { getDrive } from "./driveClient";
 import { Buffer } from "buffer";
 
-// ID папки Google Drive, предоставленный пользователем для хранения данных аутентификации
+// ID корневой папки, к которой вы дали доступ сервисному аккаунту
+// Если это папка "users", то подпапки будут создаваться внутри нее.
 const USER_PROVIDED_ROOT_ID = "1gP6ybuKUPm1hu4IrosqtJwPfRROqo5bl";
 
 // Cache the resolved ID to reduce API calls
@@ -25,6 +26,7 @@ async function getRootFolderId() {
   }
 
   // 3. Fallback: Find or Create "LimRM_Auth_DB" in Drive Root
+  // Note: This often fails for Service Accounts without quota unless they share a folder.
   console.log("[AUTH] AUTH_ROOT_FOLDER_ID not set. Attempting to auto-discover/create...");
   const drive = getDrive();
   const folderName = "LimRM_Auth_DB";
@@ -165,6 +167,7 @@ async function readJsonFile(parentId: string, name: string) {
         { fileId, alt: "media" },
         { responseType: "json" as any },
         // @ts-ignore - supportsAllDrives is valid but types might complain
+        // Important: This flag is needed for Shared Drives / Shared Folders
         { supportsAllDrives: true } 
       );
       return res.data; 
@@ -176,9 +179,9 @@ async function readJsonFile(parentId: string, name: string) {
 
 export async function ensureAuthRoots() {
   const rootId = await getRootFolderId();
-  // Ensure we can write to the root (impersionation should handle this)
-  const usersId = await ensureFolder(rootId, "users");
-  const pendingId = await ensureFolder(rootId, "pending");
+  // Ensure "users" and "pending" folders exist inside the shared root
+  const usersId = await ensureFolder(rootId, "users_db"); 
+  const pendingId = await ensureFolder(rootId, "pending_db");
   return { usersId, pendingId };
 }
 
