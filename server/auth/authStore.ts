@@ -176,17 +176,20 @@ async function readJsonFile(parentId: string, name: string) {
 
 export async function ensureAuthRoots() {
   const rootId = await getRootFolderId();
+  // Ensure we can write to the root (impersionation should handle this)
   const usersId = await ensureFolder(rootId, "users");
   const pendingId = await ensureFolder(rootId, "pending");
   return { usersId, pendingId };
 }
 
 export async function createPendingUser(profile: UserProfile, secrets: UserSecrets) {
+  console.log(`[AUTH] Creating pending user: ${profile.email}`);
   const { pendingId } = await ensureAuthRoots();
   const emailFolder = await ensureFolder(pendingId, safeName(profile.email));
 
   await writeJsonFile(emailFolder, "profile.json", profile);
   await writeJsonFile(emailFolder, "secrets.json", secrets);
+  console.log(`[AUTH] Pending user created in folder: ${emailFolder}`);
 }
 
 export async function getPendingUser(email: string) {
