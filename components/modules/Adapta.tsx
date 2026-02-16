@@ -19,7 +19,8 @@ import {
   LoaderIcon,
   SearchIcon,
   UsersIcon,
-  FilterIcon, // Added icon
+  FilterIcon,
+  FactIcon, // Added FactIcon
 } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
@@ -252,6 +253,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       .map(([name, data]) => ({
         name,
         count: data.uniqueKeys.size,
+        volume: data.volume,
         volumeTons: data.volume / 1000,
         percentage: totalPeriodCount > 0 ? (data.uniqueKeys.size / totalPeriodCount) * 100 : 0,
       }))
@@ -622,14 +624,29 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                           <button
                             key={stat.name}
                             onClick={() => setSelectedChannel(stat.name)}
-                            className="text-left rounded-2xl border border-slate-200/70 bg-white/50 p-4 hover:bg-white hover:shadow-[0_14px_30px_rgba(15,23,42,0.06)] active:scale-[0.98] transition-all"
+                            className="text-left rounded-2xl border border-slate-200/70 bg-white/50 p-4 hover:bg-white hover:shadow-[0_14px_30px_rgba(15,23,42,0.06)] active:scale-[0.98] transition-all flex flex-col justify-between group"
                           >
-                            <div className="t-label mb-1">{stat.name}</div>
-                            <div className="text-xl font-semibold text-slate-900 tabular-nums tracking-tight">
-                              {stat.count.toLocaleString('ru-RU')}
+                            <div className="flex justify-between items-start w-full mb-3">
+                                <div className="t-label truncate pr-2 max-w-[70%]" title={stat.name}>{stat.name}</div>
+                                <div className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-md border border-slate-200 group-hover:bg-indigo-50 group-hover:text-indigo-600 group-hover:border-indigo-100 transition-colors">
+                                  {stat.percentage.toFixed(1)}%
+                                </div>
                             </div>
-                            <div className="t-muted mt-1">
-                              {stat.percentage.toFixed(1)}% от базы
+                            
+                            <div className="mb-3">
+                                <div className="text-2xl font-bold text-slate-900 tabular-nums tracking-tight leading-none">
+                                  {stat.count.toLocaleString('ru-RU')}
+                                </div>
+                                <div className="text-[10px] text-slate-400 font-medium mt-1">активных точек</div>
+                            </div>
+                            
+                            <div className="mt-auto flex items-center gap-2 pt-3 border-t border-slate-100 group-hover:border-indigo-50 transition-colors">
+                                <div className="text-emerald-500">
+                                   <FactIcon small />
+                                </div>
+                                <div className="text-xs font-mono font-bold text-emerald-700">
+                                   {new Intl.NumberFormat('ru-RU').format(Math.round(stat.volume))} <span className="text-[10px] font-sans text-emerald-500 font-normal">кг</span>
+                                </div>
                             </div>
                           </button>
                         ))}
