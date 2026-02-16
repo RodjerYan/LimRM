@@ -2,6 +2,7 @@
 import React from 'react';
 import { LoaderIcon, CloudDownloadIcon, InfoIcon } from './icons';
 import { FileProcessingState, UpdateJobStatus } from '../types';
+import { useAuth } from './auth/AuthContext';
 
 interface AppHeaderProps {
     dbStatus: 'empty' | 'ready' | 'loading';
@@ -12,6 +13,7 @@ interface AppHeaderProps {
     onStartDataUpdate: () => void;
     activeClientsCount: number;
     queueLength?: number;
+    onOpenAdmin?: () => void; // Optional if passed, but better to handle internally or via props
 }
 
 export const AppHeader: React.FC<AppHeaderProps> = ({ 
@@ -22,8 +24,11 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
     updateJobStatus, 
     onStartDataUpdate, 
     activeClientsCount,
-    queueLength = 0
+    queueLength = 0,
+    onOpenAdmin
 }) => {
+    const { user, logout } = useAuth();
+
     return (
         <div className="sticky top-0 z-30 px-4 md:px-6 lg:px-8 py-4">
              <header className="relative overflow-hidden rounded-3xl border border-slate-200/70 bg-white/70 backdrop-blur-xl shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
@@ -78,6 +83,17 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                     </div>
 
                     <div className="flex items-center gap-4 text-right w-full md:w-auto justify-end">
+                         {/* User Info Block */}
+                         {user && (
+                            <div className="flex items-center gap-3 border-r border-slate-200 pr-4 mr-1">
+                                <div className="text-right hidden sm:block">
+                                    <div className="text-xs font-bold text-slate-900">{user.lastName} {user.firstName}</div>
+                                    <div className="text-[10px] text-slate-500 uppercase">{user.role}</div>
+                                </div>
+                                <button onClick={logout} className="text-xs text-red-500 font-bold hover:underline">Выйти</button>
+                            </div>
+                         )}
+
                         {activeModule === 'amp' && (
                              <button 
                                 onClick={onStartDataUpdate}

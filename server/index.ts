@@ -51,6 +51,10 @@ import keepAlive from '../api/keep-alive.ts';
 // @ts-ignore
 import runEtl from '../api/run-etl.ts';
 
+// Import Auth Routes
+// @ts-ignore
+import authRoutes from './auth/routes.ts';
+
 // Load environment variables
 dotenv.config();
 
@@ -65,6 +69,9 @@ app.use(cors());
 // Increase limit for data uploads
 app.use(express.json({ limit: '50mb' }) as any);
 app.use(express.text({ limit: '50mb' }) as any);
+
+// --- AUTH ROUTES ---
+app.use('/api/auth', authRoutes);
 
 // --- Vercel/Netlify Function Adapter (FIXED FOR INVALID URL) ---
 const adapt = (handler: any) => async (req: any, res: any) => {

@@ -18,6 +18,11 @@ import { useAppLogic } from './hooks/useAppLogic';
 import { AppHeader } from './components/AppHeader';
 import { RoleProvider } from './components/auth/RoleProvider';
 
+// Auth Components
+import { AuthProvider, useAuth } from './components/auth/AuthContext';
+import { AuthModal } from './components/auth/AuthModal';
+import { AdminUsersModal } from './components/auth/AdminUsersModal';
+
 // Enhanced UX imports
 import GlobalSearch from './components/GlobalSearch';
 import { useSearchEverywhereItems } from './components/search/useSearchEverywhereItems';
@@ -29,6 +34,13 @@ const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_
 
 const AppContent: React.FC = () => {
     if (!isApiKeySet) return <ApiKeyErrorDisplay />;
+
+    const { user, isLoading: authLoading } = useAuth();
+    const [showAdminModal, setShowAdminModal] = useState(false);
+
+    // Block access if not logged in
+    if (authLoading) return <div className="h-screen w-full flex items-center justify-center bg-slate-50 text-slate-400">Загрузка профиля...</div>;
+    if (!user) return <AuthModal />;
 
     const {
         activeModule, setActiveModule,
@@ -67,8 +79,6 @@ const AppContent: React.FC = () => {
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [openChannelRequest, setOpenChannelRequest] = useState<string | null>(null);
 
-    // SYNC WRAPPERS: When loading period changes, automatically update the view filter.
-    // If cleared, also clear the view filter to show all data.
     const handleLoadStartDateChange = (date: string) => {
         setLoadStartDate(date);
         if (!date) setFilterStartDate('');
@@ -81,7 +91,6 @@ const AppContent: React.FC = () => {
         else setFilterEndDate(date);
     };
 
-    // Deep Link Handling
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
         const module = params.get("module");
@@ -109,8 +118,6 @@ const AppContent: React.FC = () => {
         openChannel: (ch) => {
             setActiveModule('adapta');
             setOpenChannelRequest(ch);
-            
-            // Update URL for deep linking
             const p = new URLSearchParams(window.location.search);
             p.set("module", "adapta");
             p.set("channel", ch);
@@ -129,7 +136,6 @@ const AppContent: React.FC = () => {
         return () => window.removeEventListener("keydown", onKey);
     }, []);
 
-    // --- KEEP ALIVE MECHANISM ---
     useEffect(() => {
         const pingServer = () => {
             fetch('/api/keep-alive', { method: 'GET', cache: 'no-store' })
@@ -139,7 +145,6 @@ const AppContent: React.FC = () => {
                 .catch(e => console.error('💓 [Keep-Alive] Ping failed:', e));
         };
         pingServer();
-        // Ping every 5 minutes (300000ms) to prevent Render sleep (15 min timeout)
         const intervalId = setInterval(pingServer, 300000); 
         return () => clearInterval(intervalId);
     }, []);
@@ -158,8 +163,18 @@ const AppContent: React.FC = () => {
                         updateJobStatus={updateJobStatus}
                         onStartDataUpdate={handleStartDataUpdate}
                         activeClientsCount={allActiveClients.length}
-                        queueLength={queueLength} 
+                        queueLength={queueLength}
+                        onOpenAdmin={() => setShowAdminModal(true)} 
                     />
+
+                    {/* Admin Access Button Floating (Optional fallback if header button fails) */}
+                    {user.role === 'admin' && (
+                        <div className="absolute top-20 right-8 z-40">
+                             <button onClick={() => setShowAdminModal(true)} className="px-3 py-1 bg-purple-600 text-white text-xs font-bold rounded-lg shadow hover:bg-purple-500">
+                                 Администрирование пользователей
+                             </button>
+                        </div>
+                    )}
 
                     <div className="mx-auto w-full max-w-[1320px] px-4 md:px-6 lg:px-8 py-6">
                         {activeModule === 'adapta' && (
@@ -176,7 +191,7 @@ const AppContent: React.FC = () => {
                                 unidentifiedCount={unidentifiedRows.length}
                                 onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
                                 activeClientsCount={allActiveClients.length}
-                                uploadedData={allData} // PASS RAW DATA HERE TO FIX ZERO COUNT ISSUE
+                                uploadedData={allData} 
                                 dbStatus={dbStatus}
                                 onStartEdit={setEditingClient}
                                 startDate={filterStartDate} 
@@ -187,14 +202,10 @@ const AppContent: React.FC = () => {
                                 loadEndDate={loadEndDate}
                                 onLoadStartDateChange={handleLoadStartDateChange}
                                 onLoadEndDateChange={handleLoadEndDateChange}
-                                
-                                // Enhanced props
                                 openChannelRequest={openChannelRequest}
                                 onConsumeOpenChannelRequest={() => setOpenChannelRequest(null)}
                                 onTabChange={setActiveModule}
                                 setIsSearchOpen={setIsSearchOpen}
-                                
-                                // Filtering
                                 selectedRm={filters.rm}
                                 onRmChange={(rm) => setFilters(prev => ({ ...prev, rm }))}
                             />
@@ -265,12 +276,13 @@ const AppContent: React.FC = () => {
                     />
                 )}
                 
-                {/* Global Search Component */}
                 <GlobalSearch 
                     isOpen={isSearchOpen} 
                     onClose={() => setIsSearchOpen(false)} 
                     items={searchItems} 
                 />
+
+                <AdminUsersModal isOpen={showAdminModal} onClose={() => setShowAdminModal(false)} />
             </div>
         </div>
     );
@@ -278,9 +290,11 @@ const AppContent: React.FC = () => {
 
 const App: React.FC = () => {
     return (
-        <RoleProvider initialRole="manager">
-            <AppContent />
-        </RoleProvider>
+        <AuthProvider>
+            <RoleProvider initialRole="manager">
+                <AppContent />
+            </RoleProvider>
+        </AuthProvider>
     );
 };
 
