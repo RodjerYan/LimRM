@@ -2,68 +2,10 @@
 import { getDrive } from "./driveClient";
 import { Buffer } from "buffer";
 
-// ID корневой папки, к которой вы дали доступ сервисному аккаунту
-// Если это папка "users", то подпапки будут создаваться внутри нее.
+// ID корневой папки (Shared Folder)
 const USER_PROVIDED_ROOT_ID = "1gP6ybuKUPm1hu4IrosqtJwPfRROqo5bl";
-
-// Cache the resolved ID to reduce API calls
-let _resolvedRootId: string | null = null;
-
-async function getRootFolderId() {
-  if (_resolvedRootId) return _resolvedRootId;
-  
-  // 1. Try Env Var (highest priority override)
-  if (process.env.AUTH_ROOT_FOLDER_ID) {
-    _resolvedRootId = process.env.AUTH_ROOT_FOLDER_ID;
-    return _resolvedRootId;
-  }
-
-  // 2. Use User Provided ID (hardcoded)
-  if (USER_PROVIDED_ROOT_ID) {
-     console.log(`[AUTH] Using hardcoded root folder: ${USER_PROVIDED_ROOT_ID}`);
-     _resolvedRootId = USER_PROVIDED_ROOT_ID;
-     return _resolvedRootId;
-  }
-
-  // 3. Fallback: Find or Create "LimRM_Auth_DB" in Drive Root
-  console.log("[AUTH] AUTH_ROOT_FOLDER_ID not set. Attempting to auto-discover/create...");
-  const drive = getDrive();
-  const folderName = "LimRM_Auth_DB";
-  
-  try {
-    const list = await drive.files.list({
-      q: `name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
-      fields: "files(id)",
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true
-    });
-    
-    if (list.data.files && list.data.files.length > 0) {
-      _resolvedRootId = list.data.files[0].id!;
-      console.log("[AUTH] Found existing root folder:", _resolvedRootId);
-      return _resolvedRootId;
-    }
-
-    console.log("[AUTH] Creating new root folder...");
-    const created = await drive.files.create({
-      requestBody: {
-        name: folderName,
-        mimeType: "application/vnd.google-apps.folder"
-      },
-      fields: "id",
-      supportsAllDrives: true
-    });
-    
-    if (!created.data.id) throw new Error("Failed to auto-create auth root folder");
-    _resolvedRootId = created.data.id;
-    console.log("[AUTH] Created root folder:", _resolvedRootId);
-    return _resolvedRootId;
-
-  } catch (e) {
-    console.error("[AUTH] Root folder resolution failed:", e);
-    throw new Error("AUTH_ROOT_RESOLUTION_FAILED");
-  }
-}
+// Имя единого файла базы данных, который должен создать владелец диска
+const DB_FILENAME = "limrm_db.json";
 
 export type Role = "admin" | "user";
 export type Status = "pending" | "active";
@@ -86,200 +28,169 @@ export type UserSecrets = {
   verifyCodeExpiresAt?: string;
 };
 
-function safeName(s: string) {
-  return s.replace(/[^a-zA-Z0-9@._-]/g, "_");
+// Combined type for storage
+type StoredUser = UserProfile & UserSecrets;
+
+type DatabaseSchema = {
+    users: StoredUser[];
+    pending: StoredUser[];
+};
+
+// In-memory cache to reduce reads (optional, but good for speed)
+let _dbFileId: string | null = null;
+
+async function getDbFileId() {
+    if (_dbFileId) return _dbFileId;
+
+    const drive = getDrive();
+    try {
+        const list = await drive.files.list({
+            q: `'${USER_PROVIDED_ROOT_ID}' in parents and name = '${DB_FILENAME}' and trashed = false`,
+            fields: "files(id)",
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true
+        });
+
+        if (list.data.files && list.data.files.length > 0) {
+            _dbFileId = list.data.files[0].id!;
+            return _dbFileId;
+        }
+    } catch (e) {
+        console.error("[AUTH] Error finding DB file:", e);
+    }
+    
+    // If we reach here, the file doesn't exist.
+    // We cannot create it (Quota Error). We must throw a clear error for the user.
+    throw new Error(
+        `CRITICAL: Database file '${DB_FILENAME}' not found in folder '${USER_PROVIDED_ROOT_ID}'. ` +
+        `Please create a file named '${DB_FILENAME}' manually in that Google Drive folder with content: {"users": [], "pending": []}`
+    );
 }
 
-async function findChildFolderIdByName(parentId: string, name: string) {
-  const drive = getDrive();
-  const res = await drive.files.list({
-    q: `'${parentId}' in parents and name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-    fields: "files(id,name)",
-    supportsAllDrives: true,
-    includeItemsFromAllDrives: true
-  });
-  return res.data.files?.[0]?.id || null;
+async function readDb(): Promise<DatabaseSchema> {
+    const fileId = await getDbFileId();
+    const drive = getDrive();
+    
+    try {
+        const res = await drive.files.get({
+            fileId: fileId,
+            alt: 'media',
+            supportsAllDrives: true
+        }, { responseType: 'json' }); // Important: axios adapter handles json parsing
+        
+        const data = res.data as any;
+        
+        // Ensure structure
+        if (!data || typeof data !== 'object') return { users: [], pending: [] };
+        if (!Array.isArray(data.users)) data.users = [];
+        if (!Array.isArray(data.pending)) data.pending = [];
+        
+        return data as DatabaseSchema;
+    } catch (e) {
+        console.error("[AUTH] Failed to read DB:", e);
+        // If read fails (e.g. empty file), return default structure to attempt overwrite fix
+        return { users: [], pending: [] };
+    }
 }
 
-async function ensureFolder(parentId: string, name: string) {
-  const existing = await findChildFolderIdByName(parentId, name);
-  if (existing) return existing;
+async function saveDb(data: DatabaseSchema): Promise<void> {
+    const fileId = await getDbFileId();
+    const drive = getDrive();
 
-  const drive = getDrive();
-  const created = await drive.files.create({
-    requestBody: {
-      name,
-      mimeType: "application/vnd.google-apps.folder",
-      parents: [parentId],
-    },
-    fields: "id",
-    supportsAllDrives: true
-  });
-
-  if (!created.data.id) throw new Error("DRIVE_FOLDER_CREATE_FAILED");
-  return created.data.id;
-}
-
-async function findFileIdByName(parentId: string, name: string) {
-  const drive = getDrive();
-  const res = await drive.files.list({
-    q: `'${parentId}' in parents and name='${name}' and trashed=false`,
-    fields: "files(id,name)",
-    supportsAllDrives: true,
-    includeItemsFromAllDrives: true
-  });
-  return res.data.files?.[0]?.id || null;
-}
-
-async function writeJsonFile(parentId: string, name: string, data: any) {
-  const drive = getDrive();
-  const existingId = await findFileIdByName(parentId, name);
-  const body = JSON.stringify(data, null, 2);
-
-  if (existingId) {
-    await drive.files.update({
-      fileId: existingId,
-      media: { mimeType: "application/json", body },
-      supportsAllDrives: true
-    });
-    return existingId;
-  }
-
-  // CRITICAL FIX: Syntax matched exactly to api/get-full-cache.ts
-  // mimeType must be in BOTH requestBody and media for correct API behavior with SAs
-  const created = await drive.files.create({
-    requestBody: { 
-        name, 
-        parents: [parentId],
-        mimeType: "application/json" 
-    },
-    media: { 
-        mimeType: "application/json", 
-        body 
-    },
-    fields: "id",
-    supportsAllDrives: true
-  });
-
-  if (!created.data.id) throw new Error("DRIVE_FILE_CREATE_FAILED");
-  return created.data.id;
-}
-
-async function readJsonFile(parentId: string, name: string) {
-  const drive = getDrive();
-  const fileId = await findFileIdByName(parentId, name);
-  if (!fileId) return null;
-
-  try {
-      const res = await drive.files.get(
-        { fileId, alt: "media" },
-        { responseType: "json" as any },
-        // @ts-ignore
-        { supportsAllDrives: true } 
-      );
-      return res.data; 
-  } catch(e) {
-      console.warn(`Failed to read file ${name} in ${parentId}`, e);
-      return null;
-  }
-}
-
-export async function ensureAuthRoots() {
-  const rootId = await getRootFolderId();
-  // Ensure "users" and "pending" folders exist inside the shared root
-  const usersId = await ensureFolder(rootId, "users_db"); 
-  const pendingId = await ensureFolder(rootId, "pending_db");
-  return { usersId, pendingId };
+    try {
+        await drive.files.update({
+            fileId: fileId,
+            media: {
+                mimeType: "application/json",
+                body: JSON.stringify(data, null, 2)
+            },
+            supportsAllDrives: true
+        });
+    } catch (e) {
+        console.error("[AUTH] Failed to save DB:", e);
+        throw new Error("DB_SAVE_FAILED");
+    }
 }
 
 export async function createPendingUser(profile: UserProfile, secrets: UserSecrets) {
-  console.log(`[AUTH] Creating pending user: ${profile.email}`);
-  const { pendingId } = await ensureAuthRoots();
-  const emailFolder = await ensureFolder(pendingId, safeName(profile.email));
-
-  await writeJsonFile(emailFolder, "profile.json", profile);
-  await writeJsonFile(emailFolder, "secrets.json", secrets);
-  console.log(`[AUTH] Pending user created in folder: ${emailFolder}`);
+    const db = await readDb();
+    
+    // Remove any existing pending request for this email
+    db.pending = db.pending.filter(u => u.email.toLowerCase() !== profile.email.toLowerCase());
+    
+    const newUser: StoredUser = { ...profile, ...secrets };
+    db.pending.push(newUser);
+    
+    await saveDb(db);
+    console.log(`[AUTH] Pending user ${profile.email} saved to ${DB_FILENAME}`);
 }
 
 export async function getPendingUser(email: string) {
-  const { pendingId } = await ensureAuthRoots();
-  const folderId = await findChildFolderIdByName(pendingId, safeName(email));
-  if (!folderId) return null;
-
-  const profile = await readJsonFile(folderId, "profile.json");
-  const secrets = await readJsonFile(folderId, "secrets.json");
-  if (!profile || !secrets) return null;
-  return { folderId, profile: profile as UserProfile, secrets: secrets as UserSecrets };
+    const db = await readDb();
+    const user = db.pending.find(u => u.email.toLowerCase() === email.toLowerCase());
+    
+    if (!user) return null;
+    
+    // Split back into profile and secrets
+    const { passwordHash, passwordSalt, verifyCodeHash, verifyCodeSalt, verifyCodeExpiresAt, ...profile } = user;
+    const secrets = { passwordHash, passwordSalt, verifyCodeHash, verifyCodeSalt, verifyCodeExpiresAt };
+    
+    return { profile, secrets };
 }
 
 export async function getActiveUser(email: string) {
-  const { usersId } = await ensureAuthRoots();
-  const folderId = await findChildFolderIdByName(usersId, safeName(email));
-  if (!folderId) return null;
-
-  const profile = await readJsonFile(folderId, "profile.json");
-  const secrets = await readJsonFile(folderId, "secrets.json");
-  if (!profile || !secrets) return null;
-  return { folderId, profile: profile as UserProfile, secrets: secrets as UserSecrets };
+    const db = await readDb();
+    const user = db.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    
+    if (!user) return null;
+    
+    const { passwordHash, passwordSalt, verifyCodeHash, verifyCodeSalt, verifyCodeExpiresAt, ...profile } = user;
+    const secrets = { passwordHash, passwordSalt, verifyCodeHash, verifyCodeSalt, verifyCodeExpiresAt };
+    
+    return { profile, secrets };
 }
 
 export async function activateUser(email: string) {
-  const drive = getDrive();
-  const { pendingId, usersId } = await ensureAuthRoots();
-
-  const pendingFolderId = await findChildFolderIdByName(pendingId, safeName(email));
-  if (!pendingFolderId) throw new Error("PENDING_NOT_FOUND");
-
-  // move folder pending/<email> -> users/<email>
-  await drive.files.update({
-    fileId: pendingFolderId,
-    addParents: usersId,
-    removeParents: pendingId,
-    fields: "id, parents",
-    supportsAllDrives: true
-  });
-
-  // update status in profile.json
-  const profile = (await readJsonFile(pendingFolderId, "profile.json")) as UserProfile | null;
-  if (profile) {
-    profile.status = "active";
-    await writeJsonFile(pendingFolderId, "profile.json", profile);
-  }
+    const db = await readDb();
+    const pendingIdx = db.pending.findIndex(u => u.email.toLowerCase() === email.toLowerCase());
+    
+    if (pendingIdx === -1) throw new Error("PENDING_NOT_FOUND");
+    
+    const userToActivate = db.pending[pendingIdx];
+    userToActivate.status = 'active';
+    
+    // Check if already in users (duplicate safety)
+    const existingIdx = db.users.findIndex(u => u.email.toLowerCase() === email.toLowerCase());
+    if (existingIdx !== -1) {
+        db.users[existingIdx] = userToActivate; // Update existing
+    } else {
+        db.users.push(userToActivate);
+    }
+    
+    // Remove from pending
+    db.pending.splice(pendingIdx, 1);
+    
+    await saveDb(db);
 }
 
 export async function setRole(email: string, role: Role) {
-  const u = await getActiveUser(email);
-  if (!u) throw new Error("USER_NOT_FOUND");
-
-  u.profile.role = role;
-  await writeJsonFile(u.folderId, "profile.json", u.profile);
+    const db = await readDb();
+    const user = db.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    
+    if (!user) throw new Error("USER_NOT_FOUND");
+    
+    user.role = role;
+    await saveDb(db);
 }
 
 export async function listUsers() {
-  const drive = getDrive();
-  const { usersId } = await ensureAuthRoots();
-
-  const res = await drive.files.list({
-    q: `'${usersId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-    fields: "files(id,name)",
-    pageSize: 1000,
-    supportsAllDrives: true,
-    includeItemsFromAllDrives: true
-  });
-
-  const folders = res.data.files || [];
-  const out: UserProfile[] = [];
-
-  // Parallel fetch for speed
-  const promises = folders.map(async (f) => {
-    if (!f.id) return;
-    const p = await readJsonFile(f.id, "profile.json");
-    if (p) out.push(p as UserProfile);
-  });
-  
-  await Promise.all(promises);
-
-  out.sort((a, b) => a.lastName.localeCompare(b.lastName, "ru"));
-  return out;
+    const db = await readDb();
+    // Return only profile part
+    return db.users.map(u => {
+        const { passwordHash, passwordSalt, verifyCodeHash, verifyCodeSalt, verifyCodeExpiresAt, ...profile } = u;
+        return profile;
+    }).sort((a, b) => a.lastName.localeCompare(b.lastName, "ru"));
 }
+
+// Stub for compat
+export async function ensureAuthRoots() { return { usersId: "", pendingId: "" }; }
