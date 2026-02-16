@@ -1,6 +1,7 @@
 
 import { Router } from "express";
 import crypto from "crypto";
+import { Buffer } from "buffer";
 import { hashPassword, verifyPassword, hashCode, verifyCode } from "./password";
 import { signToken } from "./jwt";
 import { sendVerifyCode } from "./mailer";
@@ -11,6 +12,7 @@ import {
   activateUser,
   listUsers,
   setRole,
+  updatePendingVerifyCode,
   UserProfile,
   UserSecrets
 } from "./authStore";
@@ -138,6 +140,47 @@ r.post("/register", async (req, res) => {
     }
     
     res.status(500).json({ error: `Ошибка регистрации: ${msg}` });
+  }
+});
+
+// --- RESEND CODE ---
+r.post("/resend-code", async (req, res) => {
+  try {
+    const email = normEmail(req.body.email);
+    if (!email.includes("@")) return res.status(400).json({ error: "Некорректный email" });
+
+    const pending = await getPendingUser(email);
+    if (!pending) return res.status(404).json({ error: "Заявка не найдена или уже подтверждена" });
+
+    // Generate new code
+    const code = String(100000 + Math.floor(Math.random() * 900000));
+    const codeHashed = hashCode(code);
+    const expiresAt = new Date(Date.now() + CODE_TTL_MIN * 60 * 1000).toISOString();
+
+    // Update pending record
+    await updatePendingVerifyCode(email, {
+      verifyCodeHash: codeHashed.hash,
+      verifyCodeSalt: codeHashed.salt,
+      verifyCodeExpiresAt: expiresAt,
+    });
+
+    // Try send email
+    const mailResult = await sendVerifyCode(email, code);
+
+    if (mailResult.success) {
+      return res.json({ ok: true, delivery: "email" });
+    }
+
+    // fallback mode
+    return res.json({
+      ok: true,
+      delivery: "fallback",
+      debugCode: code,
+      mailError: mailResult.error || "MAIL_FAIL",
+    });
+  } catch (e: any) {
+    console.error("[AUTH/resend-code] ERROR:", e);
+    return res.status(500).json({ error: "Ошибка повторной отправки" });
   }
 });
 

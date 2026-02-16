@@ -27,6 +27,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'l
 
     const [error, setError] = useState('');
     const [infoMsg, setInfoMsg] = useState('');
+    const [mailHint, setMailHint] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
@@ -79,7 +80,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'l
     const handleRegister = async (e: React.FormEvent) => {
         e.preventDefault();
         if (password !== passwordConfirm) return setError('Пароли не совпадают');
-        setLoading(true); setError(''); setInfoMsg('');
+        setLoading(true); setError(''); setInfoMsg(''); setMailHint(null);
 
         const controller = new AbortController();
         // Slightly longer timeout for email sending
@@ -104,9 +105,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'l
                 // Check if email failed but we got a fallback code
                 if (data.debugCode) {
                     setVerifyCode(data.debugCode);
-                    setError(`Ошибка почты: ${data.mailError || 'Не удалось отправить'}. Код подставлен автоматически.`);
+                    setMailHint(`Почта недоступна: ${data.mailError || 'Не удалось отправить'}. Код подставлен автоматически.`);
+                    setError('');
                 } else {
                     setError('');
+                    setMailHint(null);
                 }
                 setMode('verify');
             } else {
@@ -119,6 +122,37 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'l
         } finally { 
             clearTimeout(timeoutId);
             setLoading(false); 
+        }
+    };
+
+    const handleResendCode = async () => {
+        setLoading(true); setError(''); setMailHint(null);
+        try {
+            const res = await fetch('/api/auth/resend-code', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email })
+            });
+
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `HTTP_${res.status}`);
+
+            if (data.delivery === 'email') {
+                setMailHint('Код отправлен на почту повторно.');
+            } else {
+                // Fallback mode
+                const c = String(data.debugCode || '');
+                if (c) {
+                    setVerifyCode(c);
+                    setMailHint(`Почта недоступна: ${data.mailError || ''}. Код подставлен автоматически.`);
+                } else {
+                    setMailHint('Почта недоступна. Попробуйте позже.');
+                }
+            }
+        } catch (e: any) {
+            setError(e.message || 'Ошибка повторной отправки');
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -154,6 +188,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'l
         >
             <div className="p-2">
                 {error && <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm mb-4 font-medium flex items-center gap-2 break-words"><ErrorIcon small/> {error}</div>}
+                {mailHint && <div className="bg-blue-50 text-blue-600 p-3 rounded-xl text-sm mb-4 font-medium break-words">{mailHint}</div>}
                 
                 {mode === 'login' && (
                     <form onSubmit={handleLogin}>
@@ -192,11 +227,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'l
                 {mode === 'verify' && (
                     <form onSubmit={handleVerify}>
                         <p className="text-sm text-slate-600 mb-4">
-                            На почту <strong>{email}</strong> отправлен код подтверждения.
-                            <br/><span className="text-xs text-slate-400">(Проверьте также папку Спам)</span>
+                          {mailHint
+                            ? <>Почта недоступна. Используйте код ниже (он подставлен автоматически) или нажмите “Отправить код ещё раз”.</>
+                            : <>На почту <strong>{email}</strong> отправлен код подтверждения.<br/><span className="text-xs text-slate-400">(Проверьте также папку Спам)</span></>
+                          }
                         </p>
                         <input type="text" placeholder="Код из письма" value={verifyCode} onChange={e => setVerifyCode(e.target.value)} className={inputClass} required />
                         <button type="submit" className={btnClass} disabled={loading}>{loading && <LoaderIcon small />} Подтвердить</button>
+                        
+                        <div className="mt-3">
+                            <button 
+                                type="button" 
+                                disabled={loading} 
+                                onClick={handleResendCode}
+                                className="w-full py-2 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-colors text-xs disabled:opacity-50"
+                            >
+                                {loading ? "..." : "Отправить код ещё раз"}
+                            </button>
+                        </div>
+
                         <div className="mt-4 text-center">
                             <button type="button" onClick={() => setMode('register')} className="text-xs text-slate-400 hover:text-slate-600">Назад к регистрации</button>
                         </div>

@@ -102,15 +102,17 @@ async function saveDb(data: DatabaseSchema): Promise<void> {
     try {
         console.log(`[AUTH-DB] Saving DB content (${Buffer.byteLength(body, "utf8")} bytes)...`);
 
-        // Using standard googleapis signature: params object containing media
-        await drive.files.update({
-            fileId: fileId,
-            supportsAllDrives: true,
-            media: {
+        // Using standard googleapis signature: params (1st arg), media (2nd arg)
+        await drive.files.update(
+            { 
+                fileId: fileId, 
+                supportsAllDrives: true 
+            },
+            {
                 mimeType: "application/json",
                 body: body
             }
-        });
+        );
 
         console.log(`[AUTH-DB] Save success.`);
     } catch (e) {
@@ -129,6 +131,19 @@ export async function createPendingUser(profile: UserProfile, secrets: UserSecre
     db.pending.push(newUser);
     
     await saveDb(db);
+}
+
+export async function updatePendingVerifyCode(email: string, patch: Partial<UserSecrets>) {
+  const db = await readDb();
+  const idx = db.pending.findIndex(u => u.email.toLowerCase() === email.toLowerCase());
+  if (idx === -1) throw new Error("PENDING_NOT_FOUND");
+
+  db.pending[idx] = {
+    ...db.pending[idx],
+    ...patch,
+  };
+
+  await saveDb(db);
 }
 
 export async function getPendingUser(email: string) {
