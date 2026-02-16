@@ -31,7 +31,14 @@ async function getDriveClient() {
         throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY');
     }
 
-    const auth = new google.auth.GoogleAuth({ credentials, scopes: SCOPES });
+    // IMPERSONATION: Act as rodjeryan@gmail.com to bypass Service Account quota limits
+    const auth = new google.auth.JWT({
+        email: credentials.client_email,
+        key: credentials.private_key,
+        scopes: SCOPES,
+        subject: "rodjeryan@gmail.com"
+    });
+
     return google.drive({ version: 'v3', auth });
 }
 

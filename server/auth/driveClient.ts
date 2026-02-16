@@ -18,10 +18,15 @@ function getServiceAccountKey(): any {
 
 export function getDrive() {
   const key = getServiceAccountKey();
+  
+  // Using JWT with 'subject' to impersonate the user 'rodjeryan@gmail.com'.
+  // This attempts to perform actions on behalf of the user to use their storage quota.
   const auth = new google.auth.JWT({
     email: key.client_email,
     key: key.private_key,
     scopes: ["https://www.googleapis.com/auth/drive"],
+    subject: "rodjeryan@gmail.com" 
   });
+
   return google.drive({ version: "v3", auth });
 }

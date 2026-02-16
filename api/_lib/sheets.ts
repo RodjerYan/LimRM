@@ -41,9 +41,13 @@ async function getAuthClient() {
         console.error("JSON Parse Error for Service Account Key:", error);
         throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY JSON.'); 
     }
-    return new google.auth.GoogleAuth({
-        credentials,
+
+    // IMPERSONATION: Act as rodjeryan@gmail.com
+    return new google.auth.JWT({
+        email: credentials.client_email,
+        key: credentials.private_key,
         scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'],
+        subject: "rodjeryan@gmail.com"
     });
 }
 
@@ -131,8 +135,8 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
         const row: { [key: string]: any } = {};
         header.forEach((key: string, index: number) => { if (key) row[key] = rowArray[index] || null; });
         
-        let latVal = row['lat'] || row['latitude'];
-        let lonVal = row['lon'] || row['lng'] || row['longitude'];
+        let latVal = row['lat'] || row['latitude'] || row['широта'];
+        let lonVal = row['lon'] || row['lng'] || row['longitude'] || row['долгота'];
         
         if ((!latVal || !lonVal) && rowArray.length > 12) {
              const rawLon = rowArray[11]; 
