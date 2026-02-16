@@ -103,13 +103,20 @@ r.post("/register", async (req, res) => {
     // 1. Write to DB
     await createPendingUser(profile, secrets);
     
-    // 2. Try send email (with timeout fallback)
-    const fallbackCode = await sendVerifyCode(email, code);
+    // 2. Try send email
+    const mailResult = await sendVerifyCode(email, code);
 
-    // 3. Respond immediately. If email failed, we return fallbackCode.
-    // Ideally we shouldn't expose code, but to prevent "infinite loading" frustration if SMTP is blocked,
-    // we send it in a debug field.
-    res.json({ ok: true, debugCode: fallbackCode });
+    // 3. Respond
+    if (mailResult.success) {
+        res.json({ ok: true });
+    } else {
+        // If mail failed, return fallback code AND the error message for diagnostics
+        res.json({ 
+            ok: true, 
+            debugCode: code, 
+            mailError: mailResult.error 
+        });
+    }
 
   } catch (e: any) {
     console.error("[AUTH/register] CRITICAL ERROR:", e);

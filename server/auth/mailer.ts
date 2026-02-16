@@ -1,26 +1,35 @@
 
 import nodemailer from "nodemailer";
 
-export async function sendVerifyCode(to: string, code: string): Promise<string | null> {
+// Return type: { success: boolean; error?: string }
+export async function sendVerifyCode(to: string, code: string): Promise<{ success: boolean; error?: string }> {
   const SMTP_USER = "rodjeryan@gmail.com";
   const SMTP_PASS = "tzkhmargvuowyqon"; 
 
+  // Явная конфигурация для Gmail (SSL/465)
   const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true, // использовать SSL
     auth: {
       user: SMTP_USER,
       pass: SMTP_PASS,
     },
-    // Keep connection timeouts short
-    connectionTimeout: 5000, 
-    greetingTimeout: 3000,    
-    socketTimeout: 5000      
+    // Логирование для отладки
+    logger: true,
+    debug: true,
+    // Опции для обхода проблем с сертификатами (антивирусы/прокси)
+    tls: {
+        rejectUnauthorized: false
+    },
+    connectionTimeout: 10000, 
+    greetingTimeout: 5000,    
+    socketTimeout: 10000      
   });
 
   try {
-    console.log(`[MAILER] Попытка отправки письма на ${to}...`);
+    console.log(`[MAILER] Начинаем отправку на ${to}...`);
     
-    // Enforce a hard 7-second timeout for the entire operation
     await Promise.race([
         transporter.sendMail({
           from: `"LimRM Geo Analyzer" <${SMTP_USER}>`,
@@ -43,15 +52,14 @@ export async function sendVerifyCode(to: string, code: string): Promise<string |
             </div>
           `,
         }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("SMTP Timeout (7s)")), 7000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error("SMTP Timeout (10s)")), 10000))
     ]);
     
-    console.log(`[MAILER] Письмо успешно отправлено на ${to}`);
-    return null; // Success, no fallback code needed
+    console.log(`[MAILER] УСПЕХ: Письмо отправлено на ${to}`);
+    return { success: true };
   } catch (e: any) {
-    console.error("[MAILER] Ошибка отправки (или таймаут):", e.message);
-    // Fallback: return the code so the backend can send it to the client
-    // This prevents the "infinite load" if SMTP is blocked/slow.
-    return code;
+    console.error("[MAILER] ОШИБКА ОТПРАВКИ:", e);
+    // Возвращаем текст ошибки, чтобы показать пользователю
+    return { success: false, error: e.message || String(e) };
   }
 }

@@ -95,7 +95,8 @@ export const AuthModal: React.FC = () => {
                 // Check if email failed but we got a fallback code
                 if (data.debugCode) {
                     setVerifyCode(data.debugCode);
-                    setError('Не удалось отправить письмо (SMTP). Код введен автоматически.');
+                    // Display the specific SMTP error message
+                    setError(`Ошибка почты: ${data.mailError || 'Не удалось отправить'}. Код подставлен автоматически.`);
                 } else {
                     setError('');
                 }
@@ -138,7 +139,7 @@ export const AuthModal: React.FC = () => {
     return (
         <Modal isOpen={true} onClose={() => {}} title={mode === 'login' ? 'Вход в систему' : mode === 'register' ? 'Регистрация' : 'Подтверждение'} maxWidth="max-w-md" zIndex="z-[10000]">
             <div className="p-2">
-                {error && <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm mb-4 font-medium flex items-center gap-2"><ErrorIcon small/> {error}</div>}
+                {error && <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm mb-4 font-medium flex items-center gap-2 break-words"><ErrorIcon small/> {error}</div>}
                 
                 {mode === 'login' && (
                     <form onSubmit={handleLogin}>
