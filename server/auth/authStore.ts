@@ -1,3 +1,4 @@
+
 import { getDrive } from "./driveClient";
 import { Buffer } from "buffer";
 
@@ -31,7 +32,9 @@ async function getRootFolderId() {
   try {
     const list = await drive.files.list({
       q: `name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
-      fields: "files(id)"
+      fields: "files(id)",
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true
     });
     
     if (list.data.files && list.data.files.length > 0) {
@@ -46,7 +49,8 @@ async function getRootFolderId() {
         name: folderName,
         mimeType: "application/vnd.google-apps.folder"
       },
-      fields: "id"
+      fields: "id",
+      supportsAllDrives: true
     });
     
     if (!created.data.id) throw new Error("Failed to auto-create auth root folder");
@@ -90,6 +94,8 @@ async function findChildFolderIdByName(parentId: string, name: string) {
   const res = await drive.files.list({
     q: `'${parentId}' in parents and name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
     fields: "files(id,name)",
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
   });
   return res.data.files?.[0]?.id || null;
 }
@@ -106,6 +112,7 @@ async function ensureFolder(parentId: string, name: string) {
       parents: [parentId],
     },
     fields: "id",
+    supportsAllDrives: true
   });
 
   if (!created.data.id) throw new Error("DRIVE_FOLDER_CREATE_FAILED");
@@ -117,6 +124,8 @@ async function findFileIdByName(parentId: string, name: string) {
   const res = await drive.files.list({
     q: `'${parentId}' in parents and name='${name}' and trashed=false`,
     fields: "files(id,name)",
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
   });
   return res.data.files?.[0]?.id || null;
 }
@@ -130,6 +139,7 @@ async function writeJsonFile(parentId: string, name: string, data: any) {
     await drive.files.update({
       fileId: existingId,
       media: { mimeType: "application/json", body },
+      supportsAllDrives: true
     });
     return existingId;
   }
@@ -138,6 +148,7 @@ async function writeJsonFile(parentId: string, name: string, data: any) {
     requestBody: { name, parents: [parentId] },
     media: { mimeType: "application/json", body },
     fields: "id",
+    supportsAllDrives: true
   });
 
   if (!created.data.id) throw new Error("DRIVE_FILE_CREATE_FAILED");
@@ -152,7 +163,9 @@ async function readJsonFile(parentId: string, name: string) {
   try {
       const res = await drive.files.get(
         { fileId, alt: "media" },
-        { responseType: "json" as any }
+        { responseType: "json" as any },
+        // @ts-ignore - supportsAllDrives is valid but types might complain
+        { supportsAllDrives: true } 
       );
       return res.data; 
   } catch(e) {
@@ -211,6 +224,7 @@ export async function activateUser(email: string) {
     addParents: usersId,
     removeParents: pendingId,
     fields: "id, parents",
+    supportsAllDrives: true
   });
 
   // update status in profile.json
@@ -237,6 +251,8 @@ export async function listUsers() {
     q: `'${usersId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
     fields: "files(id,name)",
     pageSize: 1000,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
   });
 
   const folders = res.data.files || [];
