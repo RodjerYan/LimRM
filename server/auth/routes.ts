@@ -129,8 +129,9 @@ r.post("/login", async (req, res) => {
     
     // Safeguard: Check if secrets exist before verifying
     if (!active.secrets.passwordSalt || !active.secrets.passwordHash) {
-        console.error(`[AUTH] User found but missing secrets: ${email}`);
-        return res.status(500).json({ error: "Ошибка данных пользователя. Обратитесь к администратору." });
+        console.error(`[AUTH] User found but missing secrets. Email: ${email}, Secrets found:`, Object.keys(active.secrets));
+        // This is usually what caused 500 - now we log it.
+        return res.status(500).json({ error: "Ошибка данных пользователя. Не найдены ключи шифрования." });
     }
 
     // 2. Check password
@@ -148,8 +149,8 @@ r.post("/login", async (req, res) => {
 
     res.json({ ok: true, token, me: active.profile });
   } catch (e) {
-    console.error("[AUTH/login] Exception:", e);
-    res.status(500).json({ error: "Ошибка входа" });
+    console.error("[AUTH/login] Critical Exception:", e);
+    res.status(500).json({ error: "Внутренняя ошибка сервера" });
   }
 });
 

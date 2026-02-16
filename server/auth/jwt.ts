@@ -1,10 +1,11 @@
 
 import jwt from "jsonwebtoken";
 
-const SECRET = process.env.AUTH_JWT_SECRET || "";
+// FALLBACK SECRET IS CRITICAL: jwt.sign throws if secret is empty string
+const SECRET = process.env.AUTH_JWT_SECRET || "default-dev-secret-do-not-use-in-prod-limrm-geo";
 
-if (!SECRET) {
-  console.warn("[AUTH] AUTH_JWT_SECRET is not set in environment variables!");
+if (!process.env.AUTH_JWT_SECRET) {
+  console.warn("[AUTH] AUTH_JWT_SECRET is not set. Using insecure default secret.");
 }
 
 export type JwtPayload = {

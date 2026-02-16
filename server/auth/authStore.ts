@@ -157,8 +157,42 @@ export async function getActiveUser(email: string) {
     
     if (!user) return null;
     
-    const { passwordHash, passwordSalt, verifyCodeHash, verifyCodeSalt, verifyCodeExpiresAt, ...profile } = user;
-    const secrets = { passwordHash, passwordSalt, verifyCodeHash, verifyCodeSalt, verifyCodeExpiresAt };
+    // Robustly extract secrets handling potential case sensitivity issues in DB (passwordSalt vs passwordsalt)
+    const anyUser = user as any;
+    let hash = anyUser.passwordHash;
+    let salt = anyUser.passwordSalt;
+
+    // Fallback: Search keys case-insensitively if strict lookup failed
+    if (!hash || !salt) {
+        const keys = Object.keys(anyUser);
+        if (!hash) {
+             const key = keys.find(k => k.toLowerCase() === 'passwordhash');
+             if (key) hash = anyUser[key];
+        }
+        if (!salt) {
+             const key = keys.find(k => k.toLowerCase() === 'passwordsalt');
+             if (key) salt = anyUser[key];
+        }
+    }
+
+    const { 
+        passwordHash, passwordSalt, // exclude these from profile
+        verifyCodeHash, verifyCodeSalt, verifyCodeExpiresAt, 
+        ...profileData 
+    } = user;
+
+    // Clean any lowercase leaks in profile
+    const profile = { ...profileData };
+    delete (profile as any).passwordsalt;
+    delete (profile as any).passwordhash;
+    
+    const secrets = { 
+        passwordHash: hash, 
+        passwordSalt: salt, 
+        verifyCodeHash, 
+        verifyCodeSalt, 
+        verifyCodeExpiresAt 
+    };
     
     return { profile, secrets };
 }
