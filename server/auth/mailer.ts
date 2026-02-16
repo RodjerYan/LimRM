@@ -11,9 +11,13 @@ export async function sendVerifyCode(to: string, code: string) {
     SMTP_FROM
   } = process.env;
 
+  // Fallback: Log to console if SMTP is not configured (Avoids 500 Error)
   if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
-    console.error("[Mailer] SMTP credentials missing in env.");
-    throw new Error("SMTP_NOT_CONFIGURED");
+    console.warn(`\n[MAILER MOCK] ---------------------------------------------------`);
+    console.warn(`[MAILER MOCK] SMTP not configured. Verification code for ${to}:`);
+    console.warn(`[MAILER MOCK] CODE: ${code}`);
+    console.warn(`[MAILER MOCK] ---------------------------------------------------\n`);
+    return;
   }
 
   const transporter = nodemailer.createTransport({

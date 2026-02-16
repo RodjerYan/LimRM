@@ -29,11 +29,13 @@ r.get("/captcha", async (req, res) => {
   const a = 2 + Math.floor(Math.random() * 8); 
   const b = 1 + Math.floor(Math.random() * 9); 
   const answer = String(a + b);
+
   const secret = process.env.AUTH_JWT_SECRET || "x";
   const exp = Date.now() + 5 * 60 * 1000; 
   const payload = `${a}:${b}:${answer}:${exp}`;
   const sig = crypto.createHmac("sha256", secret).update(payload).digest("hex");
   const token = Buffer.from(`${payload}:${sig}`).toString("base64url");
+
   res.json({ question: `${a} + ${b} = ?`, token });
 });
 
@@ -80,18 +82,37 @@ r.post("/register", async (req, res) => {
     const codeHashed = hashCode(code);
     const expiresAt = new Date(Date.now() + CODE_TTL_MIN * 60 * 1000).toISOString();
 
-    const profile: UserProfile = { email, firstName, lastName, phone, role, status: "pending", createdAt: new Date().toISOString() };
-    const secrets: UserSecrets = { passwordHash: hash, passwordSalt: salt, verifyCodeHash: codeHashed.hash, verifyCodeSalt: codeHashed.salt, verifyCodeExpiresAt: expiresAt };
+    const profile: UserProfile = {
+      email,
+      firstName,
+      lastName,
+      phone,
+      role,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    };
+
+    const secrets: UserSecrets = {
+      passwordHash: hash,
+      passwordSalt: salt,
+      verifyCodeHash: codeHashed.hash,
+      verifyCodeSalt: codeHashed.salt,
+      verifyCodeExpiresAt: expiresAt,
+    };
 
     await createPendingUser(profile, secrets);
     await sendVerifyCode(email, code);
 
     res.json({ ok: true });
   } catch (e: any) {
-    console.error("[AUTH/register]", e);
-    const msg = e?.message || "";
-    if (msg === "SMTP_NOT_CONFIGURED") return res.status(500).json({ error: "Ошибка сервера: SMTP не настроен" });
-    res.status(500).json({ error: "Ошибка регистрации. Проверьте консоль сервера." });
+    console.error("[AUTH/register] CRITICAL ERROR:", e);
+    const msg = String(e?.message || "");
+    
+    if (msg.includes("GOOGLE_SERVICE_ACCOUNT_KEY")) {
+       return res.status(500).json({ error: "Ошибка сервера: Не настроен ключ Google Service Account." });
+    }
+    
+    res.status(500).json({ error: `Ошибка регистрации: ${msg}` });
   }
 });
 
@@ -105,15 +126,27 @@ r.post("/verify", async (req, res) => {
     if (!pending) return res.status(404).json({ error: "Заявка не найдена или уже подтверждена" });
 
     const s = pending.secrets;
-    if (!s.verifyCodeHash || !s.verifyCodeSalt || !s.verifyCodeExpiresAt) return res.status(400).json({ error: "Код не был сгенерирован" });
-    if (Date.now() > Date.parse(s.verifyCodeExpiresAt)) return res.status(400).json({ error: "Срок действия кода истек" });
-    if (!verifyCode(code, s.verifyCodeSalt, s.verifyCodeHash)) return res.status(400).json({ error: "Неверный код" });
+    if (!s.verifyCodeHash || !s.verifyCodeSalt || !s.verifyCodeExpiresAt) {
+      return res.status(400).json({ error: "Код не был сгенерирован" });
+    }
+    if (Date.now() > Date.parse(s.verifyCodeExpiresAt)) {
+      return res.status(400).json({ error: "Срок действия кода истек" });
+    }
+    if (!verifyCode(code, s.verifyCodeSalt, s.verifyCodeHash)) {
+      return res.status(400).json({ error: "Неверный код" });
+    }
 
     await activateUser(email);
     const active = await getActiveUser(email);
     if (!active) return res.status(500).json({ error: "Ошибка активации" });
 
-    const token = signToken({ email: active.profile.email, role: active.profile.role, lastName: active.profile.lastName, firstName: active.profile.firstName });
+    const token = signToken({
+      email: active.profile.email,
+      role: active.profile.role,
+      lastName: active.profile.lastName,
+      firstName: active.profile.firstName,
+    });
+
     res.json({ ok: true, token, me: active.profile });
   } catch (e) {
     console.error("[AUTH/verify]", e);
@@ -135,7 +168,13 @@ r.post("/login", async (req, res) => {
       return res.status(400).json({ error: "Неверный пароль" });
     }
 
-    const token = signToken({ email: active.profile.email, role: active.profile.role, lastName: active.profile.lastName, firstName: active.profile.firstName });
+    const token = signToken({
+      email: active.profile.email,
+      role: active.profile.role,
+      lastName: active.profile.lastName,
+      firstName: active.profile.firstName,
+    });
+
     res.json({ ok: true, token, me: active.profile });
   } catch (e) {
     console.error("[AUTH/login]", e);
@@ -151,17 +190,22 @@ r.get("/me", requireAuth, async (req, res) => {
   res.json({ ok: true, me: active.profile });
 });
 
-// --- ADMIN ---
+// --- ADMIN: LIST USERS ---
 r.get("/admin/list", requireAuth, requireAdmin, async (req, res) => {
   const users = await listUsers();
   res.json({ ok: true, users });
 });
 
+// --- ADMIN: SET ROLE ---
 r.post("/admin/set-role", requireAuth, requireAdmin, async (req, res) => {
   const email = normEmail(req.body.email);
   const role = String(req.body.role || "").toLowerCase();
-  if (email === ADMIN_EMAIL && role !== "admin") return res.status(400).json({ error: "Нельзя разжаловать главного администратора" });
+
+  if (email === ADMIN_EMAIL && role !== "admin") {
+    return res.status(400).json({ error: "Нельзя разжаловать главного администратора" });
+  }
   if (role !== "admin" && role !== "user") return res.status(400).json({ error: "Неверная роль" });
+
   await setRole(email, role as any);
   res.json({ ok: true });
 });

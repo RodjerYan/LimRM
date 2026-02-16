@@ -1,9 +1,64 @@
-
 import { getDrive } from "./driveClient";
 import { Buffer } from "buffer";
 
-const ROOT_FOLDER_ID = process.env.AUTH_ROOT_FOLDER_ID || "";
-if (!ROOT_FOLDER_ID) console.warn("[AUTH] AUTH_ROOT_FOLDER_ID is not set. Auth will fail.");
+// ID папки Google Drive, предоставленный пользователем для хранения данных аутентификации
+const USER_PROVIDED_ROOT_ID = "1gP6ybuKUPm1hu4IrosqtJwPfRROqo5bl";
+
+// Cache the resolved ID to reduce API calls
+let _resolvedRootId: string | null = null;
+
+async function getRootFolderId() {
+  if (_resolvedRootId) return _resolvedRootId;
+  
+  // 1. Try Env Var (highest priority override)
+  if (process.env.AUTH_ROOT_FOLDER_ID) {
+    _resolvedRootId = process.env.AUTH_ROOT_FOLDER_ID;
+    return _resolvedRootId;
+  }
+
+  // 2. Use User Provided ID (hardcoded)
+  if (USER_PROVIDED_ROOT_ID) {
+     console.log(`[AUTH] Using hardcoded root folder: ${USER_PROVIDED_ROOT_ID}`);
+     _resolvedRootId = USER_PROVIDED_ROOT_ID;
+     return _resolvedRootId;
+  }
+
+  // 3. Fallback: Find or Create "LimRM_Auth_DB" in Drive Root
+  console.log("[AUTH] AUTH_ROOT_FOLDER_ID not set. Attempting to auto-discover/create...");
+  const drive = getDrive();
+  const folderName = "LimRM_Auth_DB";
+  
+  try {
+    const list = await drive.files.list({
+      q: `name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+      fields: "files(id)"
+    });
+    
+    if (list.data.files && list.data.files.length > 0) {
+      _resolvedRootId = list.data.files[0].id!;
+      console.log("[AUTH] Found existing root folder:", _resolvedRootId);
+      return _resolvedRootId;
+    }
+
+    console.log("[AUTH] Creating new root folder...");
+    const created = await drive.files.create({
+      requestBody: {
+        name: folderName,
+        mimeType: "application/vnd.google-apps.folder"
+      },
+      fields: "id"
+    });
+    
+    if (!created.data.id) throw new Error("Failed to auto-create auth root folder");
+    _resolvedRootId = created.data.id;
+    console.log("[AUTH] Created root folder:", _resolvedRootId);
+    return _resolvedRootId;
+
+  } catch (e) {
+    console.error("[AUTH] Root folder resolution failed:", e);
+    throw new Error("AUTH_ROOT_RESOLUTION_FAILED");
+  }
+}
 
 export type Role = "admin" | "user";
 export type Status = "pending" | "active";
@@ -107,8 +162,9 @@ async function readJsonFile(parentId: string, name: string) {
 }
 
 export async function ensureAuthRoots() {
-  const usersId = await ensureFolder(ROOT_FOLDER_ID, "users");
-  const pendingId = await ensureFolder(ROOT_FOLDER_ID, "pending");
+  const rootId = await getRootFolderId();
+  const usersId = await ensureFolder(rootId, "users");
+  const pendingId = await ensureFolder(rootId, "pending");
   return { usersId, pendingId };
 }
 
