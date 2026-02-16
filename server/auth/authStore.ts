@@ -26,7 +26,6 @@ async function getRootFolderId() {
   }
 
   // 3. Fallback: Find or Create "LimRM_Auth_DB" in Drive Root
-  // Note: This often fails for Service Accounts without quota unless they share a folder.
   console.log("[AUTH] AUTH_ROOT_FOLDER_ID not set. Attempting to auto-discover/create...");
   const drive = getDrive();
   const folderName = "LimRM_Auth_DB";
@@ -146,9 +145,18 @@ async function writeJsonFile(parentId: string, name: string, data: any) {
     return existingId;
   }
 
+  // CRITICAL FIX: Syntax matched exactly to api/get-full-cache.ts
+  // mimeType must be in BOTH requestBody and media for correct API behavior with SAs
   const created = await drive.files.create({
-    requestBody: { name, parents: [parentId] },
-    media: { mimeType: "application/json", body },
+    requestBody: { 
+        name, 
+        parents: [parentId],
+        mimeType: "application/json" 
+    },
+    media: { 
+        mimeType: "application/json", 
+        body 
+    },
     fields: "id",
     supportsAllDrives: true
   });
@@ -166,8 +174,7 @@ async function readJsonFile(parentId: string, name: string) {
       const res = await drive.files.get(
         { fileId, alt: "media" },
         { responseType: "json" as any },
-        // @ts-ignore - supportsAllDrives is valid but types might complain
-        // Important: This flag is needed for Shared Drives / Shared Folders
+        // @ts-ignore
         { supportsAllDrives: true } 
       );
       return res.data; 
