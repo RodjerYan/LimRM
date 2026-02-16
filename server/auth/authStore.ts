@@ -23,7 +23,7 @@ export type UserProfile = {
 export type UserSecrets = {
   passwordHash: string;
   passwordSalt: string;
-  // Verification fields are no longer mandatory for creation but kept for type compatibility if needed later
+  // Fields below are kept for type compatibility but not used in direct flow
   verifyCodeHash?: string;
   verifyCodeSalt?: string;
   verifyCodeExpiresAt?: string;
@@ -121,7 +121,7 @@ async function saveDb(data: DatabaseSchema): Promise<void> {
     }
 }
 
-// Renamed from createPendingUser to createUser - saves directly to active users
+// Renamed from createPendingUser to createUser to reflect direct creation
 export async function createUser(profile: UserProfile, secrets: UserSecrets) {
     const db = await readDb();
     
@@ -137,14 +137,14 @@ export async function createUser(profile: UserProfile, secrets: UserSecrets) {
     await saveDb(db);
 }
 
-// Deprecated / Unused
-export async function updatePendingVerifyCode(email: string, patch: Partial<UserSecrets>) {
-  // No-op in new flow
+// Legacy helpers kept for compatibility or unused
+export async function createPendingUser(profile: UserProfile, secrets: UserSecrets) {
+    // Redirect to main create for now, or just unused
+    return createUser(profile, secrets);
 }
 
 export async function getPendingUser(email: string) {
-    // No-op in new flow
-    return null;
+    return null; 
 }
 
 export async function getActiveUser(email: string) {
@@ -159,9 +159,8 @@ export async function getActiveUser(email: string) {
     return { profile, secrets };
 }
 
-// Deprecated
 export async function activateUser(email: string) {
-    // No-op
+    // No-op, users are created active
 }
 
 export async function setRole(email: string, role: Role) {
@@ -183,5 +182,4 @@ export async function listUsers() {
     }).sort((a, b) => a.lastName.localeCompare(b.lastName, "ru"));
 }
 
-// Stub for compat
 export async function ensureAuthRoots() { return { usersId: "", pendingId: "" }; }

@@ -89,11 +89,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onCancel, initialMode = 'l
             try { data = await res.json(); } catch(e) {}
 
             if (res.ok) {
-                // Success: Switch to Login
-                setMode('login');
+                // Success: Smoothly transition to Login
                 setSuccessMsg('Регистрация успешна! Теперь вы можете войти.');
-                // Clear sensitive fields
-                setPassword('');
+                setMode('login');
+                setPassword(''); // Clear password for security
                 setPasswordConfirm('');
             } else {
                 setError(data?.error || 'Ошибка регистрации');

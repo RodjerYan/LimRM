@@ -2,7 +2,7 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { Buffer } from "buffer";
-import { hashPassword, verifyPassword, hashCode } from "./password";
+import { hashPassword, verifyPassword } from "./password";
 import { signToken } from "./jwt";
 import {
   createUser,
@@ -54,7 +54,7 @@ function verifyCaptcha(token: string, answer: string) {
 // --- REGISTER (DIRECT) ---
 r.post("/register", async (req, res) => {
   const email = normEmail(req.body.email);
-  console.log(`[AUTH] 🟢 Регистрация: ${email}`);
+  console.log(`[AUTH] 🟢 Прямая регистрация: ${email}`);
 
   try {
     const firstName = normName(req.body.firstName);
@@ -73,6 +73,7 @@ r.post("/register", async (req, res) => {
     if (password.length < 6) return res.status(400).json({ error: "Пароль слишком короткий" });
     if (password !== password2) return res.status(400).json({ error: "Пароли не совпадают" });
 
+    // Check if user exists
     const active = await getActiveUser(email);
     if (active) {
         return res.status(409).json({ error: "Пользователь уже зарегистрирован" });
@@ -87,7 +88,7 @@ r.post("/register", async (req, res) => {
       lastName,
       phone,
       role,
-      status: "active", // Direct active status
+      status: "active", // Immediately active
       createdAt: new Date().toISOString(),
     };
 
@@ -96,11 +97,12 @@ r.post("/register", async (req, res) => {
       passwordSalt: salt
     };
 
-    // Write directly to users DB
+    // Save directly to DB
     console.log(`[AUTH] Сохранение пользователя в БД...`);
     await createUser(profile, secrets);
     console.log(`[AUTH] Пользователь создан.`);
     
+    // Return success immediately, no verification needed
     res.json({ ok: true });
 
   } catch (e: any) {
@@ -109,10 +111,6 @@ r.post("/register", async (req, res) => {
     
     if (msg.includes("USER_ALREADY_EXISTS")) {
         return res.status(409).json({ error: "Пользователь уже существует" });
-    }
-    
-    if (msg.includes("GOOGLE_SERVICE_ACCOUNT_KEY")) {
-       return res.status(500).json({ error: "Ошибка сервера: Не настроен ключ Google Service Account." });
     }
     
     res.status(500).json({ error: `Ошибка регистрации: ${msg}` });
@@ -125,17 +123,16 @@ r.post("/login", async (req, res) => {
     const email = normEmail(req.body.email);
     const password = String(req.body.password || "");
 
+    // 1. Find user
     const active = await getActiveUser(email);
     if (!active) return res.status(404).json({ error: "Пользователь не найден" });
     
-    // Allow login if user exists in the main DB (no explicit status check needed if we only save active users there)
-    // But keeping safeguard:
-    if (active.profile.status !== "active") return res.status(403).json({ error: "Учетная запись не активна" });
-
+    // 2. Check password
     if (!verifyPassword(password, active.secrets.passwordSalt, active.secrets.passwordHash)) {
       return res.status(400).json({ error: "Неверный пароль" });
     }
 
+    // 3. Issue Token
     const token = signToken({
       email: active.profile.email,
       role: active.profile.role,
