@@ -30,8 +30,7 @@ import { useSearchEverywhereItems } from './components/search/useSearchEverywher
 
 // Advanced Analytics Modules
 import ChurnRadar from './components/modules/ChurnRadar';
-import CoverageView from './components/modules/CoverageView';
-import { calculateChurnMetrics, calculateCoverageMetrics } from './services/analytics/advancedAnalytics';
+import { calculateChurnMetrics } from './services/analytics/advancedAnalytics';
 
 const DetailsModal = React.lazy(() => import('./components/DetailsModal'));
 const UnidentifiedRowsModal = React.lazy(() => import('./components/UnidentifiedRowsModal'));
@@ -95,15 +94,6 @@ const AppContent: React.FC = () => {
         }
         return [];
     }, [activeModule, ampView, allActiveClients]);
-
-    const coverageMetrics = useMemo(() => {
-        if (activeModule === 'adapta' && okbStatus?.rowCount) {
-            // Need flattened active clients with regions
-            return calculateCoverageMetrics(allActiveClients, okbData, okbRegionCounts);
-        }
-        return [];
-    }, [activeModule, allActiveClients, okbData, okbRegionCounts, okbStatus]);
-
 
     const handleLoadStartDateChange = (date: string) => {
         setLoadStartDate(date);
@@ -225,44 +215,37 @@ const AppContent: React.FC = () => {
 
                     <div className="mx-auto w-full max-w-[1320px] px-4 md:px-6 lg:px-8 py-6">
                         {activeModule === 'adapta' && (
-                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                                <div className="lg:col-span-2">
-                                    <Adapta 
-                                        processingState={processingState}
-                                        onForceUpdate={handleForceUpdate}
-                                        onFileProcessed={() => {}}
-                                        onProcessingStateChange={() => {}}
-                                        okbData={okbData}
-                                        okbStatus={okbStatus}
-                                        onOkbStatusChange={setOkbStatus}
-                                        onOkbDataChange={setOkbData}
-                                        disabled={processingState.isProcessing}
-                                        unidentifiedCount={unidentifiedRows.length}
-                                        onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
-                                        activeClientsCount={allActiveClients.length}
-                                        uploadedData={allData} 
-                                        dbStatus={dbStatus}
-                                        onStartEdit={setEditingClient}
-                                        startDate={filterStartDate} 
-                                        endDate={filterEndDate}     
-                                        onStartDateChange={setFilterStartDate} 
-                                        onEndDateChange={setFilterEndDate}
-                                        loadStartDate={loadStartDate}
-                                        loadEndDate={loadEndDate}
-                                        onLoadStartDateChange={handleLoadStartDateChange}
-                                        onLoadEndDateChange={handleLoadEndDateChange}
-                                        openChannelRequest={openChannelRequest}
-                                        onConsumeOpenChannelRequest={() => setOpenChannelRequest(null)}
-                                        onTabChange={setActiveModule}
-                                        setIsSearchOpen={setIsSearchOpen}
-                                        selectedRm={filters.rm}
-                                        onRmChange={(rm) => setFilters(prev => ({ ...prev, rm }))}
-                                    />
-                                </div>
-                                <div className="lg:col-span-1">
-                                    <CoverageView metrics={coverageMetrics} />
-                                </div>
-                            </div>
+                            <Adapta 
+                                processingState={processingState}
+                                onForceUpdate={handleForceUpdate}
+                                onFileProcessed={() => {}}
+                                onProcessingStateChange={() => {}}
+                                okbData={okbData}
+                                okbStatus={okbStatus}
+                                onOkbStatusChange={setOkbStatus}
+                                onOkbDataChange={setOkbData}
+                                disabled={processingState.isProcessing}
+                                unidentifiedCount={unidentifiedRows.length}
+                                onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
+                                activeClientsCount={allActiveClients.length}
+                                uploadedData={allData} 
+                                dbStatus={dbStatus}
+                                onStartEdit={setEditingClient}
+                                startDate={filterStartDate} 
+                                endDate={filterEndDate}     
+                                onStartDateChange={setFilterStartDate} 
+                                onEndDateChange={setFilterEndDate}
+                                loadStartDate={loadStartDate}
+                                loadEndDate={loadEndDate}
+                                onLoadStartDateChange={handleLoadStartDateChange}
+                                onLoadEndDateChange={handleLoadEndDateChange}
+                                openChannelRequest={openChannelRequest}
+                                onConsumeOpenChannelRequest={() => setOpenChannelRequest(null)}
+                                onTabChange={setActiveModule}
+                                setIsSearchOpen={setIsSearchOpen}
+                                selectedRm={filters.rm}
+                                onRmChange={(rm) => setFilters(prev => ({ ...prev, rm }))}
+                            />
                         )}
 
                         {activeModule === 'amp' && (
