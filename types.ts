@@ -351,6 +351,7 @@ export interface MarketData {
     competitorDensityIndex: number; 
     eComPenetration: number; 
     avgOwnerAge: number; 
+    catShare: number; // Percentage of cats (0-100)
 }
 
 export interface SalesLeagueMember {

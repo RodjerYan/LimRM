@@ -127,24 +127,24 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
         );
     }
     if (mode === 'pets') {
-        const tooltip = "Условный индекс (0-100), рассчитанный на основе урбанизации, кол-ва домохозяйств и косвенных данных (объемы продаж, кол-во вет.клиник).";
+        const tooltip = "Преобладание владельцев кошек или собак в регионе на основе статистики продаж кормов и демографических данных.";
         return (
             <div className="p-3 bg-white/95 backdrop-blur-md rounded-lg border border-gray-200 text-gray-900 max-w-[200px] shadow-lg">
                 <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-500 flex items-center gap-2">
-                    Плотность питомцев
+                    Преобладание питомцев
                 </h4>
                 <div className="space-y-1">
                     <div className="flex items-center" title={tooltip}>
-                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#10b981', opacity: 0.7}}></span>
-                        <span className="text-xs">Высокая (&gt;80)</span>
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#8b5cf6', opacity: 0.7}}></span>
+                        <span className="text-xs">Кошки (&gt; 55%)</span>
                     </div>
                     <div className="flex items-center" title={tooltip}>
-                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f59e0b', opacity: 0.5}}></span>
-                        <span className="text-xs">Средняя (50-80)</span>
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#64748b', opacity: 0.5}}></span>
+                        <span className="text-xs">Баланс</span>
                     </div>
                     <div className="flex items-center" title={tooltip}>
-                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#9ca3af', opacity: 0.3}}></span>
-                        <span className="text-xs">Низкая (&lt;50)</span>
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f97316', opacity: 0.7}}></span>
+                        <span className="text-xs">Собаки (&gt; 55%)</span>
                     </div>
                 </div>
             </div>
@@ -347,8 +347,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         if (overlayMode === 'sales' || overlayMode === 'abc') { return { ...baseBorder, fillColor: isSelected ? '#4f46e5' : '#f3f4f6', fillOpacity: isSelected ? 0.3 : 0.1, interactive: true }; }
         if (overlayMode === 'pets') {
-            const density = marketData.petDensityIndex; let fillColor = '#9ca3af'; let fillOpacity = 0.3;
-            if (density > 80) { fillColor = '#10b981'; fillOpacity = 0.6; } else if (density > 50) { fillColor = '#f59e0b'; fillOpacity = 0.5; }
+            const catShare = marketData.catShare; 
+            let fillColor = '#64748b'; // Balance (Slate)
+            let fillOpacity = 0.3;
+            
+            if (catShare > 55) { 
+                fillColor = '#8b5cf6'; // Cats (Violet)
+                fillOpacity = 0.5 + ((catShare - 55) / 100); 
+            } else if (catShare < 45) { 
+                fillColor = '#f97316'; // Dogs (Orange)
+                fillOpacity = 0.5 + ((45 - catShare) / 100); 
+            }
+            
             return { ...baseBorder, color: isSelected ? '#000' : '#6b7280', fillColor: fillColor, fillOpacity: isSelected ? Math.min(fillOpacity + 0.2, 0.9) : fillOpacity, interactive: true };
         } 
         if (overlayMode === 'competitors') {
