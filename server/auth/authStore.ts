@@ -4,7 +4,7 @@ import { Buffer } from "buffer";
 
 // ID корневой папки (Shared Folder)
 const USER_PROVIDED_ROOT_ID = "1gP6ybuKUPm1hu4IrosqtJwPfRROqo5bl";
-// Имя единого файла базы данных, который должен создать владелец диска
+// Имя единого файла базы данных
 const DB_FILENAME = "limrm_db.json";
 
 export type Role = "admin" | "user";
@@ -23,13 +23,11 @@ export type UserProfile = {
 export type UserSecrets = {
   passwordHash: string;
   passwordSalt: string;
-  // Fields below are kept for type compatibility but not used in direct flow
   verifyCodeHash?: string;
   verifyCodeSalt?: string;
   verifyCodeExpiresAt?: string;
 };
 
-// Combined type for storage
 type StoredUser = UserProfile & UserSecrets;
 
 type DatabaseSchema = {
@@ -37,7 +35,6 @@ type DatabaseSchema = {
     pending: StoredUser[];
 };
 
-// In-memory cache to reduce reads (optional, but good for speed)
 let _dbFileId: string | null = null;
 
 async function getDbFileId() {
@@ -45,10 +42,10 @@ async function getDbFileId() {
 
     const drive = getDrive();
     try {
-        console.log(`[AUTH-DB] Searching for ${DB_FILENAME} in ${USER_PROVIDED_ROOT_ID}...`);
+        console.log(`[AUTH-DB] Searching for ${DB_FILENAME}...`);
         const list = await drive.files.list({
             q: `'${USER_PROVIDED_ROOT_ID}' in parents and name = '${DB_FILENAME}' and trashed = false`,
-            fields: "files(id)",
+            fields: "files(id, name)",
             supportsAllDrives: true,
             includeItemsFromAllDrives: true
         });
@@ -72,24 +69,34 @@ async function readDb(): Promise<DatabaseSchema> {
     const drive = getDrive();
     
     try {
-        console.log(`[AUTH-DB] Reading DB content...`);
+        // console.log(`[AUTH-DB] Reading DB content...`);
         const res = await drive.files.get({
             fileId: fileId,
             alt: 'media',
             supportsAllDrives: true
-        }, { responseType: 'json' }); 
+        }, { responseType: 'json' }); // Request JSON directly
         
-        const data = res.data as any;
-        console.log(`[AUTH-DB] DB Read success. Users: ${data?.users?.length || 0}`);
-        
+        let data = res.data;
+
+        // Fallback: If axios returns string/buffer despite responseType: 'json'
+        if (typeof data === 'string') {
+            try { data = JSON.parse(data); } catch(e) {}
+        }
+
         // Ensure structure
-        if (!data || typeof data !== 'object') return { users: [], pending: [] };
-        if (!Array.isArray(data.users)) data.users = [];
-        if (!Array.isArray(data.pending)) data.pending = [];
+        if (!data || typeof data !== 'object') {
+            console.warn('[AUTH-DB] Warning: DB content is empty or invalid. Initializing empty DB.');
+            return { users: [], pending: [] };
+        }
+
+        const db = data as any;
+        if (!Array.isArray(db.users)) db.users = [];
+        if (!Array.isArray(db.pending)) db.pending = [];
         
-        return data as DatabaseSchema;
+        return db as DatabaseSchema;
     } catch (e) {
         console.error("[AUTH-DB] Failed to read DB:", e);
+        // Return empty structure on error to prevent crash, but log it
         return { users: [], pending: [] };
     }
 }
@@ -103,16 +110,15 @@ async function saveDb(data: DatabaseSchema): Promise<void> {
     try {
         console.log(`[AUTH-DB] Saving DB content (${Buffer.byteLength(body, "utf8")} bytes)...`);
 
-        await drive.files.update(
-            { 
-                fileId: fileId, 
-                supportsAllDrives: true 
-            },
-            {
+        // FIX: 'media' must be inside the first argument object for googleapis
+        await drive.files.update({
+            fileId: fileId,
+            supportsAllDrives: true,
+            media: {
                 mimeType: "application/json",
                 body: body
             }
-        );
+        });
 
         console.log(`[AUTH-DB] Save success.`);
     } catch (e) {
@@ -121,25 +127,26 @@ async function saveDb(data: DatabaseSchema): Promise<void> {
     }
 }
 
-// Renamed from createPendingUser to createUser to reflect direct creation
 export async function createUser(profile: UserProfile, secrets: UserSecrets) {
+    // 1. Read fresh Data
     const db = await readDb();
     
-    // Check if user already exists
-    const existing = db.users.find(u => u.email.toLowerCase() === profile.email.toLowerCase());
-    if (existing) {
+    // 2. Check duplicates
+    const existingIndex = db.users.findIndex(u => u.email.toLowerCase() === profile.email.toLowerCase());
+    if (existingIndex !== -1) {
+        // Optional: Update existing user if needed, or throw
         throw new Error("USER_ALREADY_EXISTS");
     }
     
+    // 3. Push new user
     const newUser: StoredUser = { ...profile, ...secrets };
     db.users.push(newUser);
     
+    // 4. Save back
     await saveDb(db);
 }
 
-// Legacy helpers kept for compatibility or unused
 export async function createPendingUser(profile: UserProfile, secrets: UserSecrets) {
-    // Redirect to main create for now, or just unused
     return createUser(profile, secrets);
 }
 
@@ -160,7 +167,7 @@ export async function getActiveUser(email: string) {
 }
 
 export async function activateUser(email: string) {
-    // No-op, users are created active
+    // No-op
 }
 
 export async function setRole(email: string, role: Role) {
@@ -175,7 +182,6 @@ export async function setRole(email: string, role: Role) {
 
 export async function listUsers() {
     const db = await readDb();
-    // Return only profile part
     return db.users.map(u => {
         const { passwordHash, passwordSalt, verifyCodeHash, verifyCodeSalt, verifyCodeExpiresAt, ...profile } = u;
         return profile;
