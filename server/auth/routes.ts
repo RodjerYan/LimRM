@@ -127,6 +127,12 @@ r.post("/login", async (req, res) => {
     const active = await getActiveUser(email);
     if (!active) return res.status(404).json({ error: "Пользователь не найден" });
     
+    // Safeguard: Check if secrets exist before verifying
+    if (!active.secrets.passwordSalt || !active.secrets.passwordHash) {
+        console.error(`[AUTH] User found but missing secrets: ${email}`);
+        return res.status(500).json({ error: "Ошибка данных пользователя. Обратитесь к администратору." });
+    }
+
     // 2. Check password
     if (!verifyPassword(password, active.secrets.passwordSalt, active.secrets.passwordHash)) {
       return res.status(400).json({ error: "Неверный пароль" });
@@ -142,7 +148,7 @@ r.post("/login", async (req, res) => {
 
     res.json({ ok: true, token, me: active.profile });
   } catch (e) {
-    console.error("[AUTH/login]", e);
+    console.error("[AUTH/login] Exception:", e);
     res.status(500).json({ error: "Ошибка входа" });
   }
 });

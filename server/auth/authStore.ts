@@ -74,13 +74,17 @@ async function readDb(): Promise<DatabaseSchema> {
             fileId: fileId,
             alt: 'media',
             supportsAllDrives: true
-        }, { responseType: 'json' }); // Request JSON directly
+        }, { responseType: 'json' }); 
         
         let data = res.data;
 
-        // Fallback: If axios returns string/buffer despite responseType: 'json'
+        // Fallback: If axios returns string
         if (typeof data === 'string') {
             try { data = JSON.parse(data); } catch(e) {}
+        }
+        // Fallback: If axios returns Buffer
+        else if (Buffer.isBuffer(data)) {
+            try { data = JSON.parse(data.toString('utf8')); } catch(e) {}
         }
 
         // Ensure structure
@@ -96,7 +100,6 @@ async function readDb(): Promise<DatabaseSchema> {
         return db as DatabaseSchema;
     } catch (e) {
         console.error("[AUTH-DB] Failed to read DB:", e);
-        // Return empty structure on error to prevent crash, but log it
         return { users: [], pending: [] };
     }
 }
@@ -110,7 +113,6 @@ async function saveDb(data: DatabaseSchema): Promise<void> {
     try {
         console.log(`[AUTH-DB] Saving DB content (${Buffer.byteLength(body, "utf8")} bytes)...`);
 
-        // FIX: 'media' must be inside the first argument object for googleapis
         await drive.files.update({
             fileId: fileId,
             supportsAllDrives: true,
@@ -128,21 +130,16 @@ async function saveDb(data: DatabaseSchema): Promise<void> {
 }
 
 export async function createUser(profile: UserProfile, secrets: UserSecrets) {
-    // 1. Read fresh Data
     const db = await readDb();
     
-    // 2. Check duplicates
     const existingIndex = db.users.findIndex(u => u.email.toLowerCase() === profile.email.toLowerCase());
     if (existingIndex !== -1) {
-        // Optional: Update existing user if needed, or throw
         throw new Error("USER_ALREADY_EXISTS");
     }
     
-    // 3. Push new user
     const newUser: StoredUser = { ...profile, ...secrets };
     db.users.push(newUser);
     
-    // 4. Save back
     await saveDb(db);
 }
 
