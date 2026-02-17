@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon } from './icons';
+import { useAuth } from './auth/AuthContext';
 
 interface NavigationProps {
   activeTab: string;
@@ -8,14 +9,20 @@ interface NavigationProps {
 }
 
 const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
   const navItems = [
     { id: 'adapta', label: 'ADAPTA (Данные)', icon: <DataIcon small /> },
     { id: 'amp', label: 'AMP (Аналитика)', icon: <AnalyticsIcon small /> },
     { id: 'dashboard', label: 'Дашборд План/Факт', icon: <TargetIcon small /> },
     { id: 'prophet', label: 'PROPHET (Прогноз)', icon: <ProphetIcon small /> },
     { id: 'agile', label: 'AGILE LEARNING', icon: <LabIcon small /> },
-    { id: 'roi-genome', label: 'ROI GENOME', icon: <BrainIcon small /> },
   ];
+
+  if (isAdmin) {
+    navItems.push({ id: 'roi-genome', label: 'ROI GENOME', icon: <BrainIcon small /> });
+  }
 
   return (
     <nav className="hidden lg:flex fixed left-0 top-0 z-50 h-screen w-64 border-r border-slate-200/70 bg-white/70 backdrop-blur-xl">
