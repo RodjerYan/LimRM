@@ -43,8 +43,6 @@ ChartJS.register(
   ArcElement
 );
 
-// ... (keep Date Utils and smaller components PackagingCharts, PackagingAnalysisModal, BrandPackagingModal SAME) ...
-
 // --- Date Utils for Annualization ---
 const safeParseDate = (s?: string) => {
   if (!s) return null;
@@ -380,6 +378,8 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
 
     // --- TASK ACTION STATES ---
     const [taskActionTarget, setTaskActionTarget] = useState<{id: string, name: string} | null>(null);
+    // NEW: Add state to track which action type to open immediately
+    const [taskActionType, setTaskActionType] = useState<'delete' | 'snooze'>('delete'); 
     const [isTaskActionModalOpen, setIsTaskActionModalOpen] = useState(false);
     const [isTaskHistoryModalOpen, setIsTaskHistoryModalOpen] = useState(false);
 
@@ -619,8 +619,9 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         }
     };
 
-    const handleTaskAction = (target: {id: string, name: string}) => {
+    const handleTaskAction = (target: {id: string, name: string}, type: 'delete' | 'snooze') => {
         setTaskActionTarget(target);
+        setTaskActionType(type); // Store the type so modal opens correct tab
         setIsTaskActionModalOpen(true);
     };
 
@@ -712,8 +713,8 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 <NBAPanel 
                     actions={nbaActions} 
                     onActionClick={handleActionClick} 
-                    onDelete={(a) => handleTaskAction({id: a.clientId, name: a.clientName})}
-                    onSnooze={(a) => handleTaskAction({id: a.clientId, name: a.clientName})}
+                    onDelete={(a) => handleTaskAction({id: a.clientId, name: a.clientName}, 'delete')}
+                    onSnooze={(a) => handleTaskAction({id: a.clientId, name: a.clientName}, 'snooze')}
                 />
             </div>
 
@@ -993,103 +994,14 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                     </div>
                 </div>
             </Modal>
-        </div>
-    );
 
-    return (
-        <>
-            {mode === 'page' ? (
-                <div className="animate-fade-in pb-10">
-                    <div className="flex items-center gap-4 mb-6">
-                        <button onClick={onClose} className="p-2 bg-white rounded-xl border border-slate-200 text-slate-500 hover:text-slate-900 transition-colors shadow-sm">
-                            <ArrowLeftIcon />
-                        </button>
-                        <div>
-                            <h2 className="text-2xl font-black text-slate-900">Дашборд План/Факт</h2>
-                            <p className="text-sm text-slate-500 font-medium">Центр управления эффективностью продаж</p>
-                        </div>
-                    </div>
-                    {renderContent()}
-                </div>
-            ) : (
-                <Modal isOpen={isOpen} onClose={onClose} title="Дашборд План/Факт" maxWidth="max-w-[95vw]">
-                    {renderContent()}
-                </Modal>
-            )}
-
-            {isAnalysisModalOpen && <RMAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => setIsAnalysisModalOpen(false)} rmData={selectedRMForAnalysis} baseRate={baseRate} dateRange={dateRange} />}
-            {isAbcModalOpen && <ClientsListModal isOpen={isAbcModalOpen} onClose={() => setIsAbcModalOpen(false)} title={abcModalTitle} clients={abcClients} onClientSelect={() => {}} onStartEdit={(client) => { onEditClient?.(client); setIsAbcModalOpen(false); }} showAbcLegend={true} />}
-            {isRegionModalOpen && selectedRegionDetails && <RegionDetailsModal isOpen={isRegionModalOpen} onClose={() => setIsRegionModalOpen(false)} rmName={selectedRegionDetails.rmName} regionName={selectedRegionDetails.regionName} activeClients={selectedRegionDetails.activeClients} potentialClients={selectedRegionDetails.potentialClients} onEditClient={(c) => { onEditClient?.(c); setIsRegionModalOpen(false); }} />}
-            {explanationData && <GrowthExplanationModal isOpen={!!explanationData} onClose={() => setExplanationData(null)} data={explanationData} baseRate={baseRate} />}
-            
-            {isBrandModalOpen && selectedBrandForDetails && (
-                <BrandPackagingModal 
-                    isOpen={isBrandModalOpen} 
-                    onClose={() => setIsBrandModalOpen(false)} 
-                    brandMetric={selectedBrandForDetails} 
-                    regionName={selectedBrandRegion} 
-                    onExplain={(metric) => { setIsBrandModalOpen(false); setTimeout(() => setExplanationData(metric), 200); }} 
-                    onAnalyze={(row) => { 
-                        setIsBrandModalOpen(false); 
-                        setIsPackagingAnalysisOpen(true);
-                        setIsPackagingAnalysisLoading(true);
-                        setPackagingAnalysisTitle(`Анализ фасовки: ${row.brand} ${row.packaging} (${selectedBrandRegion})`);
-                        setPackagingChartData(null);
-                        setPackagingAnalysisContent('');
-                        
-                        if (packagingAbortController.current) packagingAbortController.current.abort();
-                        packagingAbortController.current = new AbortController();
-
-                        const growthPct = row.growthPercentage;
-                        const skuList = row.clients.map((c: any) => findValueInRow(c.originalRow, ['уникальное наименование товара', 'номенклатура', 'наименование'])).filter(Boolean);
-                        const uniqueSkus = Array.from(new Set(skuList)) as string[];
-
-                        setPackagingChartData({
-                            fact: row.fact,
-                            plan: row.potential,
-                            growthPct: growthPct,
-                            labels: { fact: factLabel, plan: planLabel.replace('План', 'План') }
-                        });
-
-                        streamPackagingInsights(
-                            `${row.brand} ${row.packaging}`,
-                            uniqueSkus,
-                            row.fact,
-                            row.potential,
-                            growthPct,
-                            selectedBrandRegion,
-                            (chunk) => setPackagingAnalysisContent(prev => prev + chunk),
-                            (err) => { 
-                                if (err.name !== 'AbortError') {
-                                    console.error(err); 
-                                    setPackagingAnalysisContent(prev => prev + '\n\n**Ошибка получения анализа.**'); 
-                                }
-                                setIsPackagingAnalysisLoading(false); 
-                            },
-                            packagingAbortController.current.signal
-                        ).finally(() => setIsPackagingAnalysisLoading(false));
-                    }} 
-                    dateLabels={{ fact: factLabel, plan: planLabel }} 
-                    periodAnnualizeK={periodAnnualizeK} 
-                    baseRate={baseRate} 
-                    planScalingFactor={planScalingFactor} 
-                />
-            )}
-            
-            <PackagingAnalysisModal 
-                isOpen={isPackagingAnalysisOpen} 
-                onClose={() => setIsPackagingAnalysisOpen(false)} 
-                title={packagingAnalysisTitle} 
-                content={packagingAnalysisContent} 
-                isLoading={isPackagingAnalysisLoading}
-                chartData={packagingChartData}
-            />
-
+            {/* TASK ACTION MODAL */}
             <TaskActionModal
                 isOpen={isTaskActionModalOpen}
                 onClose={() => setIsTaskActionModalOpen(false)}
                 mode="action"
                 targetItem={taskActionTarget || undefined}
+                initialActionType={taskActionType} // PASS NEW PROP HERE
                 history={[]}
                 onConfirmAction={(type, reason, snoozeDate) => {
                     if (taskActionTarget) {
@@ -1112,6 +1024,126 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 history={taskManager.processedTasks}
                 onConfirmAction={() => {}}
                 onRestore={(id) => taskManager.restoreTask(id)}
+            />
+        </div>
+    );
+
+    if (!isOpen && mode === 'modal') return null;
+
+    return (
+        <>
+            {mode === 'modal' ? (
+                <Modal isOpen={isOpen} onClose={onClose} title="Дашборд эффективности" maxWidth="max-w-[95vw]">
+                    {renderContent()}
+                </Modal>
+            ) : (
+                <div className="h-full w-full">
+                    {renderContent()}
+                </div>
+            )}
+
+            <RMAnalysisModal 
+                isOpen={isAnalysisModalOpen} 
+                onClose={() => setIsAnalysisModalOpen(false)} 
+                rmData={selectedRMForAnalysis} 
+                baseRate={baseRate}
+                dateRange={dateRange}
+            />
+
+            <ClientsListModal 
+                isOpen={isAbcModalOpen} 
+                onClose={() => setIsAbcModalOpen(false)} 
+                title={abcModalTitle} 
+                clients={abcClients} 
+                onClientSelect={() => {}} 
+                onStartEdit={onEditClient || (() => {})} 
+                showAbcLegend={true}
+            />
+
+            <RegionDetailsModal 
+                isOpen={isRegionModalOpen} 
+                onClose={() => setIsRegionModalOpen(false)} 
+                rmName={selectedRegionDetails?.rmName || ''} 
+                regionName={selectedRegionDetails?.regionName || ''} 
+                activeClients={selectedRegionDetails?.activeClients || []} 
+                potentialClients={selectedRegionDetails?.potentialClients || []} 
+                onEditClient={onEditClient}
+            />
+
+            <GrowthExplanationModal 
+                isOpen={!!explanationData} 
+                onClose={() => setExplanationData(null)} 
+                data={explanationData} 
+                baseRate={baseRate}
+                zIndex="z-[1050]" 
+            />
+
+            <BrandPackagingModal 
+                isOpen={isBrandModalOpen} 
+                onClose={() => setIsBrandModalOpen(false)} 
+                brandMetric={selectedBrandForDetails} 
+                regionName={selectedBrandRegion} 
+                onExplain={(metric) => setExplanationData(metric)} 
+                onAnalyze={(row) => {
+                    const packagingName = row.packaging;
+                    const skus = row.skuList || [];
+                    const fact = row.fact;
+                    const plan = row.plan;
+                    const growthPct = row.growthPct;
+                    const region = selectedBrandRegion;
+
+                    setPackagingAnalysisTitle(`Анализ сегмента: ${packagingName}`);
+                    setPackagingAnalysisContent('');
+                    setPackagingChartData({ 
+                        fact, 
+                        plan, 
+                        growthPct, 
+                        labels: { fact: factLabel, plan: planLabel } 
+                    });
+                    setIsPackagingAnalysisOpen(true);
+                    setIsPackagingAnalysisLoading(true);
+
+                    if (packagingAbortController.current) {
+                        packagingAbortController.current.abort();
+                    }
+                    packagingAbortController.current = new AbortController();
+
+                    streamPackagingInsights(
+                        packagingName,
+                        skus,
+                        fact,
+                        plan,
+                        growthPct,
+                        region,
+                        (chunk) => setPackagingAnalysisContent(prev => prev + chunk),
+                        (err) => {
+                            if (err.name !== 'AbortError') {
+                                setPackagingAnalysisContent(prev => prev + `\n\n**Ошибка:** ${err.message}`);
+                            }
+                            setIsPackagingAnalysisLoading(false);
+                        },
+                        packagingAbortController.current.signal
+                    ).finally(() => setIsPackagingAnalysisLoading(false));
+                }}
+                dateLabels={{ fact: factLabel, plan: planLabel }} 
+                periodAnnualizeK={periodAnnualizeK} 
+                baseRate={baseRate} 
+                planScalingFactor={planScalingFactor}
+            />
+
+            <PackagingAnalysisModal 
+                isOpen={isPackagingAnalysisOpen} 
+                onClose={() => { 
+                    setIsPackagingAnalysisOpen(false); 
+                    if (packagingAbortController.current) {
+                        packagingAbortController.current.abort();
+                        packagingAbortController.current = null;
+                    }
+                }} 
+                title={packagingAnalysisTitle} 
+                content={packagingAnalysisContent} 
+                isLoading={isPackagingAnalysisLoading} 
+                chartData={packagingChartData}
             />
         </>
     );

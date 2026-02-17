@@ -29,35 +29,37 @@ const ActionCard: React.FC<{
 
     return (
         <div className={`rounded-2xl border ${style.bg} hover:shadow-md transition-all relative group h-full flex flex-col`}>
-            {/* Action Buttons overlay on hover */}
-            <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                {onSnooze && (
-                    <button 
-                        onClick={(e) => { e.stopPropagation(); onSnooze(); }}
-                        className="p-1.5 bg-white rounded-lg border border-slate-200 text-indigo-500 hover:text-indigo-700 hover:border-indigo-300 shadow-sm"
-                        title="Отложить"
-                    >
-                        <CalendarIcon small />
-                    </button>
-                )}
-                {onDelete && (
-                    <button 
-                        onClick={(e) => { e.stopPropagation(); onDelete(); }}
-                        className="p-1.5 bg-white rounded-lg border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-300 shadow-sm"
-                        title="Удалить / В архив"
-                    >
-                        <TrashIcon small />
-                    </button>
-                )}
-            </div>
-
             <div className="p-4 cursor-pointer flex-grow flex flex-col" onClick={onClick}>
-                <div className="flex justify-between items-start mb-2">
+                
+                {/* Header: Label + Buttons + Score */}
+                <div className="flex justify-between items-start mb-3">
                     <div className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider ${style.color}`}>
                         {style.icon} {style.label}
                     </div>
-                    <div className="text-[10px] font-black text-slate-400 bg-white/50 px-2 py-1 rounded-lg">
-                        Score: {Math.round(action.priorityScore)}
+                    
+                    <div className="flex items-center gap-2">
+                        <div className="text-[10px] font-black text-slate-400 bg-white/50 px-2 py-1 rounded-lg border border-slate-200/50">
+                            Score: {Math.round(action.priorityScore)}
+                        </div>
+                        {/* Static Action Buttons */}
+                        {onSnooze && (
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); onSnooze(); }}
+                                className="p-1.5 bg-white rounded-lg border border-slate-200 text-indigo-500 hover:text-indigo-700 hover:border-indigo-300 shadow-sm transition-colors"
+                                title="Отложить (Открыть окно)"
+                            >
+                                <CalendarIcon small />
+                            </button>
+                        )}
+                        {onDelete && (
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                                className="p-1.5 bg-white rounded-lg border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-300 shadow-sm transition-colors"
+                                title="Удалить (Открыть окно)"
+                            >
+                                <TrashIcon small />
+                            </button>
+                        )}
                     </div>
                 </div>
                 

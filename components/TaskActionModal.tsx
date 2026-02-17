@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import Modal from './Modal';
 import { ProcessedTask } from '../types';
 import { TrashIcon, CalendarIcon, RefreshIcon, CheckIcon, LoaderIcon } from './icons';
@@ -8,19 +8,27 @@ interface TaskActionModalProps {
     isOpen: boolean;
     onClose: () => void;
     mode: 'action' | 'history';
-    targetItem?: { id: string; name: string }; // Needed for 'action' mode
+    targetItem?: { id: string; name: string }; 
+    initialActionType?: 'delete' | 'snooze'; // NEW PROP
     onConfirmAction: (type: 'delete' | 'snooze', reason: string, snoozeDate?: string) => void;
     onRestore: (taskId: string) => void;
     history: ProcessedTask[];
 }
 
 const TaskActionModal: React.FC<TaskActionModalProps> = ({ 
-    isOpen, onClose, mode, targetItem, onConfirmAction, onRestore, history 
+    isOpen, onClose, mode, targetItem, initialActionType, onConfirmAction, onRestore, history 
 }) => {
     const [actionType, setActionType] = useState<'delete' | 'snooze'>('delete');
     const [reason, setReason] = useState('');
     const [snoozeDate, setSnoozeDate] = useState('');
     
+    // Sync internal state with prop when modal opens
+    useEffect(() => {
+        if (isOpen && initialActionType) {
+            setActionType(initialActionType);
+        }
+    }, [isOpen, initialActionType]);
+
     // Calculate default snooze (1 month)
     const defaultSnooze = useMemo(() => {
         const d = new Date();

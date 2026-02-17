@@ -79,7 +79,7 @@ const ChurnRadar: React.FC<ChurnRadarProps> = ({ metrics, onClientClick, onDelet
                                     </div>
                                 </td>
                                 <td className="px-6 py-4 text-right">
-                                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <div className="flex justify-end gap-1">
                                         <button 
                                             onClick={() => onClientClick(m.clientId)}
                                             className="p-2 rounded-lg bg-white border border-slate-200 text-slate-500 hover:text-indigo-600 hover:border-indigo-300 transition-all shadow-sm"
