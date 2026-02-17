@@ -29,6 +29,9 @@ interface SearchableLocation {
     type: 'region';
 }
 
+const MAX_INTERACTIVE_ACTIVE = 4000; // Limit interactive markers to preserve performance
+const BATCH_SIZE = 800; // Batch size for potential markers
+
 const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
     const rowKeys = Object.keys(row);
     for (const keyword of keywords) {
@@ -281,10 +284,28 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
     const legendContainerRef = useRef<HTMLDivElement | null>(null);
     
+    // --- Performance Optimization Refs ---
+    const activeGroupsRef = useRef<Map<string, MapPoint[]>>(new Map());
+    const activeRepsRef = useRef<Array<{
+        key: string;
+        groupKey: string;
+        lat: number;
+        lon: number;
+        rep: MapPoint;
+    }>>([]);
+    const activeCanvasLayerRef = useRef<any | null>(null);
+    const activeCanvasPointsRef = useRef<Array<{ lat: number; lon: number; color: string; r: number }>>([]);
+    const rafRedrawRef = useRef<number | null>(null);
+    const pendingRedrawRef = useRef(false);
+    const activeRendererRef = useRef<L.Renderer | null>(null);
+    const renderJobIdRef = useRef(0);
+    const scheduleCanvasRedrawRef = useRef<() => void>(() => {});
+    
     // Focus State
     const [focusedRegionName, setFocusedRegionName] = useState<string | null>(null);
     const focusedRegionFeatureRef = useRef<any | null>(null);
     const selectedRegionLayer = useRef<L.Layer | null>(null);
+    const [rebuildTick, setRebuildTick] = useState(0);
 
     const activeClientsDataRef = useRef<MapPoint[]>(activeClients);
     const onEditClientRef = useRef(onEditClient);
@@ -327,6 +348,127 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         
         return maxDate;
     }, []);
+
+    // Stable Popup Content Creator
+    const createGroupPopupContent = useCallback((clients: MapPoint[]) => {
+        const totalFact = clients.reduce((sum, c) => sum + (c.fact || 0), 0);
+        const firstClient = clients[0];
+        const sortedClients = [...clients].sort((a, b) => (b.fact || 0) - (a.fact || 0));
+
+        const getBrandColor = (brand: string) => {
+            const b = brand.toLowerCase();
+            if (b.includes('sirius')) return 'bg-indigo-500';
+            if (b.includes('ajo')) return 'bg-purple-500';
+            if (b.includes('limkorm')) return 'bg-emerald-500';
+            return 'bg-gray-500';
+        };
+
+        const listHtml = sortedClients.map(c => {
+            const pct = totalFact > 0 ? ((c.fact || 0) / totalFact) * 100 : 0;
+            const brandColor = getBrandColor(c.brand || '');
+            
+            return `
+            <div class="flex items-start justify-between py-2 border-b border-gray-200 last:border-0 hover:bg-gray-50 transition-colors px-1 rounded-md">
+                <div class="flex items-center gap-3 overflow-hidden">
+                    <div class="w-8 h-8 rounded-lg ${brandColor} bg-opacity-20 text-gray-700 flex items-center justify-center font-bold text-xs border border-gray-200 flex-shrink-0">
+                        ${(c.brand || '?').charAt(0).toUpperCase()}
+                    </div>
+                    <div class="min-w-0">
+                        <div class="font-bold text-gray-900 text-xs truncate" title="${c.brand} ${c.packaging || ''}">${c.brand} <span class="font-normal text-gray-500">${c.packaging || ''}</span></div>
+                        <div class="text-[10px] text-gray-500 truncate">${c.type || 'Канал не указан'}</div>
+                    </div>
+                </div>
+                <div class="text-right pl-2 flex-shrink-0">
+                    <div class="font-mono font-bold text-emerald-600 text-xs whitespace-nowrap">${new Intl.NumberFormat('ru-RU').format(c.fact || 0)}</div>
+                    <div class="w-12 h-1 bg-gray-200 rounded-full mt-1 ml-auto overflow-hidden">
+                        <div class="h-full ${brandColor} transition-all" style="width: ${pct}%"></div>
+                    </div>
+                </div>
+            </div>
+        `}).join('');
+
+        return `
+        <div class="popup-inner-content" style="min-width: 280px; padding: 0;">
+            <!-- Header -->
+            <div style="background: white; padding: 12px; border-bottom: 1px solid #e5e7eb; border-radius: 8px 8px 0 0;">
+                <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 4px;">
+                    <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; font-weight: 700;">
+                        ${firstClient.city || 'Город не определен'}
+                    </div>
+                    <span style="background: #ecfdf5; color: #059669; font-size: 9px; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0; font-weight: 700; text-transform: uppercase;">
+                        Активен
+                    </span>
+                </div>
+                <div style="font-weight: 700; color: #111827; font-size: 13px; line-height: 1.4; word-break: break-word;">
+                    ${firstClient.address}
+                </div>
+                <div style="margin-top: 6px; display: flex; gap: 8px;">
+                     <div style="font-size: 10px; color: #4b5563; background: #f3f4f6; padding: 2px 6px; rounded: 4px;">
+                        Клиентов: <strong style="color: #111827;">${clients.length}</strong>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Body -->
+            <div class="custom-scrollbar" style="max-height: 180px; overflow-y: auto; padding: 8px 12px; background: white;">
+                ${listHtml}
+            </div>
+            
+            <!-- Footer -->
+            <div style="background: #f9fafb; padding: 10px 12px; border-top: 1px solid #e5e7eb; border-radius: 0 0 8px 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <span style="font-size: 10px; color: #6b7280; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em;">Всего продажи</span>
+                    <span style="font-size: 16px; color: #059669; font-weight: 800; font-family: monospace;">
+                        ${new Intl.NumberFormat('ru-RU').format(totalFact)} <span style="font-size: 12px; font-weight: 600;">кг</span>
+                    </span>
+                </div>
+                <div data-popup-edit data-key="${encodeURIComponent(String(firstClient.key))}"></div>
+            </div>
+        </div>
+        `;
+    }, []);
+    
+    // Canvas Redraw Scheduler
+    const redrawActiveCanvas = useCallback(() => {
+        const map = mapInstance.current;
+        const layer: any = activeCanvasLayerRef.current;
+        if (!map || !layer) return;
+
+        const canvas: HTMLCanvasElement = layer.getCanvas();
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const pts = activeCanvasPointsRef.current;
+        for (let i = 0; i < pts.length; i++) {
+            const p = pts[i];
+            const pt = map.latLngToContainerPoint([p.lat, p.lon]);
+
+            // Bounds check optimization
+            if (pt.x < -20 || pt.y < -20 || pt.x > canvas.width + 20 || pt.y > canvas.height + 20) continue;
+
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, p.r, 0, Math.PI * 2);
+            ctx.fillStyle = p.color;
+            ctx.fill();
+        }
+    }, []);
+
+    const scheduleCanvasRedraw = useCallback(() => {
+        if (pendingRedrawRef.current) return;
+        pendingRedrawRef.current = true;
+
+        rafRedrawRef.current = requestAnimationFrame(() => {
+            pendingRedrawRef.current = false;
+            redrawActiveCanvas();
+        });
+    }, [redrawActiveCanvas]);
+
+    useEffect(() => {
+        scheduleCanvasRedrawRef.current = scheduleCanvasRedraw;
+    }, [scheduleCanvasRedraw]);
 
     useEffect(() => {
         const fetchGeoData = async () => {
@@ -565,6 +707,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         if (map) { const timer = setTimeout(() => map.invalidateSize(true), 200); return () => clearTimeout(timer); }
     }, [data, isFullscreen]);
     
+    // --- Main Map Initialization ---
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
             const map = L.map(mapContainer.current, { center: [55, 60], zoom: 3, minZoom: 2, scrollWheelZoom: true, preferCanvas: true, worldCopyJump: true, zoomControl: false, attributionControl: false });
@@ -576,6 +719,66 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             map.getPane('markersPane')!.style.zIndex = '600'; 
             map.createPane('activeMarkersPane');
             map.getPane('activeMarkersPane')!.style.zIndex = '650';
+
+            // -- NEW PANE FOR CANVAS --
+            map.createPane('activeCanvasPane');
+            map.getPane('activeCanvasPane')!.style.zIndex = '640'; // Below markers (650)
+
+            // Init shared renderer for interactive markers ONCE
+            if (!activeRendererRef.current) {
+                activeRendererRef.current = L.canvas({ pane: 'activeMarkersPane' });
+            }
+
+            // -- NEW: Custom Canvas Layer for High-Performance Rendering --
+            // Initialize inside map creation to ensure 'map' is available
+            if (!activeCanvasLayerRef.current) {
+                const ActiveCanvasLayer = (L.Layer as any).extend({
+                    onAdd: function(map: L.Map) {
+                        this._map = map;
+                        this._canvas = L.DomUtil.create('canvas', 'leaflet-active-canvas-layer') as HTMLCanvasElement;
+                        // IMPORTANT: canvas in separate pane (below interactive markers)
+                        const pane = map.getPane('activeCanvasPane')!;
+                        pane.appendChild(this._canvas);
+                    
+                        this._reset();
+                        
+                        // IMPORTANT: Bind events separately
+                        map.on('move', this._reset, this);
+                        map.on('zoom', this._reset, this);
+                        map.on('resize', this._reset, this);
+                    },
+                    onRemove: function(map: L.Map) {
+                        const pane = map.getPane('activeCanvasPane')!;
+                        if (this._canvas && pane.contains(this._canvas)) pane.removeChild(this._canvas);
+                        
+                        map.off('move', this._reset, this);
+                        map.off('zoom', this._reset, this);
+                        map.off('resize', this._reset, this);
+                    },
+                    getCanvas: function() { return this._canvas; },
+                    _reset: function() {
+                        const map = this._map as L.Map;
+                        const size = map.getSize();
+                        this._canvas.width = size.x;
+                        this._canvas.height = size.y;
+
+                        // FIX: Position offset to match Leaflet map pane
+                        const pos = (map as any)._getMapPanePos ? (map as any)._getMapPanePos() : { x: 0, y: 0 };
+                        L.DomUtil.setPosition(this._canvas, L.point(-pos.x, -pos.y));
+
+                        this._canvas.style.position = 'absolute';
+                        // Let clicks pass through canvas to hit underlying layers if needed, 
+                        // but interactive markers sit ON TOP in same pane.
+                        this._canvas.style.pointerEvents = 'none'; 
+                    
+                        // Use ref to avoid closure staleness
+                        scheduleCanvasRedrawRef.current();
+                    }
+                });
+                
+                activeCanvasLayerRef.current = new ActiveCanvasLayer();
+                (activeCanvasLayerRef.current as any).addTo(map);
+            }
 
             L.control.zoom({ position: 'topleft' }).addTo(map);
             layerControl.current = L.control.layers({}, {}, { position: 'bottomleft' }).addTo(map);
@@ -593,6 +796,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 clearFocusedRegion();
             });
 
+            // Trigger interactive rebuild on move/zoom
+            map.on('moveend zoomend', () => setRebuildTick(t => t + 1));
+
             map.on('popupopen', (e) => {
                 const popup = e.popup as any;
                 const renderButton = () => {
@@ -603,6 +809,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     const rawKey = placeholder.getAttribute('data-key');
                     if (!rawKey) return;
                     const key = decodeURIComponent(rawKey);
+                    // Use activeClientsDataRef which is updated in the processing effect
                     const client = activeClientsDataRef.current.find(c => String(c.key) === String(key));
                     if (!client) return;
                     if (popup.__reactRoot) { popup.__reactRoot.unmount(); }
@@ -619,7 +826,46 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 if (popup.__reactRoot) { popup.__reactRoot.unmount(); popup.__reactRoot = null; }
             });
         }
-        return () => { if (mapInstance.current) { mapInstance.current.remove(); mapInstance.current = null; tileLayerRef.current = null; } };
+        return () => { 
+            // CLEANUP LOGIC
+            if (rafRedrawRef.current) {
+                cancelAnimationFrame(rafRedrawRef.current);
+                rafRedrawRef.current = null;
+                pendingRedrawRef.current = false;
+            }
+
+            if (mapInstance.current) { 
+                const map = mapInstance.current;
+                
+                // Explicitly remove layers to clean up event listeners
+                if (activeCanvasLayerRef.current) {
+                    try { (activeCanvasLayerRef.current as any).remove(); } catch(e) {}
+                    activeCanvasLayerRef.current = null;
+                }
+                
+                if (activeClientMarkersLayer.current) {
+                    activeClientMarkersLayer.current.clearLayers();
+                    activeClientMarkersLayer.current = null;
+                }
+                
+                if (potentialClientMarkersLayer.current) {
+                    potentialClientMarkersLayer.current.clearLayers();
+                    potentialClientMarkersLayer.current = null;
+                }
+
+                // Clean up activeCanvasPane
+                const pane = map.getPane('activeCanvasPane');
+                if (pane) pane.innerHTML = '';
+                
+                geoJsonLayer.current = null;
+                
+                map.remove(); 
+                mapInstance.current = null; 
+            }
+            
+            tileLayerRef.current = null; 
+            activeRendererRef.current = null;
+        };
     }, [resetHighlight, clearFocusedRegion]); 
 
     useEffect(() => {
@@ -638,274 +884,261 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [localTheme]);
     
-    const createGroupPopupContent = (clients: MapPoint[]) => {
-        const totalFact = clients.reduce((sum, c) => sum + (c.fact || 0), 0);
-        const firstClient = clients[0];
-        const sortedClients = [...clients].sort((a, b) => (b.fact || 0) - (a.fact || 0));
-
-        const getBrandColor = (brand: string) => {
-            const b = brand.toLowerCase();
-            if (b.includes('sirius')) return 'bg-indigo-500';
-            if (b.includes('ajo')) return 'bg-purple-500';
-            if (b.includes('limkorm')) return 'bg-emerald-500';
-            return 'bg-gray-500';
-        };
-
-        const listHtml = sortedClients.map(c => {
-            const pct = totalFact > 0 ? ((c.fact || 0) / totalFact) * 100 : 0;
-            const brandColor = getBrandColor(c.brand || '');
-            
-            return `
-            <div class="flex items-start justify-between py-2 border-b border-gray-200 last:border-0 hover:bg-gray-50 transition-colors px-1 rounded-md">
-                <div class="flex items-center gap-3 overflow-hidden">
-                    <div class="w-8 h-8 rounded-lg ${brandColor} bg-opacity-20 text-gray-700 flex items-center justify-center font-bold text-xs border border-gray-200 flex-shrink-0">
-                        ${(c.brand || '?').charAt(0).toUpperCase()}
-                    </div>
-                    <div class="min-w-0">
-                        <div class="font-bold text-gray-900 text-xs truncate" title="${c.brand} ${c.packaging || ''}">${c.brand} <span class="font-normal text-gray-500">${c.packaging || ''}</span></div>
-                        <div class="text-[10px] text-gray-500 truncate">${c.type || 'Канал не указан'}</div>
-                    </div>
-                </div>
-                <div class="text-right pl-2 flex-shrink-0">
-                    <div class="font-mono font-bold text-emerald-600 text-xs whitespace-nowrap">${new Intl.NumberFormat('ru-RU').format(c.fact || 0)}</div>
-                    <div class="w-12 h-1 bg-gray-200 rounded-full mt-1 ml-auto overflow-hidden">
-                        <div class="h-full ${brandColor} transition-all" style="width: ${pct}%"></div>
-                    </div>
-                </div>
-            </div>
-        `}).join('');
-
-        return `
-        <div class="popup-inner-content" style="min-width: 280px; padding: 0;">
-            <!-- Header -->
-            <div style="background: white; padding: 12px; border-bottom: 1px solid #e5e7eb; border-radius: 8px 8px 0 0;">
-                <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 4px;">
-                    <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; font-weight: 700;">
-                        ${firstClient.city || 'Город не определен'}
-                    </div>
-                    <span style="background: #ecfdf5; color: #059669; font-size: 9px; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0; font-weight: 700; text-transform: uppercase;">
-                        Активен
-                    </span>
-                </div>
-                <div style="font-weight: 700; color: #111827; font-size: 13px; line-height: 1.4; word-break: break-word;">
-                    ${firstClient.address}
-                </div>
-                <div style="margin-top: 6px; display: flex; gap: 8px;">
-                     <div style="font-size: 10px; color: #4b5563; background: #f3f4f6; padding: 2px 6px; rounded: 4px;">
-                        Клиентов: <strong style="color: #111827;">${clients.length}</strong>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Body -->
-            <div class="custom-scrollbar" style="max-height: 180px; overflow-y: auto; padding: 8px 12px; background: white;">
-                ${listHtml}
-            </div>
-            
-            <!-- Footer -->
-            <div style="background: #f9fafb; padding: 10px 12px; border-top: 1px solid #e5e7eb; border-radius: 0 0 8px 8px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <span style="font-size: 10px; color: #6b7280; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em;">Всего продажи</span>
-                    <span style="font-size: 16px; color: #059669; font-weight: 800; font-family: monospace;">
-                        ${new Intl.NumberFormat('ru-RU').format(totalFact)} <span style="font-size: 12px; font-weight: 600;">кг</span>
-                    </span>
-                </div>
-                <div data-popup-edit data-key="${encodeURIComponent(String(firstClient.key))}"></div>
-            </div>
-        </div>
-        `;
-    };
-    
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
         
         const standardRenderer = L.canvas({ pane: 'markersPane' });
-        const activeRenderer = L.canvas({ pane: 'activeMarkersPane' }); 
+        // NOTE: activeRendererRef is used inside the interactive effect, not here
 
-        if (potentialClientMarkersLayer.current) { map.removeLayer(potentialClientMarkersLayer.current); layerControl.current.removeLayer(potentialClientMarkersLayer.current); }
-        potentialClientMarkersLayer.current = L.layerGroup();
-        if (activeClientMarkersLayer.current) { map.removeLayer(activeClientMarkersLayer.current); layerControl.current.removeLayer(activeClientMarkersLayer.current); }
-        activeClientMarkersLayer.current = L.layerGroup(); activeClientMarkersRef.current.clear();
-    
-        const pointsForBounds: L.LatLngExpression[] = [];
+        // 1. Manage Potential Markers Layer
+        if (!potentialClientMarkersLayer.current) {
+            potentialClientMarkersLayer.current = L.layerGroup().addTo(map);
+            if (overlayMode !== 'abc') layerControl.current.addOverlay(potentialClientMarkersLayer.current, '<span class="text-blue-500 font-bold">●</span> Потенциал (ОКБ)');
+        } else {
+            potentialClientMarkersLayer.current.clearLayers();
+        }
 
-        // Helper to decide whether to show a point
-        const shouldShowPoint = (lat: number, lon: number) => {
-            // Safety check for invalid coords
+        // 2. Optimized Filtering
+        const fastRegionMatch = (client: any) => {
+            if (!focusedRegionName) return true;
+            const r = (client.region || client.oblast || client.regionName || '').toString().toLowerCase();
+            return r.includes(focusedRegionName.toLowerCase());
+        };
+
+        const shouldShowPoint = (lat: number, lon: number, raw?: any) => {
             if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
-
+            if (raw && !fastRegionMatch(raw)) return false;
             const feature = focusedRegionFeatureRef.current;
-            if (!feature || !focusedRegionName) return true; // Show all if no focus
+            if (!feature || !focusedRegionName) return true;
             return pointInFeature(lat, lon, feature);
         };
 
+        // 3. Batch Process Potential Clients
+        renderJobIdRef.current += 1;
+        const jobId = renderJobIdRef.current;
+
         if (overlayMode !== 'abc') {
-            potentialClients.forEach(tt => {
-                let lat = tt.lat;
-                let lon = tt.lon;
+             let i = 0;
+             const renderBatch = () => {
+                 if (renderJobIdRef.current !== jobId) return;
 
-                if (!lat || !lon || lat === 0 || lon === 0) {
-                    const rawLat = getCoordinate(tt, ['lat', 'latitude', 'широта', 'y', 'geo_lat']);
-                    const rawLon = getCoordinate(tt, ['lon', 'lng', 'longitude', 'долгота', 'x', 'geo_lon']);
-                    lat = parseCoord(rawLat) || 0;
-                    lon = parseCoord(rawLon) || 0;
-                }
+                 const end = Math.min(i + BATCH_SIZE, potentialClients.length);
+                 for (; i < end; i++) {
+                     const tt = potentialClients[i];
+                     let lat = tt.lat;
+                     let lon = tt.lon;
 
-                if (lat !== 0 && lon !== 0) {
-                    if (lon < -170) lon += 360;
+                     if (!lat || !lon || lat === 0 || lon === 0) {
+                         const rawLat = getCoordinate(tt, ['lat', 'latitude', 'широта', 'y', 'geo_lat']);
+                         const rawLon = getCoordinate(tt, ['lon', 'lng', 'longitude', 'долгота', 'x', 'geo_lon']);
+                         lat = parseCoord(rawLat) || 0;
+                         lon = parseCoord(rawLon) || 0;
+                     }
 
-                    // FILTER
-                    if (!shouldShowPoint(lat, lon)) return;
-
-                    const popupContent = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
-                    const marker = L.circleMarker([lat, lon], {
-                        fillColor: '#3b82f6', color: '#1d4ed8', weight: 1, opacity: 0.8, fillOpacity: 0.6, radius: 4, 
-                        pane: 'markersPane', renderer: standardRenderer
-                    }).bindPopup(popupContent);
-                    
-                    // STOP PROPAGATION TO MAP
-                    marker.on('click', L.DomEvent.stopPropagation);
-                    marker.on('mousedown', L.DomEvent.stopPropagation);
-                    marker.on('touchstart', L.DomEvent.stopPropagation);
-                    
-                    potentialClientMarkersLayer.current?.addLayer(marker);
-                }
-            });
+                     if (lat !== 0 && lon !== 0) {
+                         if (lon < -170) lon += 360;
+                         if (shouldShowPoint(lat, lon, tt)) {
+                             const popupContent = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
+                             const marker = L.circleMarker([lat, lon], {
+                                 fillColor: '#3b82f6', color: '#1d4ed8', weight: 1, opacity: 0.8, fillOpacity: 0.6, radius: 4, 
+                                 pane: 'markersPane', renderer: standardRenderer
+                             }).bindPopup(popupContent);
+                             
+                             marker.on('click', L.DomEvent.stopPropagation);
+                             marker.on('mousedown', L.DomEvent.stopPropagation);
+                             marker.on('touchstart', L.DomEvent.stopPropagation);
+                             
+                             potentialClientMarkersLayer.current?.addLayer(marker);
+                         }
+                     }
+                 }
+                 if (i < potentialClients.length) {
+                     requestAnimationFrame(renderBatch);
+                 }
+             };
+             requestAnimationFrame(renderBatch);
         }
 
-        const groupedClientsMap = new Map<string, MapPoint[]>();
+    }, [potentialClients, overlayMode, focusedRegionName]);
+
+
+    // --- Data Processing Effect (Active Clients) ---
+    // Single pass to build groups, representatives, and canvas points
+    useEffect(() => {
+        // Update Ref for popup edit button
+        activeClientsDataRef.current = activeClients;
+
+        // 1. Build Groups & Reps
+        const grouped = new Map<string, MapPoint[]>();
         
-        activeClients.forEach(client => {
+        for (const client of activeClients) {
             const normAddr = normalizeAddress(client.address);
             let groupKey = normAddr;
             if (!groupKey) {
-                const lat = client.lat;
-                const lon = client.lon;
-                if (lat && lon) {
-                    groupKey = `${lat.toFixed(4)},${lon.toFixed(4)}`;
-                } else {
-                    return; 
+                const lat = client.lat; const lon = client.lon;
+                if (lat && lon) groupKey = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+                else continue;
+            }
+            if (!grouped.has(groupKey)) grouped.set(groupKey, []);
+            grouped.get(groupKey)!.push(client);
+        }
+
+        activeGroupsRef.current = grouped;
+        const reps: Array<{ key: string; groupKey: string; lat: number; lon: number; rep: MapPoint }> = [];
+
+        grouped.forEach((clients, groupKey) => {
+            // OPTIMIZED: Pick rep by latest update or just first (Single Pass, O(N))
+            let rep = clients[0];
+            let bestTime = rep.lastUpdated || 0;
+            for (let i = 1; i < clients.length; i++) {
+                const t = clients[i].lastUpdated || 0;
+                if (t > bestTime) {
+                    bestTime = t;
+                    rep = clients[i];
                 }
             }
-            if (!groupedClientsMap.has(groupKey)) {
-                groupedClientsMap.set(groupKey, []);
-            }
-            groupedClientsMap.get(groupKey)!.push(client);
-        });
-
-        activeClientsDataRef.current = activeClients;
-
-        groupedClientsMap.forEach((groupClients) => {
-            const sortedGroup = [...groupClients].sort((a, b) => {
-                const timeA = a.lastUpdated || 0;
-                const timeB = b.lastUpdated || 0;
-                if (timeA !== timeB) return timeB - timeA;
-                return 0;
-            });
-
-            const representative = sortedGroup[0];
             
-            if (representative.coordStatus === 'pending' || representative.isGeocoding) {
-                return;
-            }
-            
-            let lat = representative.lat;
-            let lon = representative.lon;
-
+            if (rep.coordStatus === 'pending' || rep.isGeocoding) return;
+            let lat = rep.lat; let lon = rep.lon;
             if (lat === undefined || lon === undefined) {
-                 lat = parseCoord(getCoordinate(representative, ['lat', 'latitude']));
-                 lon = parseCoord(getCoordinate(representative, ['lon', 'lng']));
+                 lat = parseCoord(getCoordinate(rep, ['lat', 'latitude']));
+                 lon = parseCoord(getCoordinate(rep, ['lon', 'lng']));
             }
 
             if (lat && lon && (Math.abs(lat) > 1 || Math.abs(lon) > 1)) {
-                if (lon < -170) lon += 360;
-                
-                // FILTER
-                if (!shouldShowPoint(lat, lon)) return;
-
-                pointsForBounds.push([lat, lon]);
-
-                const popupContent = createGroupPopupContent(groupClients);
-                const popupRep = groupClients[0];
-                
-                let markerColor = '#10b981';
-                let markerBorder = '#047857';
-                let markerRadius = 5;
-
-                if (groupClients.length > 1) {
-                    markerRadius = 7; 
-                    markerBorder = '#064e3b';
-                }
-
-                if (overlayMode === 'abc') {
-                    let bestCategory = 'C';
-                    for (const curr of groupClients) {
-                        if (curr.abcCategory === 'A') { bestCategory = 'A'; break; }
-                        if (curr.abcCategory === 'B') bestCategory = 'B';
-                    }
-
-                    switch (bestCategory) {
-                        case 'A': markerColor = '#f59e0b'; markerBorder = '#b45309'; markerRadius = groupClients.length > 1 ? 9 : 7; break;
-                        case 'B': markerColor = '#10b981'; markerBorder = '#047857'; markerRadius = groupClients.length > 1 ? 7 : 5; break;
-                        default: markerColor = '#9ca3af'; markerBorder = '#4b5563'; markerRadius = groupClients.length > 1 ? 5 : 3; break;
-                    }
-                } else {
-                    // Logic for Sales Recency (Active / Warning / Lost)
-                    const lastSaleDate = getLastSaleDateForGroup(groupClients);
-                    if (lastSaleDate) {
-                        const now = new Date();
-                        const diffTime = Math.abs(now.getTime() - lastSaleDate.getTime());
-                        const diffMonths = diffTime / (1000 * 60 * 60 * 24 * 30.44); // Approx months
-
-                        if (diffMonths > 12) {
-                            markerColor = '#ef4444'; // Red
-                            markerBorder = '#b91c1c';
-                        } else if (diffMonths > 6) {
-                            markerColor = '#f59e0b'; // Yellow
-                            markerBorder = '#b45309';
-                        } else {
-                            markerColor = '#10b981'; // Green
-                            markerBorder = '#047857';
-                        }
-                    } else {
-                        // Default to Green if no date is found but client is in active list
-                        markerColor = '#10b981'; 
-                        markerBorder = '#047857';
-                    }
-                }
-
-                const marker = L.circleMarker([lat, lon], {
-                    fillColor: markerColor, 
-                    color: markerBorder, 
-                    weight: groupClients.length > 1 ? 2 : 1, 
-                    opacity: 1, 
-                    fillOpacity: 0.8, 
-                    radius: markerRadius, 
-                    pane: 'activeMarkersPane',
-                    renderer: activeRenderer
-                }).bindPopup(popupContent, { minWidth: 280, maxWidth: 320 });
-                
-                // STOP PROPAGATION TO MAP
-                marker.on('click', L.DomEvent.stopPropagation);
-                marker.on('mousedown', L.DomEvent.stopPropagation);
-                marker.on('touchstart', L.DomEvent.stopPropagation);
-                
-                activeClientMarkersLayer.current?.addLayer(marker);
-                activeClientMarkersRef.current.set(popupRep.key, marker);
+                 if (lon < -170) lon += 360;
+                 reps.push({ key: String(rep.key), groupKey, lat, lon, rep });
             }
         });
 
-        if (overlayMode !== 'abc') potentialClientMarkersLayer.current.addTo(map);
-        activeClientMarkersLayer.current.addTo(map);
-        
-        if (overlayMode !== 'abc') layerControl.current.addOverlay(potentialClientMarkersLayer.current, '<span class="text-blue-500 font-bold">●</span> Потенциал (ОКБ)');
-        layerControl.current.addOverlay(activeClientMarkersLayer.current, '<span class="text-emerald-500 font-bold">●</span> Активные ТТ');
+        activeRepsRef.current = reps;
 
-        if (pointsForBounds.length > 0 && !flyToClientKey && !focusedRegionName) { 
-            map.fitBounds(L.latLngBounds(pointsForBounds).pad(0.1)); 
+        // 2. Build Canvas Points
+        const pts: Array<{ lat: number; lon: number; color: string; r: number }> = [];
+        
+        // Bounds accumulation vars
+        let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+        let hasBounds = false;
+
+        const feature = focusedRegionFeatureRef.current;
+
+        for (let i = 0; i < reps.length; i++) {
+            const { lat, lon, groupKey, rep } = reps[i];
+            const group = grouped.get(groupKey);
+            const size = group ? group.length : 1;
+
+            // Apply filter
+             if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+             if (focusedRegionName) {
+                const fastMatch = (rep.region || '').toString().toLowerCase().includes(focusedRegionName.toLowerCase());
+                if (!fastMatch) continue;
+                if (feature && !pointInFeature(lat, lon, feature)) continue;
+             }
+
+            // Determine Color
+            let markerColor = '#10b981';
+            let markerRadius = size > 1 ? 7 : 5;
+
+            if (overlayMode === 'abc' && group) {
+                let bestCategory = 'C';
+                for (const curr of group) {
+                    if (curr.abcCategory === 'A') { bestCategory = 'A'; break; }
+                    if (curr.abcCategory === 'B') bestCategory = 'B';
+                }
+                switch (bestCategory) {
+                    case 'A': markerColor = '#f59e0b'; markerRadius = size > 1 ? 9 : 7; break;
+                    case 'B': markerColor = '#10b981'; markerRadius = size > 1 ? 7 : 5; break;
+                    default: markerColor = '#9ca3af'; markerRadius = size > 1 ? 5 : 3; break;
+                }
+            } 
+            // Removed expensive date logic from 100k loop to prevent freezing.
+
+            pts.push({ lat, lon, color: markerColor, r: markerRadius });
+            
+            // Bounds accumulation
+            if (lat < minLat) minLat = lat;
+            if (lat > maxLat) maxLat = lat;
+            if (lon < minLon) minLon = lon;
+            if (lon > maxLon) maxLon = lon;
+            hasBounds = true;
         }
-    }, [potentialClients, activeClients, overlayMode, getLastSaleDateForGroup, focusedRegionName]);
+
+        activeCanvasPointsRef.current = pts;
+        scheduleCanvasRedraw();
+
+        // Fit bounds if needed
+        const map = mapInstance.current;
+        if (map && hasBounds && !flyToClientKey && !focusedRegionName) { 
+            map.fitBounds([[minLat, minLon], [maxLat, maxLon]], { padding: [20, 20] });
+        }
+
+    }, [activeClients, overlayMode, focusedRegionName, scheduleCanvasRedraw, flyToClientKey]);
+
+
+    // --- Interactive Markers Effect (Subset Only) ---
+    useEffect(() => {
+        const map = mapInstance.current;
+        if (!map) return;
+        
+        // Ensure renderer exists (redundant check, but safe)
+        if (!activeRendererRef.current) {
+            activeRendererRef.current = L.canvas({ pane: 'activeMarkersPane' });
+        }
+
+        if (!activeClientMarkersLayer.current) {
+             activeClientMarkersLayer.current = L.layerGroup().addTo(map);
+             layerControl.current?.addOverlay(activeClientMarkersLayer.current, '<span class="text-emerald-500 font-bold">●</span> Активные ТТ');
+        } else {
+             activeClientMarkersLayer.current.clearLayers();
+        }
+        
+        activeClientMarkersRef.current.clear();
+        
+        const bounds = map.getBounds();
+        const reps = activeRepsRef.current;
+        const feature = focusedRegionFeatureRef.current;
+        
+        let count = 0;
+        
+        for (let i = 0; i < reps.length; i++) {
+            if (count >= MAX_INTERACTIVE_ACTIVE) break;
+
+            const { lat, lon, groupKey, rep } = reps[i];
+            
+            // Viewport filter
+            if (!bounds.contains([lat, lon])) continue;
+
+            // Apply focus filter (must match what is drawn on canvas)
+            if (focusedRegionName) {
+                const fastMatch = (rep.region || '').toString().toLowerCase().includes(focusedRegionName.toLowerCase());
+                if (!fastMatch) continue;
+                if (feature && !pointInFeature(lat, lon, feature)) continue;
+             }
+
+            count++;
+
+            const groupClients = activeGroupsRef.current.get(groupKey) || [rep];
+            const popupContent = createGroupPopupContent(groupClients);
+            
+            // Invisible marker for interaction
+            const marker = L.circleMarker([lat, lon], {
+                opacity: 0,
+                fillOpacity: 0,
+                radius: groupClients.length > 1 ? 10 : 8, // Hit area size
+                pane: 'activeMarkersPane',
+                renderer: activeRendererRef.current
+            }).bindPopup(popupContent, { minWidth: 280, maxWidth: 320 });
+            
+            marker.on('click', L.DomEvent.stopPropagation);
+            marker.on('mousedown', L.DomEvent.stopPropagation);
+            marker.on('touchstart', L.DomEvent.stopPropagation);
+            
+            activeClientMarkersLayer.current.addLayer(marker);
+            activeClientMarkersRef.current.set(String(rep.key), marker);
+        }
+
+    }, [rebuildTick, overlayMode, focusedRegionName, createGroupPopupContent]);
 
     useEffect(() => {
         if (geoJsonData && mapInstance.current && geoJsonLayer.current === null) {
