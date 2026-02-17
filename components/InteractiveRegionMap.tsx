@@ -473,6 +473,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         return applyFocus(baseBorder);
     }, [selectedRegions, localTheme, overlayMode, focusedRegionName]);
 
+    // NEW: Apply styles whenever focusedRegionName changes to prevent async issues
+    useEffect(() => {
+        if (geoJsonLayer.current) {
+            geoJsonLayer.current.setStyle(getStyleForRegion as any);
+        }
+    }, [focusedRegionName, getStyleForRegion]);
+
     const resetHighlight = useCallback(() => {
         if (highlightedLayer.current && geoJsonLayer.current) {
             geoJsonLayer.current.resetStyle(highlightedLayer.current as L.Path);
@@ -481,12 +488,22 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     }, []); 
 
     const highlightRegion = useCallback((layer: L.Layer) => {
-        // If focused, don't change styles on hover to avoid flickering or overriding focus style
-        if (focusedRegionName) return; 
-
         resetHighlight();
+
         if (layer instanceof L.Path) {
-             layer.setStyle({ weight: 2, color: '#fbbf24', opacity: 1, fillOpacity: 0.2, dashArray: '' }).bringToFront();
+             const style: any = { 
+                 weight: 2, 
+                 color: '#fbbf24', 
+                 opacity: 1, 
+                 dashArray: '', 
+             };
+             
+             // Only set fillOpacity if NOT focused to allow background fill from focus state to persist
+             if (!focusedRegionName) {
+                 style.fillOpacity = 0.2;
+             }
+
+             layer.setStyle(style).bringToFront();
              highlightedLayer.current = layer;
         }
     }, [resetHighlight, focusedRegionName]);
@@ -497,12 +514,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         selectedRegionLayer.current = null;
 
         if (tileLayerRef.current) tileLayerRef.current.setOpacity(1);
-        if (geoJsonLayer.current) geoJsonLayer.current.setStyle(getStyleForRegion as any);
+        
+        // Styles will update via useEffect
         
         const map = mapInstance.current;
         // Optionally reset view to default, or just leave it
         // if (map) map.setView([55, 60], 3); 
-    }, [getStyleForRegion]);
+    }, []);
 
     const focusRegionByLayer = useCallback((layer: L.Layer) => {
         const feature = (layer as any).feature;
@@ -522,8 +540,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         // Dim tiles
         if (tileLayerRef.current) tileLayerRef.current.setOpacity(0.7);
 
-        // Apply new styles
-        if (geoJsonLayer.current) geoJsonLayer.current.setStyle(getStyleForRegion as any);
+        // Styles will update via useEffect
 
         // Zoom to region
         const map = mapInstance.current;
@@ -531,7 +548,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const bounds = (layer as any).getBounds();
             map.fitBounds(bounds, { padding: [20, 20], maxZoom: 7 });
         }
-    }, [focusedRegionName, clearFocusedRegion, getStyleForRegion]);
+    }, [focusedRegionName, clearFocusedRegion]);
 
     const handleLocationSelect = useCallback((location: SearchableLocation) => {
         const map = mapInstance.current; if (!map) return;
@@ -715,6 +732,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         // Helper to decide whether to show a point
         const shouldShowPoint = (lat: number, lon: number) => {
+            // Safety check for invalid coords
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+
             const feature = focusedRegionFeatureRef.current;
             if (!feature || !focusedRegionName) return true; // Show all if no focus
             return pointInFeature(lat, lon, feature);
@@ -743,6 +763,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         fillColor: '#3b82f6', color: '#1d4ed8', weight: 1, opacity: 0.8, fillOpacity: 0.6, radius: 4, 
                         pane: 'markersPane', renderer: standardRenderer
                     }).bindPopup(popupContent);
+                    
+                    // STOP PROPAGATION TO MAP
+                    marker.on('click', L.DomEvent.stopPropagation);
+                    marker.on('mousedown', L.DomEvent.stopPropagation);
+                    marker.on('touchstart', L.DomEvent.stopPropagation);
+                    
                     potentialClientMarkersLayer.current?.addLayer(marker);
                 }
             });
@@ -860,6 +886,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     renderer: activeRenderer
                 }).bindPopup(popupContent, { minWidth: 280, maxWidth: 320 });
                 
+                // STOP PROPAGATION TO MAP
+                marker.on('click', L.DomEvent.stopPropagation);
+                marker.on('mousedown', L.DomEvent.stopPropagation);
+                marker.on('touchstart', L.DomEvent.stopPropagation);
+                
                 activeClientMarkersLayer.current?.addLayer(marker);
                 activeClientMarkersRef.current.set(popupRep.key, marker);
             }
@@ -887,7 +918,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         },
                         mouseout: () => {
                             resetHighlight();
-                            if (geoJsonLayer.current) geoJsonLayer.current.setStyle(getStyleForRegion as any);
                         },
                         click: (e) => {
                             L.DomEvent.stopPropagation(e);
