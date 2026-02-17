@@ -28,24 +28,24 @@ const TopBar: React.FC<TopBarProps> = ({
   extraControls
 }) => {
   return (
-    <div className="w-full bg-white/80 backdrop-blur-xl border border-slate-200/70 rounded-3xl px-6 py-4 shadow-sm">
+    <div className="w-full bg-white/80 backdrop-blur-xl border border-slate-200/70 rounded-3xl px-6 py-5 shadow-sm transition-all duration-300">
       
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 
         {/* LEFT BLOCK */}
-        <div className="flex flex-col min-w-0">
+        <div className="flex flex-col min-w-0 lg:max-w-[55%]">
           <h1 className="text-xl font-semibold tracking-tight text-slate-900 truncate">
             {title}
           </h1>
           {subtitle && (
-            <span className="text-xs text-slate-500 mt-1 truncate">
+            <span className="text-xs text-slate-500 mt-1 leading-relaxed break-words whitespace-normal">
               {subtitle}
             </span>
           )}
         </div>
 
-        {/* RIGHT BLOCK - FIXED: Added flex-nowrap and removed wrapping behavior */}
-        <div className="flex flex-nowrap items-center justify-end gap-3 lg:ml-auto overflow-x-auto no-scrollbar py-1">
+        {/* RIGHT BLOCK */}
+        <div className="flex flex-nowrap items-center justify-end gap-3 lg:ml-auto overflow-x-auto no-scrollbar py-1 flex-shrink-0">
 
           {/* EXTRA CONTROLS (e.g. RM Selector) */}
           {extraControls && (
