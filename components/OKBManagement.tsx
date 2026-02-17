@@ -1,12 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { OkbDataRow, OkbStatus } from '../types';
-import { LoaderIcon, SuccessIcon, ErrorIcon } from './icons';
-
-import { Card, CardHeader, CardBody } from './ui/Card';
-import { Button } from './ui/Button';
-import { Chip } from './ui/Chip';
-import { StatTile } from './ui/StatTile';
+import { LoaderIcon, SuccessIcon, ErrorIcon, CheckIcon } from './icons';
 
 interface OKBManagementProps {
   onStatusChange: (status: OkbStatus) => void;
@@ -69,133 +64,77 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
   const isReady = status?.status === 'ready';
   const isError = status?.status === 'error';
 
-  const bannerTone = isError ? 'red' : isReady ? 'lime' : 'neutral';
-
   return (
-    <div className="relative">
-      {/* premium glow */}
-      <div
-        className="pointer-events-none absolute -inset-1 rounded-[28px] opacity-60 blur-2xl"
-        style={{
-          background:
-            'radial-gradient(600px 240px at 20% 0%, rgba(99,102,241,0.20), transparent 60%),' +
-            'radial-gradient(520px 240px at 80% 10%, rgba(34,211,238,0.14), transparent 60%),' +
-            'radial-gradient(520px 240px at 50% 100%, rgba(163,230,53,0.10), transparent 60%)',
-        }}
-      />
-
-      <Card className="relative">
-        <CardHeader
-          title="База Клиентов"
-          subtitle="Прямое подключение (60s Update)"
-          right={
+    <div className="bg-white p-6 rounded-3xl border border-slate-200/70 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+        
+        {/* Header */}
+        <div className="flex justify-between items-start mb-6">
+            <div>
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-wide">База Клиентов</h3>
+                <p className="text-xs text-slate-500 mt-1">Прямое подключение (60s Update)</p>
+            </div>
             <div className="flex items-center gap-2">
-              <Chip tone="blue">LIVE</Chip>
-              <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-indigo-600 to-sky-500 text-white font-black flex items-center justify-center shadow-[0_14px_40px_rgba(99,102,241,0.18)]">
-                1
-              </div>
+                 <div className="bg-sky-100 text-sky-600 px-2 py-1 rounded-lg text-[10px] font-black border border-sky-200">LIVE</div>
+                 <div className="w-8 h-8 rounded-xl bg-sky-100 text-sky-600 flex items-center justify-center font-black text-sm border border-sky-200">1</div>
             </div>
-          }
-        />
+        </div>
 
-        <CardBody className="space-y-5">
-          {/* Status banner */}
-          <div
-            className={[
-              'rounded-2xl border p-4 flex items-center gap-3',
-              bannerTone === 'red'
-                ? 'bg-red-50 border-red-200'
-                : bannerTone === 'lime'
-                ? 'bg-lime-50 border-lime-200'
-                : 'bg-slate-50 border-slate-200',
-            ].join(' ')}
-          >
-            <div
-              className={[
-                'w-10 h-10 rounded-2xl border flex items-center justify-center shadow-sm',
-                bannerTone === 'red'
-                  ? 'bg-red-100 border-red-200 text-red-600'
-                  : bannerTone === 'lime'
-                  ? 'bg-lime-100 border-lime-200 text-lime-700'
-                  : 'bg-white border-slate-200 text-slate-500',
-              ].join(' ')}
-            >
-              {isLoading ? (
-                <span className="w-5 h-5 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
-              ) : isError ? (
-                <div className="w-5 h-5">
-                  <ErrorIcon />
-                </div>
-              ) : isReady ? (
-                <div className="w-5 h-5">
-                  <SuccessIcon />
-                </div>
-              ) : (
-                <div className="w-2.5 h-2.5 rounded-full bg-slate-400" />
-              )}
-            </div>
+        {/* Main Status Block */}
+        <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 mb-6 flex justify-between items-center">
+             <div className="flex items-center gap-3">
+                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center border ${isReady ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : isError ? 'bg-red-50 border-red-200 text-red-600' : 'bg-white border-slate-200 text-slate-400'}`}>
+                      {isLoading ? <LoaderIcon className="animate-spin"/> : isReady ? <CheckIcon /> : isError ? <ErrorIcon /> : <div className="w-2 h-2 rounded-full bg-slate-300"/>}
+                 </div>
+                 <div>
+                      <div className="text-sm font-bold text-slate-900 leading-tight">
+                          {status?.message || 'Ожидание...'}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5">Данные актуальны</div>
+                 </div>
+             </div>
+             <div>
+                  {isReady && (
+                      <span className="text-[10px] font-black text-emerald-600 uppercase bg-white border border-emerald-200 px-2 py-1 rounded-lg tracking-wider">
+                          READY
+                      </span>
+                  )}
+                  {isError && <span className="text-[10px] font-black text-red-600 uppercase bg-white border border-red-200 px-2 py-1 rounded-lg">ERROR</span>}
+                  {isLoading && <span className="text-[10px] font-black text-slate-500 uppercase bg-white border border-slate-200 px-2 py-1 rounded-lg">LOADING</span>}
+             </div>
+        </div>
 
-            <div className="min-w-0">
-              <div className="text-sm font-extrabold text-slate-900 truncate">
-                {status?.message || 'Ожидание подключения...'}
-              </div>
-              <div className="text-xs text-slate-500">
-                {isLoading
-                  ? 'Пожалуйста, подождите…'
-                  : isReady
-                  ? 'Данные актуальны'
-                  : isError
-                  ? 'Проверьте доступ к серверу'
-                  : 'Готов к загрузке'}
-              </div>
-            </div>
+        {/* Metrics Grid */}
+        <div className="grid grid-cols-3 gap-4 mb-6">
+             <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
+                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Всего зап...</div>
+                  <div className="text-xl font-black text-slate-900 tracking-tight">
+                      {status?.rowCount ? status.rowCount.toLocaleString('ru-RU') : '—'}
+                  </div>
+             </div>
+             <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
+                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">С коорди...</div>
+                  <div className="text-xl font-black text-slate-900 tracking-tight">
+                      {status?.coordsCount ? status.coordsCount.toLocaleString('ru-RU') : '—'}
+                  </div>
+             </div>
+             <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
+                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Версия от</div>
+                  <div className="text-lg font-black text-slate-900 tracking-tight">
+                      {status?.timestamp ? new Date(status.timestamp).toLocaleTimeString('ru-RU') : '—'}
+                  </div>
+                  <div className="text-[9px] text-slate-400 mt-[-2px]">Время обновл...</div>
+             </div>
+        </div>
 
-            <div className="ml-auto">
-              <Chip tone={isError ? 'red' : isReady ? 'lime' : 'neutral'}>
-                {isLoading ? 'LOADING' : isError ? 'ERROR' : isReady ? 'READY' : 'IDLE'}
-              </Chip>
-            </div>
-          </div>
-
-          {/* Stat tiles */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <StatTile
-              label="Всего записей"
-              value={status?.rowCount ? status.rowCount.toLocaleString('ru-RU') : '—'}
-              accent="neutral"
-            />
-            <StatTile
-              label="С координатами"
-              value={status?.coordsCount ? status.coordsCount.toLocaleString('ru-RU') : '—'}
-              accent="blue"
-            />
-            <StatTile
-              label="Версия от"
-              value={status?.timestamp ? new Date(status.timestamp).toLocaleTimeString('ru-RU') : '…'}
-              accent="lime"
-              footnote="Время обновления"
-            />
-          </div>
-
-          {/* Action */}
-          <Button
+        {/* Action Button */}
+        <button
             onClick={() => handleFetchData(true)}
             disabled={isLoading || disabled}
-            className="w-full py-3.5 text-base rounded-2xl"
-            variant="primary"
-          >
-            {isLoading ? (
-              <span className="inline-flex items-center gap-2">
-                <LoaderIcon className="w-4 h-4" /> Загрузка...
-              </span>
-            ) : isReady ? (
-              'Обновить данные'
-            ) : (
-              'Загрузить базу'
-            )}
-          </Button>
-        </CardBody>
-      </Card>
+            className="w-full py-4 bg-sky-100 hover:bg-sky-200 text-sky-700 font-bold rounded-2xl text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm active:scale-95 border border-sky-200"
+        >
+            {isLoading ? 'Загрузка...' : 'Обновить данные'}
+        </button>
+
     </div>
   );
 };
