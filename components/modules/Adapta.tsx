@@ -331,7 +331,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         <div data-tour="topbar">
             <TopBar
                 title="ADAPTA"
-                subtitle="Live Data Ingestion & Quality Control"
+                subtitle="Для расчёта продаж выберите период в календаре и нажмите кнопку &quot;Загрузить&quot;"
                 startDate={props.startDate}
                 endDate={props.endDate}
                 onStartDateChange={props.onStartDateChange}
