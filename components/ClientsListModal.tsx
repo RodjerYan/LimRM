@@ -142,8 +142,9 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, ti
             <div className="flex flex-col h-[70vh]">
                 {showAbcLegend && (
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-slate-50 border-b border-slate-200 text-xs text-slate-500 flex-shrink-0">
-                        <div className="flex flex-col gap-1"><strong className="text-amber-500 text-sm">A (Лидеры)</strong><span>Немногочисленные клиенты, которые приносят 80% всей выручки.</span></div>
-                        <div className="flex flex-col gap-1"><strong className="text-emerald-500 text-sm">B (Середняки)</strong><span>Клиенты, обеспечивающие следующие 15% выручки.</span></div>
+                        {/* Updated Legend Colors */}
+                        <div className="flex flex-col gap-1"><strong className="text-emerald-500 text-sm">A (Лидеры)</strong><span>Немногочисленные клиенты, которые приносят 80% всей выручки.</span></div>
+                        <div className="flex flex-col gap-1"><strong className="text-amber-500 text-sm">B (Середняки)</strong><span>Клиенты, обеспечивающие следующие 15% выручки.</span></div>
                         <div className="flex flex-col gap-1"><strong className="text-slate-500 text-sm">C (Аутсайдеры)</strong><span>"Длинный хвост", дающий всего 5% выручки.</span></div>
                         <div className="flex flex-col gap-1 bg-red-50 p-2 rounded border border-red-100"><strong className="text-red-500 text-sm flex items-center gap-1"><AlertIcon small/> Зона Риска</strong><span>Клиенты A/B с аномально низким фактом. Проверьте отток!</span></div>
                     </div>

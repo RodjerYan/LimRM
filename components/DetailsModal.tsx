@@ -77,8 +77,8 @@ const GroupedClientsList: React.FC<{ clients: MapPoint[]; onStartEdit: (client: 
                                         {client.name}
                                         {client.abcCategory && (
                                             <span className={`px-1.5 py-0.5 rounded text-[9px] border font-bold ${
-                                                client.abcCategory === 'A' ? 'border-amber-200 text-amber-700 bg-amber-50' :
-                                                client.abcCategory === 'B' ? 'border-emerald-200 text-emerald-700 bg-emerald-50' :
+                                                client.abcCategory === 'A' ? 'border-emerald-200 text-emerald-700 bg-emerald-50' :
+                                                client.abcCategory === 'B' ? 'border-amber-200 text-amber-700 bg-amber-50' :
                                                 'border-slate-200 text-slate-500 bg-slate-50'
                                             }`}>
                                                 {client.abcCategory}

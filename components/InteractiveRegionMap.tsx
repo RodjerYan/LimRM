@@ -110,12 +110,14 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
                     ABC Анализ (Вклад)
                 </h4>
                 <div className="space-y-1.5">
-                    <div className="flex items-center">
-                        <span className="w-3 h-3 mr-2 rounded-full bg-amber-500 shadow-[0_0_5px_rgba(245,158,11,0.6)]"></span>
-                        <span className="text-xs font-bold text-gray-800">A (80% Выручки)</span>
-                    </div>
+                    {/* A is now Green */}
                     <div className="flex items-center">
                         <span className="w-3 h-3 mr-2 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></span>
+                        <span className="text-xs font-bold text-gray-800">A (80% Выручки)</span>
+                    </div>
+                    {/* B is now Amber */}
+                    <div className="flex items-center">
+                        <span className="w-3 h-3 mr-2 rounded-full bg-amber-500 shadow-[0_0_5px_rgba(245,158,11,0.6)]"></span>
                         <span className="text-xs font-medium text-gray-600">B (15% Выручки)</span>
                     </div>
                     <div className="flex items-center">
@@ -686,8 +688,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     }
 
                     switch (bestCategory) {
-                        case 'A': markerColor = '#f59e0b'; markerBorder = '#b45309'; markerRadius = groupClients.length > 1 ? 9 : 7; break;
-                        case 'B': markerColor = '#10b981'; markerBorder = '#047857'; markerRadius = groupClients.length > 1 ? 7 : 5; break;
+                        case 'A': markerColor = '#10b981'; markerBorder = '#047857'; markerRadius = groupClients.length > 1 ? 9 : 7; break; // Green
+                        case 'B': markerColor = '#f59e0b'; markerBorder = '#b45309'; markerRadius = groupClients.length > 1 ? 7 : 5; break; // Amber
                         default: markerColor = '#9ca3af'; markerBorder = '#4b5563'; markerRadius = groupClients.length > 1 ? 5 : 3; break;
                     }
                 } else {

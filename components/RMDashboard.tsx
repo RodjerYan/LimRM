@@ -639,7 +639,8 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         setAbcClients(targetClients);
         setAbcModalTitle(
             <div className="flex flex-col">
-                <span className={`text-xl font-bold ${category === 'A' ? 'text-amber-600' : category === 'B' ? 'text-emerald-600' : 'text-gray-600'}`}>Клиенты Категории {category}</span>
+                {/* Updated Colors: A=Green, B=Yellow */}
+                <span className={`text-xl font-bold ${category === 'A' ? 'text-emerald-600' : category === 'B' ? 'text-amber-600' : 'text-gray-600'}`}>Клиенты Категории {category}</span>
                 <span className="text-sm text-gray-500 mt-1">Менеджер: {rmName}</span>
             </div>
         );
@@ -807,31 +808,26 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                         </div>
                         {expandedRM === rm.rmName && (
                             <div className="border-t border-gray-200 bg-gray-50/50 p-6 animate-fade-in-down">
-                                <div className="flex justify-end mb-4">
-                                    <button 
-                                        onClick={() => handleExportUncovered(rm)}
-                                        className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-100 text-indigo-600 text-xs font-bold rounded-lg border border-indigo-100 transition-colors shadow-sm"
-                                        title="Скачать список всех непокрытых точек по регионам этого менеджера"
-                                    >
-                                        <ExportIcon small /> Скачать отчет: Непокрытый Потенциал (ОКБ)
-                                    </button>
-                                </div>
+                                
+                                {/* REMOVED: Export Uncovered Button */}
 
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
                                     <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                                         <h4 className="text-sm font-bold text-gray-700 uppercase mb-4 flex items-center gap-2"><TargetIcon small /> Эффективность Клиентской Базы</h4>
                                         <div className="space-y-4">
+                                            {/* Updated Colors for Category A */}
                                             <div className="flex justify-between items-center cursor-pointer hover:bg-gray-50 p-1 rounded transition-colors" onClick={() => handleShowAbcClients(rm.rmName, 'A')} title="Показать список клиентов категории A">
-                                                <span className="text-xs text-amber-500 font-bold underline decoration-dotted underline-offset-2">Категория A (80% объема)</span>
+                                                <span className="text-xs text-emerald-500 font-bold underline decoration-dotted underline-offset-2">Категория A (80% объема)</span>
                                                 <span className="text-xs text-gray-700">{rm.countA} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factA)} кг</span>
                                             </div>
-                                            <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden"><div className="h-full bg-amber-400" style={{ width: `${(rm.factA / rm.totalFact) * 100}%` }}></div></div>
+                                            <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden"><div className="h-full bg-emerald-400" style={{ width: `${(rm.factA / rm.totalFact) * 100}%` }}></div></div>
                                             
+                                            {/* Updated Colors for Category B */}
                                             <div className="flex justify-between items-center cursor-pointer hover:bg-gray-50 p-1 rounded transition-colors" onClick={() => handleShowAbcClients(rm.rmName, 'B')} title="Показать список клиентов категории B">
-                                                <span className="text-xs text-emerald-500 font-bold underline decoration-dotted underline-offset-2">Категория B (15% объема)</span>
+                                                <span className="text-xs text-amber-500 font-bold underline decoration-dotted underline-offset-2">Категория B (15% объема)</span>
                                                 <span className="text-xs text-gray-700">{rm.countB} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factB)} кг</span>
                                             </div>
-                                            <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden"><div className="h-full bg-emerald-400" style={{ width: `${(rm.factB / rm.totalFact) * 100}%` }}></div></div>
+                                            <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden"><div className="h-full bg-amber-400" style={{ width: `${(rm.factB / rm.totalFact) * 100}%` }}></div></div>
                                             
                                             <div className="flex justify-between items-center cursor-pointer hover:bg-gray-50 p-1 rounded transition-colors" onClick={() => handleShowAbcClients(rm.rmName, 'C')} title="Показать список клиентов категории C">
                                                 <span className="text-xs text-gray-400 font-bold underline decoration-dotted underline-offset-2">Категория C (5% объема)</span>
@@ -1000,145 +996,122 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         </div>
     );
 
-    if (!isOpen && mode === 'modal') return null;
-
     return (
         <>
-            {mode === 'modal' ? (
-                <Modal isOpen={isOpen} onClose={onClose} title="Дашборд Эффективности (Plan/Fact)" maxWidth="max-w-[95vw]">
-                    {renderContent()}
-                </Modal>
-            ) : (
-                <div className="relative">
+            {mode === 'page' ? (
+                <div className="animate-fade-in pb-10">
+                    <div className="flex items-center gap-4 mb-6">
+                        <button onClick={onClose} className="p-2 bg-white rounded-xl border border-slate-200 text-slate-500 hover:text-slate-900 transition-colors shadow-sm">
+                            <ArrowLeftIcon />
+                        </button>
+                        <div>
+                            <h2 className="text-2xl font-black text-slate-900">Дашборд План/Факт</h2>
+                            <p className="text-sm text-slate-500 font-medium">Центр управления эффективностью продаж</p>
+                        </div>
+                    </div>
                     {renderContent()}
                 </div>
+            ) : (
+                <Modal isOpen={isOpen} onClose={onClose} title="Дашборд План/Факт" maxWidth="max-w-[95vw]">
+                    {renderContent()}
+                </Modal>
             )}
 
-            {/* Modals for Drill-downs */}
-            {selectedRMForAnalysis && (
-                <RMAnalysisModal 
-                    isOpen={isAnalysisModalOpen} 
-                    onClose={() => setIsAnalysisModalOpen(false)} 
-                    rmData={selectedRMForAnalysis} 
-                    baseRate={baseRate}
-                    dateRange={dateRange}
-                />
-            )}
+            {isAnalysisModalOpen && <RMAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => setIsAnalysisModalOpen(false)} rmData={selectedRMForAnalysis} baseRate={baseRate} dateRange={dateRange} />}
+            {isAbcModalOpen && <ClientsListModal isOpen={isAbcModalOpen} onClose={() => setIsAbcModalOpen(false)} title={abcModalTitle} clients={abcClients} onClientSelect={() => {}} onStartEdit={(client) => { onEditClient?.(client); setIsAbcModalOpen(false); }} showAbcLegend={true} />}
+            {isRegionModalOpen && selectedRegionDetails && <RegionDetailsModal isOpen={isRegionModalOpen} onClose={() => setIsRegionModalOpen(false)} rmName={selectedRegionDetails.rmName} regionName={selectedRegionDetails.regionName} activeClients={selectedRegionDetails.activeClients} potentialClients={selectedRegionDetails.potentialClients} onEditClient={(c) => { onEditClient?.(c); setIsRegionModalOpen(false); }} />}
+            {explanationData && <GrowthExplanationModal isOpen={!!explanationData} onClose={() => setExplanationData(null)} data={explanationData} baseRate={baseRate} />}
+            
+            {isBrandModalOpen && selectedBrandForDetails && (
+                <BrandPackagingModal 
+                    isOpen={isBrandModalOpen} 
+                    onClose={() => setIsBrandModalOpen(false)} 
+                    brandMetric={selectedBrandForDetails} 
+                    regionName={selectedBrandRegion} 
+                    onExplain={(metric) => { setIsBrandModalOpen(false); setTimeout(() => setExplanationData(metric), 200); }} 
+                    onAnalyze={(row) => { 
+                        setIsBrandModalOpen(false); 
+                        setIsPackagingAnalysisOpen(true);
+                        setIsPackagingAnalysisLoading(true);
+                        setPackagingAnalysisTitle(`Анализ фасовки: ${row.brand} ${row.packaging} (${selectedBrandRegion})`);
+                        setPackagingChartData(null);
+                        setPackagingAnalysisContent('');
+                        
+                        if (packagingAbortController.current) packagingAbortController.current.abort();
+                        packagingAbortController.current = new AbortController();
 
-            <ClientsListModal 
-                isOpen={isAbcModalOpen} 
-                onClose={() => setIsAbcModalOpen(false)} 
-                title={abcModalTitle} 
-                clients={abcClients} 
-                onClientSelect={() => {}} 
-                onStartEdit={(c) => { if (onEditClient) onEditClient(c); }}
-                showAbcLegend={true}
-            />
+                        const growthPct = row.growthPercentage;
+                        const skuList = row.clients.map((c: any) => findValueInRow(c.originalRow, ['уникальное наименование товара', 'номенклатура', 'наименование'])).filter(Boolean);
+                        const uniqueSkus = Array.from(new Set(skuList)) as string[];
 
-            {selectedRegionDetails && (
-                <RegionDetailsModal 
-                    isOpen={isRegionModalOpen} 
-                    onClose={() => setIsRegionModalOpen(false)} 
-                    rmName={selectedRegionDetails.rmName} 
-                    regionName={selectedRegionDetails.regionName} 
-                    activeClients={selectedRegionDetails.activeClients} 
-                    potentialClients={selectedRegionDetails.potentialClients} 
-                    onEditClient={onEditClient}
-                />
-            )}
+                        setPackagingChartData({
+                            fact: row.fact,
+                            plan: row.potential,
+                            growthPct: growthPct,
+                            labels: { fact: factLabel, plan: planLabel.replace('План', 'План') }
+                        });
 
-            {explanationData && (
-                <GrowthExplanationModal 
-                    isOpen={!!explanationData} 
-                    onClose={() => setExplanationData(null)} 
-                    data={explanationData} 
+                        streamPackagingInsights(
+                            `${row.brand} ${row.packaging}`,
+                            uniqueSkus,
+                            row.fact,
+                            row.potential,
+                            growthPct,
+                            selectedBrandRegion,
+                            (chunk) => setPackagingAnalysisContent(prev => prev + chunk),
+                            (err) => { 
+                                if (err.name !== 'AbortError') {
+                                    console.error(err); 
+                                    setPackagingAnalysisContent(prev => prev + '\n\n**Ошибка получения анализа.**'); 
+                                }
+                                setIsPackagingAnalysisLoading(false); 
+                            },
+                            packagingAbortController.current.signal
+                        ).finally(() => setIsPackagingAnalysisLoading(false));
+                    }} 
+                    dateLabels={{ fact: factLabel, plan: planLabel }} 
+                    periodAnnualizeK={periodAnnualizeK} 
                     baseRate={baseRate} 
+                    planScalingFactor={planScalingFactor} 
                 />
             )}
             
-            {/* NEW TASK MANAGEMENT MODALS */}
-            {taskActionTarget && (
-                <TaskActionModal
-                    isOpen={isTaskActionModalOpen}
-                    onClose={() => setIsTaskActionModalOpen(false)}
-                    mode="action"
-                    targetItem={taskActionTarget}
-                    onConfirmAction={(type, reason, date) => {
-                         let snoozeTs = undefined;
-                         if (date) {
-                             snoozeTs = new Date(date).getTime();
-                         }
-                         taskManager.performAction(taskActionTarget.id, taskActionTarget.name, type, reason, snoozeTs);
-                    }}
-                    onRestore={() => {}} // Not used in action mode
-                    history={[]} // Not used in action mode
-                />
-            )}
+            <PackagingAnalysisModal 
+                isOpen={isPackagingAnalysisOpen} 
+                onClose={() => setIsPackagingAnalysisOpen(false)} 
+                title={packagingAnalysisTitle} 
+                content={packagingAnalysisContent} 
+                isLoading={isPackagingAnalysisLoading}
+                chartData={packagingChartData}
+            />
+
+            <TaskActionModal
+                isOpen={isTaskActionModalOpen}
+                onClose={() => setIsTaskActionModalOpen(false)}
+                mode="action"
+                targetItem={taskActionTarget || undefined}
+                history={[]}
+                onConfirmAction={(type, reason, snoozeDate) => {
+                    if (taskActionTarget) {
+                        taskManager.performAction(
+                            taskActionTarget.id,
+                            taskActionTarget.name,
+                            type,
+                            reason,
+                            snoozeDate ? new Date(snoozeDate).getTime() : undefined
+                        );
+                    }
+                }}
+                onRestore={() => {}}
+            />
 
             <TaskActionModal
                 isOpen={isTaskHistoryModalOpen}
                 onClose={() => setIsTaskHistoryModalOpen(false)}
                 mode="history"
+                history={taskManager.processedTasks}
                 onConfirmAction={() => {}}
                 onRestore={(id) => taskManager.restoreTask(id)}
-                history={taskManager.processedTasks}
-            />
-
-            <BrandPackagingModal 
-                isOpen={isBrandModalOpen} 
-                onClose={() => setIsBrandModalOpen(false)} 
-                brandMetric={selectedBrandForDetails} 
-                regionName={selectedBrandRegion}
-                onExplain={(metric) => setExplanationData(metric)}
-                onAnalyze={(row) => {
-                    const skuList: string[] = [];
-                    if (row.skuList) skuList.push(...row.skuList);
-                    
-                    setPackagingAnalysisTitle(`Анализ сегмента: ${row.packaging} (${selectedBrandForDetails?.name})`);
-                    setPackagingAnalysisContent('');
-                    setIsPackagingAnalysisOpen(true);
-                    setIsPackagingAnalysisLoading(true);
-                    
-                    setPackagingChartData({ 
-                        fact: row.fact, 
-                        plan: row.plan, 
-                        growthPct: row.growthPct, 
-                        labels: { fact: factLabel, plan: planLabel } 
-                    });
-
-                    if (packagingAbortController.current) packagingAbortController.current.abort();
-                    packagingAbortController.current = new AbortController();
-
-                    streamPackagingInsights(
-                        row.packaging,
-                        skuList,
-                        row.fact,
-                        row.plan,
-                        row.growthPct,
-                        selectedBrandRegion,
-                        (chunk) => setPackagingAnalysisContent(prev => prev + chunk),
-                        (err) => { 
-                            if (err.name !== 'AbortError') {
-                                setPackagingAnalysisContent(prev => prev + `\n\n**Ошибка:** ${err.message}`); 
-                            }
-                            setIsPackagingAnalysisLoading(false); 
-                        },
-                        packagingAbortController.current.signal
-                    ).finally(() => setIsPackagingAnalysisLoading(false));
-                }}
-                dateLabels={{ fact: factLabel, plan: planLabel }}
-                periodAnnualizeK={periodAnnualizeK}
-                baseRate={baseRate}
-                planScalingFactor={planScalingFactor}
-            />
-
-            <PackagingAnalysisModal 
-                isOpen={isPackagingAnalysisOpen} 
-                onClose={() => { setIsPackagingAnalysisOpen(false); packagingAbortController.current?.abort(); }} 
-                title={packagingAnalysisTitle} 
-                content={packagingAnalysisContent} 
-                isLoading={isPackagingAnalysisLoading}
-                chartData={packagingChartData}
             />
         </>
     );
