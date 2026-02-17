@@ -4,14 +4,19 @@ import { ProcessedTask } from '../types';
 import { useAuth } from '../components/auth/AuthContext';
 
 export const useTaskManager = () => {
-    const { user } = useAuth();
+    const { user, token } = useAuth();
     const [processedTasks, setProcessedTasks] = useState<ProcessedTask[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
     const loadTasks = useCallback(async () => {
+        if (!token) return;
         setIsLoading(true);
         try {
-            const res = await fetch(`/api/get-full-cache?action=get-tasks&t=${Date.now()}`);
+            const res = await fetch(`/api/get-full-cache?action=get-tasks&t=${Date.now()}`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
             if (res.ok) {
                 const data = await res.json();
                 setProcessedTasks(data.tasks || []);
@@ -21,7 +26,7 @@ export const useTaskManager = () => {
         } finally {
             setIsLoading(false);
         }
-    }, []);
+    }, [token]);
 
     useEffect(() => {
         loadTasks();
@@ -56,16 +61,20 @@ export const useTaskManager = () => {
         targetName: string, 
         type: 'delete' | 'snooze', 
         reason: string, 
+        ownerRm: string, // NEW: Pass the RM name so we can link it to the user
         snoozeUntil?: number
     ) => {
-        const newTask: ProcessedTask = {
+        if (!user || !token) return;
+
+        const newTask: ProcessedTask & { owner?: string } = {
             id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
             targetId,
             targetName,
             type,
             reason,
             timestamp: Date.now(),
-            user: user?.email,
+            user: user.email, // Who performed the action
+            owner: ownerRm,   // Who owns the point (for visibility sharing)
             // If delete, set 30 day restore deadline
             restoreDeadline: type === 'delete' ? Date.now() + (30 * 24 * 60 * 60 * 1000) : undefined,
             snoozeUntil
@@ -77,29 +86,37 @@ export const useTaskManager = () => {
         try {
             await fetch(`/api/get-full-cache?action=save-task`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify(newTask)
             });
         } catch (e) {
             console.error("Failed to save task action:", e);
             // Revert on fail? For now just log.
         }
-    }, [user]);
+    }, [user, token]);
 
     const restoreTask = useCallback(async (taskId: string) => {
+        if (!token) return;
+
         // Optimistic update
         setProcessedTasks(prev => prev.filter(t => t.id !== taskId));
 
         try {
             await fetch(`/api/get-full-cache?action=restore-task`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify({ taskId })
             });
         } catch (e) {
             console.error("Failed to restore task:", e);
         }
-    }, []);
+    }, [token]);
 
     return {
         processedTasks,

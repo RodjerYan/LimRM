@@ -377,7 +377,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const [tempPlanEnd, setTempPlanEnd] = useState('');
 
     // --- TASK ACTION STATES ---
-    const [taskActionTarget, setTaskActionTarget] = useState<{id: string, name: string} | null>(null);
+    const [taskActionTarget, setTaskActionTarget] = useState<{id: string, name: string, rm: string} | null>(null); // <--- Added RM to type
     // NEW: Add state to track which action type to open immediately
     const [taskActionType, setTaskActionType] = useState<'delete' | 'snooze'>('delete'); 
     const [isTaskActionModalOpen, setIsTaskActionModalOpen] = useState(false);
@@ -404,6 +404,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         fetchSettings();
     }, []);
 
+    // ... (rest of code similar, until handleTaskAction) ...
     // Save base rate to server (Admin only)
     const handleSaveRateSettings = async () => {
         if (!isAdmin) return;
@@ -473,8 +474,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     };
 
     const metricsData = useMemo<RMMetrics[]>(() => {
-        // ... (Same aggregation logic as before) ...
-        // Re-paste the large useMemo block for metricsData from original file to ensure integrity
+        // ... (Metrics aggregation code is identical to original, keeping it concise) ...
         const globalOkbRegionCounts = okbRegionCounts || {};
         let globalTotalListings = 0; let globalTotalVolume = 0; const allUniqueClientKeys = new Set<string>();
         data.forEach(row => { globalTotalVolume += row.fact; globalTotalListings += row.clients.length; row.clients.forEach(c => allUniqueClientKeys.add(c.key)); });
@@ -514,10 +514,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 const regionAvgSku = regData.regionListings > 0 ? regData.regionListings / regData.activeClients.size : 1;
                 const regionVelocity = regData.regionListings > 0 ? regData.fact / regData.regionListings : 0;
                 
-                // Calculate annualized fact based on loaded data
                 const annualFact = regData.fact * periodAnnualizeK;
-
-                // Engine calculates Annual Plan
                 const planResult = PlanningEngine.calculateRMPlan({ 
                     totalFact: annualFact, 
                     totalPotential: regionOkbCount, 
@@ -529,7 +526,6 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                     rmGlobalVelocity: globalAvgSalesPerSku 
                 }, { baseRate: baseRate, globalAvgSku: globalAvgSkuPerClient, globalAvgSales: globalAvgSalesPerSku, riskLevel: 'low' });
                 
-                // Scale Annual Plan to the requested Target Period
                 const scaledPlan = planResult.plan * planScalingFactor;
 
                 const regBrands: PlanMetric[] = [];
@@ -537,25 +533,15 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                     let bFact = 0; let bPlan = 0;
                     rows.forEach(r => { 
                         bFact += r.fact; 
-                        
-                        // Annualize Brand Plan base
                         const annualBFact = r.fact * periodAnnualizeK;
-                        // Use row's own growth metric if available
                         const growth = r.planMetric ? r.planMetric.growthPct : baseRate;
-                        
-                        // Calculated Annual Plan * Scaling Factor
                         bPlan += (annualBFact * (1 + growth / 100)) * planScalingFactor;
                     });
-                    
                     if (!rmBrandsMap.has(bName)) rmBrandsMap.set(bName, {fact: 0, plan: 0});
                     rmBrandsMap.get(bName)!.fact += bFact; 
                     rmBrandsMap.get(bName)!.plan += bPlan;
                     
-                    // Note: growthPct is displayed as ANNUALIZED rate (speed), not absolute volume growth
-                    // So we compare Annual Plan vs Annual Fact to show the %
-                    // (Same as comparing Target Period Plan vs Projected Target Fact)
                     const projectedTargetFact = bFact * periodAnnualizeK * planScalingFactor;
-                    
                     regBrands.push({ 
                         name: bName, 
                         fact: bFact, 
@@ -567,10 +553,8 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 
                 rmRegions.push({ name: regData.originalRegionName, fact: regData.fact, plan: scaledPlan, growthPct: planResult.growthPct, activeCount: regData.activeClients.size, totalCount: regionOkbCount, factors: planResult.factors, details: planResult.details, brands: regBrands.sort((a,b) => b.fact - a.fact) });
             }
-            
             const rmBrands: PlanMetric[] = []; 
             rmBrandsMap.forEach((val, key) => { 
-                // Project fact to target period to calc growth %
                 const projectedTargetFact = val.fact * periodAnnualizeK * planScalingFactor;
                 rmBrands.push({ 
                     name: key, 
@@ -579,12 +563,9 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                     growthPct: projectedTargetFact > 0 ? ((val.plan - projectedTargetFact)/projectedTargetFact)*100 : 0 
                 }); 
             });
-            
             const rmAvgSku = bucket.uniqueClientKeys.size > 0 ? bucket.totalListings / bucket.uniqueClientKeys.size : 0;
             const rmVelocity = bucket.totalListings > 0 ? bucket.totalFact / bucket.totalListings : 0;
             const totalRmPlan = rmRegions.reduce((sum, r) => sum + r.plan, 0);
-            
-            // Calc overall growth %
             const totalRmProjectedFact = bucket.totalFact * periodAnnualizeK * planScalingFactor;
             const totalRmGrowthPct = totalRmProjectedFact > 0 ? ((totalRmPlan - totalRmProjectedFact) / totalRmProjectedFact) * 100 : 0;
             
@@ -619,13 +600,14 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         }
     };
 
-    const handleTaskAction = (target: {id: string, name: string}, type: 'delete' | 'snooze') => {
+    // UPDATE: Now we accept RM in handleTaskAction
+    const handleTaskAction = (target: {id: string, name: string, rm: string}, type: 'delete' | 'snooze') => {
         setTaskActionTarget(target);
         setTaskActionType(type); // Store the type so modal opens correct tab
         setIsTaskActionModalOpen(true);
     };
 
-    // ... (keep ABC and Export Handlers same) ...
+    // ... (rest of helper functions) ...
     const handleShowAbcClients = (rmName: string, category: 'A' | 'B' | 'C') => {
         const targetClients: MapPoint[] = [];
         data.forEach(row => {
@@ -640,7 +622,6 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         setAbcClients(targetClients);
         setAbcModalTitle(
             <div className="flex flex-col">
-                {/* Updated Colors: A=Green, B=Yellow */}
                 <span className={`text-xl font-bold ${category === 'A' ? 'text-emerald-600' : category === 'B' ? 'text-amber-600' : 'text-gray-600'}`}>Клиенты Категории {category}</span>
                 <span className="text-sm text-gray-500 mt-1">Менеджер: {rmName}</span>
             </div>
@@ -672,32 +653,6 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         XLSX.writeFile(wb, `Global_Uncovered_Potential_${new Date().toISOString().split('T')[0]}.xlsx`);
     };
 
-    const handleExportUncovered = (rmMetrics: RMMetrics) => {
-        const activeClients = data.filter(d => d.rm === rmMetrics.rmName).flatMap(d => d.clients);
-        const activeAddressSet = new Set(activeClients.map(c => normalizeAddress(c.address)));
-        const rmRegions = new Set(rmMetrics.regions.map(r => r.name.toLowerCase().replace(/(г\.|город|область|край|республика)/g, '').trim()));
-        const uncoveredClients = okbData.filter(row => {
-            const rowRegion = findValueInRow(row, ['субъект', 'регион', 'область'])?.toLowerCase() || '';
-            const rowCity = findValueInRow(row, ['город', 'населенный пункт'])?.toLowerCase() || '';
-            const matchesRegion = Array.from(rmRegions).some(rmReg => rowRegion.includes(rmReg) || rowCity.includes(rmReg));
-            if (!matchesRegion) return false;
-            const addr = findAddressInRow(row);
-            if (!addr) return false;
-            return !activeAddressSet.has(normalizeAddress(addr));
-        }).map(row => ({
-            'Наименование': findValueInRow(row, ['наименование', 'клиент']) || 'ТТ',
-            'Регион': findValueInRow(row, ['субъект', 'регион', 'область']) || 'Не указан',
-            'Город': findValueInRow(row, ['город', 'населенный пункт']) || 'Не указан',
-            'Адрес': findAddressInRow(row) || '',
-            'Тип/Канал': findValueInRow(row, ['тип', 'канал']) || 'Не указан',
-            'Менеджер': rmMetrics.rmName
-        }));
-        const ws = XLSX.utils.json_to_sheet(uncoveredClients);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Uncovered_Potential");
-        XLSX.writeFile(wb, `Uncovered_Potential_${rmMetrics.rmName.replace(/[^a-zа-я0-9]/gi, '_')}.xlsx`);
-    };
-
     const renderContent = () => (
         <div className="space-y-6">
             {/* NBA PANEL - TOP PRIORITY */}
@@ -713,8 +668,9 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 <NBAPanel 
                     actions={nbaActions} 
                     onActionClick={handleActionClick} 
-                    onDelete={(a) => handleTaskAction({id: a.clientId, name: a.clientName}, 'delete')}
-                    onSnooze={(a) => handleTaskAction({id: a.clientId, name: a.clientName}, 'snooze')}
+                    // PASS RM to handler
+                    onDelete={(a) => handleTaskAction({id: a.clientId, name: a.clientName, rm: a.rm}, 'delete')}
+                    onSnooze={(a) => handleTaskAction({id: a.clientId, name: a.clientName, rm: a.rm}, 'snooze')}
                 />
             </div>
 
@@ -788,6 +744,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             <div className="grid grid-cols-1 gap-6">
                 {metricsData.map((rm, idx) => (
                     <div key={rm.rmName} className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-md transition-all hover:border-indigo-200">
+                        {/* ... (RM Card content same as original) ... */}
                         <div className="p-6 cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => setExpandedRM(expandedRM === rm.rmName ? null : rm.rmName)}>
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                                 <div className="flex items-center gap-4"><div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-white shadow-sm ${idx < 3 ? 'bg-amber-400 text-black' : 'bg-gray-200 text-gray-600'}`}>{idx + 1}</div><div><h3 className="text-lg font-bold text-gray-900">{rm.rmName}</h3><div className="flex items-center gap-3 text-xs text-gray-500 mt-1"><span>{rm.totalClients} активных клиентов</span><span className="w-1 h-1 rounded-full bg-gray-300"></span><span>{rm.totalOkbCount.toLocaleString()} потенциал (ОКБ)</span></div></div></div>
@@ -809,9 +766,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                         </div>
                         {expandedRM === rm.rmName && (
                             <div className="border-t border-gray-200 bg-gray-50/50 p-6 animate-fade-in-down">
-                                
-                                {/* REMOVED: Export Uncovered Button */}
-
+                                {/* ... (Expanded RM content same as original) ... */}
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
                                     <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                                         <h4 className="text-sm font-bold text-gray-700 uppercase mb-4 flex items-center gap-2"><TargetIcon small /> Эффективность Клиентской Базы</h4>
@@ -866,6 +821,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                                 <td className="px-4 py-3 text-center flex justify-center gap-2">
                                                     <button onClick={() => { setExplanationData(reg); }} className="p-1.5 hover:bg-gray-200 rounded text-indigo-500 transition-colors" title="Почему такой план?"><CalculatorIcon small /></button>
                                                     <button onClick={() => { 
+                                                        // ... (region selection logic) ...
                                                         const normRm = normalizeRmNameForMatching(rm.rmName);
                                                         const activeClients = data.filter(d => 
                                                             normalizeRmNameForMatching(d.rm) === normRm && 
@@ -1010,6 +966,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                             taskActionTarget.name,
                             type,
                             reason,
+                            taskActionTarget.rm, // NEW: PASS OWNER RM
                             snoozeDate ? new Date(snoozeDate).getTime() : undefined
                         );
                     }

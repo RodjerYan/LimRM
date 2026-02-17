@@ -1,6 +1,7 @@
 
 import { google } from 'googleapis';
 import { Buffer } from 'buffer';
+import jwt from 'jsonwebtoken';
 import { 
     getFullCoordsCache, 
     getAddressFromCache, 
@@ -13,9 +14,18 @@ import {
 // Updated IDs based on user input
 const FOLDER_ID = '1bNcjQp-BhPtgf5azbI5gkkx__eMthCfX'; // Snapshot Folder
 const DELTA_FOLDER_ID = '19SNRc4HNKNs35sP7GeYeFj2UPTtWru5P'; // Savepoint (Delta) Folder
+const TASKS_FOLDER_ID = '1LxM3kjiEanQnqj5y-7QE1tHkTFiUFHD2'; // New folder for Tasks (Deferred/Deleted)
+
 const SCOPES = ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets'];
 
-const TASKS_FILENAME = 'tasks_log.json';
+// New filenames
+const DEFERRED_FILENAME = 'Deferred.json';
+const DELETED_FILENAME = 'Deleted.json';
+
+const JWT_SECRET = process.env.AUTH_JWT_SECRET || "default-dev-secret-do-not-use-in-prod-limrm-geo";
+
+// Helper to normalize strings for comparison (RM matching)
+const normalize = (s: string) => s ? s.toLowerCase().trim().replace(/[^a-zа-я0-9]/g, '') : '';
 
 async function getDriveClient() {
     const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
@@ -80,26 +90,26 @@ async function mapConcurrent<T, R>(items: T[], concurrency: number, fn: (item: T
     return results;
 }
 
-// --- TASK MANAGER HELPERS ---
-async function getTasksLog(drive: any) {
+// --- NEW TASK MANAGER HELPERS (Specific Files) ---
+async function getJsonFile(drive: any, filename: string, folderId: string) {
     try {
-        const q = `name = '${TASKS_FILENAME}' and '${FOLDER_ID}' in parents and trashed = false`;
+        const q = `name = '${filename}' and '${folderId}' in parents and trashed = false`;
         const list = await drive.files.list({ q, fields: 'files(id)', supportsAllDrives: true, includeItemsFromAllDrives: true });
         
         if (list.data.files && list.data.files.length > 0) {
             const fileId = list.data.files[0].id;
             const res = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'json' });
-            return { fileId, data: res.data || [] };
+            return { fileId, data: Array.isArray(res.data) ? res.data : [] };
         }
         return { fileId: null, data: [] };
     } catch (e) {
-        console.error("Failed to read tasks log:", e);
+        console.error(`Failed to read ${filename}:`, e);
         return { fileId: null, data: [] };
     }
 }
 
-async function saveTasksLog(drive: any, data: any[], fileId: string | null) {
-    const content = JSON.stringify(data);
+async function saveJsonFile(drive: any, filename: string, folderId: string, data: any[], fileId: string | null) {
+    const content = JSON.stringify(data, null, 2);
     if (fileId) {
         await drive.files.update({ 
             fileId, 
@@ -108,10 +118,21 @@ async function saveTasksLog(drive: any, data: any[], fileId: string | null) {
         });
     } else {
         await drive.files.create({
-            requestBody: { name: TASKS_FILENAME, parents: [FOLDER_ID], mimeType: 'application/json' },
+            requestBody: { name: filename, parents: [folderId], mimeType: 'application/json' },
             media: { mimeType: 'application/json', body: content },
             supportsAllDrives: true
         });
+    }
+}
+
+function verifyUser(req: Request) {
+    try {
+        const authHeader = req.headers.get('Authorization');
+        if (!authHeader) return null;
+        const token = authHeader.replace('Bearer ', '');
+        return jwt.verify(token, JWT_SECRET) as { email: string; role: string; lastName: string };
+    } catch (e) {
+        return null;
     }
 }
 
@@ -141,20 +162,65 @@ export default async function handler(req: Request) {
             
             // --- TASK MANAGEMENT POST ---
             if (action === 'save-task' && drive) {
-                const { fileId, data } = await getTasksLog(drive);
+                const user = verifyUser(req);
+                if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+
                 const newTask = body;
-                // Add new task
+                // Enforce author
+                newTask.user = user.email;
+                // Owner is already passed in newTask.owner from frontend
+
+                const filename = newTask.type === 'snooze' ? DEFERRED_FILENAME : DELETED_FILENAME;
+                
+                const { fileId, data } = await getJsonFile(drive, filename, TASKS_FOLDER_ID);
                 data.push(newTask);
-                await saveTasksLog(drive, data, fileId);
+                await saveJsonFile(drive, filename, TASKS_FOLDER_ID, data, fileId);
+                
                 return new Response(JSON.stringify({ success: true }));
             }
 
             if (action === 'restore-task' && drive) {
+                const user = verifyUser(req);
+                if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+
                 const { taskId } = body;
-                const { fileId, data } = await getTasksLog(drive);
-                const newData = data.filter((t: any) => t.id !== taskId && t.targetId !== taskId);
-                await saveTasksLog(drive, newData, fileId);
-                return new Response(JSON.stringify({ success: true }));
+                
+                const deferred = await getJsonFile(drive, DEFERRED_FILENAME, TASKS_FOLDER_ID);
+                const deleted = await getJsonFile(drive, DELETED_FILENAME, TASKS_FOLDER_ID);
+                
+                let found = false;
+
+                // Helper to check ownership or access
+                const canRestore = (t: any) => {
+                    if (user.role === 'admin') return true;
+                    if (t.user === user.email) return true; // I created it
+                    // Check if I am the owner (RM) of the point
+                    if (t.owner) {
+                        const ownerName = normalize(t.owner);
+                        const myName = normalize(user.lastName);
+                        if (ownerName.includes(myName)) return true;
+                    }
+                    return false;
+                };
+
+                if (deferred.data.some((t: any) => t.id === taskId && canRestore(t))) {
+                    const newData = deferred.data.filter((t: any) => t.id !== taskId);
+                    await saveJsonFile(drive, DEFERRED_FILENAME, TASKS_FOLDER_ID, newData, deferred.fileId);
+                    found = true;
+                }
+                
+                if (!found && deleted.data.some((t: any) => t.id === taskId && canRestore(t))) {
+                    const newData = deleted.data.filter((t: any) => t.id !== taskId);
+                    await saveJsonFile(drive, DELETED_FILENAME, TASKS_FOLDER_ID, newData, deleted.fileId);
+                    found = true;
+                }
+
+                if (!found) {
+                    // Could be not found OR permission denied (we hide existence if denied for security/simplicity)
+                    return new Response(JSON.stringify({ success: false, error: 'Task not found or permission denied' }));
+                }
+
+                return new Response(JSON.stringify({ success: true, restored: found }));
             }
             // ---------------------------
 
@@ -340,25 +406,40 @@ export default async function handler(req: Request) {
         if (req.method === 'GET') {
             // --- TASK MANAGEMENT GET ---
             if (action === 'get-tasks' && drive) {
-                const { fileId, data } = await getTasksLog(drive);
+                const user = verifyUser(req);
+                if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+
                 const now = Date.now();
-                let modified = false;
                 
-                // AUTO-CLEANUP: Remove items where restoreDeadline has passed
-                const activeTasks = data.filter((task: any) => {
-                    if (task.type === 'delete' && task.restoreDeadline && now > task.restoreDeadline) {
-                        modified = true;
-                        return false; // Remove expired deleted items permanently
-                    }
-                    return true;
-                });
+                // 1. Process Deferred.json
+                const deferred = await getJsonFile(drive, DEFERRED_FILENAME, TASKS_FOLDER_ID);
+                const activeDeferred = deferred.data.filter((task: any) => task.snoozeUntil > now);
                 
-                if (modified) {
-                    await saveTasksLog(drive, activeTasks, fileId);
-                    console.log(`[Tasks] Auto-cleaned ${data.length - activeTasks.length} expired items.`);
+                // If we cleaned up expired items, save the file back (maintenance)
+                if (activeDeferred.length !== deferred.data.length) {
+                     await saveJsonFile(drive, DEFERRED_FILENAME, TASKS_FOLDER_ID, activeDeferred, deferred.fileId);
+                     console.log(`[Tasks] Auto-woke ${deferred.data.length - activeDeferred.length} snoozed items.`);
+                }
+
+                // 2. Process Deleted.json
+                const deleted = await getJsonFile(drive, DELETED_FILENAME, TASKS_FOLDER_ID);
+                // For deleted items, we KEEP them in the file even if expired (as history).
+                // Frontend logic will determine if they are recoverable or just logs.
+
+                let allTasks = [...activeDeferred, ...deleted.data];
+
+                // 3. FILTER BY USER (unless admin)
+                // Logic: Show if User is Author OR User is Target Owner (RM)
+                if (user.role !== 'admin') {
+                    const userSurname = normalize(user.lastName);
+                    allTasks = allTasks.filter((t: any) => {
+                        const isAuthor = t.user === user.email;
+                        const isOwner = t.owner && normalize(t.owner).includes(userSurname);
+                        return isAuthor || isOwner;
+                    });
                 }
                 
-                return new Response(JSON.stringify({ tasks: activeTasks }));
+                return new Response(JSON.stringify({ tasks: allTasks }));
             }
             // ---------------------------
 
