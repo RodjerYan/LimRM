@@ -45,7 +45,7 @@ const TopBar: React.FC<TopBarProps> = ({
         </div>
 
         {/* RIGHT BLOCK */}
-        <div className="flex flex-wrap items-center gap-3 lg:ml-auto">
+        <div className="flex flex-wrap items-center justify-end gap-3 lg:ml-auto">
 
           {/* EXTRA CONTROLS (e.g. RM Selector) */}
           {extraControls}
