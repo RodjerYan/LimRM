@@ -16,15 +16,17 @@ import { useAnalytics } from './useAnalytics';
 
 // Helper for strict error filtering
 const isStrictErrorStatus = (row: any): boolean => {
-    // FIX: First check if row actually has valid coordinates. If so, it's NOT an error.
+    // FIX: Check ALL possible coordinate keys including 'lng'
     const lat = row.lat || row.latitude || row.geo_lat;
-    const lon = row.lon || row.longitude || row.geo_lon;
+    const lon = row.lon || row.longitude || row.geo_lon || row.lng;
+    
+    // If valid numeric coordinates exist, it is NOT an error -> return false (hide from list)
     if (lat && lon && !isNaN(Number(lat)) && !isNaN(Number(lon)) && Number(lat) !== 0) {
         return false;
     }
 
     const latStr = findValueInRow(row, ['широта', 'lat', 'latitude', 'geo_lat']);
-    const lonStr = findValueInRow(row, ['долгота', 'lon', 'longitude', 'geo_lon']);
+    const lonStr = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'geo_lon']);
     
     const check = (v: string) => {
         const s = String(v || '').toLowerCase().trim();
@@ -263,6 +265,7 @@ export const useAppLogic = () => {
 
     // --- FILTERED UNIDENTIFIED ROWS ---
     const combinedUnidentifiedRows = useMemo(() => {
+        // FILTER: Keep only rows that fail strict validation (meaning NO valid lat/lon/lng found)
         const parsingFailures = unidentifiedRows.filter(r => isStrictErrorStatus(r.rowData));
         
         // Use visibleData here so users only see their own errors

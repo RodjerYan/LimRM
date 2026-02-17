@@ -124,28 +124,6 @@ const isSpecificErrorMarker = (v: any): boolean => {
     return s.includes('не определен') || s.includes('не определён') || s.includes('некорректный');
 };
 
-const isBadCoordCell = (v: any): boolean => {
-    if (v === null || v === undefined) return true;
-
-    // number 0 -> bad
-    if (typeof v === 'number') return v === 0;
-
-    const s = String(v).trim().toLowerCase();
-    if (!s) return true;
-
-    // text statuses
-    if (s === 'не определен' || s === 'не определён') return true;
-    if (s === 'некорректный адрес' || s === 'не корректный адрес') return true;
-    if (s.includes('не найден')) return true;
-
-    // "0", "0.0", "0,0", "0;0" -> bad
-    const normalized = s.replace(/[\s\u00A0]/g, '').replace(',', '.');
-    // Regex for exactly 0, 0.0, 0.00 etc
-    if (/^0(\.0+)?$/.test(normalized)) return true;
-
-    return false;
-};
-
 // --- UPDATED DATE PARSER (YYYY-MM-DD) ---
 const parseDayKey = (val: any): string | null => {
     if (!val) return null;
