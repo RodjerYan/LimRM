@@ -632,7 +632,25 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
   const isProcessing = status === 'saving' || status === 'deleting' || status === 'syncing';
 
   const detailsToShow = Object.entries(originalRow)
-    .map(([k, v]) => ({ key: String(k).trim(), value: String(v).trim() }))
+    .map(([k, v]) => {
+      const key = String(k).trim();
+      const keyLower = key.toLowerCase();
+      let value = String(v).trim();
+      
+      // Fix: If we have valid coordinates in the UI state, override the "Not Found" message in the source table
+      if (typeof displayLat === 'number' && displayLat !== 0) {
+           if (['lat', 'latitude', 'широта', 'geo_lat'].includes(keyLower)) {
+               value = displayLat.toFixed(6);
+           }
+      }
+      if (typeof displayLon === 'number' && displayLon !== 0) {
+           if (['lon', 'lng', 'longitude', 'долгота', 'geo_lon'].includes(keyLower)) {
+               value = displayLon.toFixed(6);
+           }
+      }
+
+      return { key, value };
+    })
     .filter((x) => x.value && x.value !== 'null' && x.key !== '__rowNum__');
 
   let saveButtonText = 'Сохранить изменения';
