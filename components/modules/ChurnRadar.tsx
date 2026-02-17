@@ -1,14 +1,17 @@
 
 import React from 'react';
 import { ChurnMetric } from '../../types';
-import { AlertIcon, InfoIcon, SearchIcon } from '../icons';
+import { AlertIcon, InfoIcon, SearchIcon, TrashIcon, CalendarIcon } from '../icons';
 
 interface ChurnRadarProps {
     metrics: ChurnMetric[];
     onClientClick: (clientId: string) => void;
+    // Task management
+    onDelete?: (item: ChurnMetric) => void;
+    onSnooze?: (item: ChurnMetric) => void;
 }
 
-const ChurnRadar: React.FC<ChurnRadarProps> = ({ metrics, onClientClick }) => {
+const ChurnRadar: React.FC<ChurnRadarProps> = ({ metrics, onClientClick, onDelete, onSnooze }) => {
     if (metrics.length === 0) {
         return (
             <div className="p-10 text-center bg-white rounded-3xl border border-slate-200">
@@ -46,14 +49,14 @@ const ChurnRadar: React.FC<ChurnRadarProps> = ({ metrics, onClientClick }) => {
                             <th className="px-6 py-3">Риск</th>
                             <th className="px-6 py-3 text-right">Дней без заказа</th>
                             <th className="px-6 py-3 text-right">Падение объема</th>
-                            <th className="px-6 py-3 text-right">Действие</th>
+                            <th className="px-6 py-3 text-right">Действия</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                         {metrics.map((m) => (
                             <tr key={m.clientId} className="hover:bg-slate-50 transition-colors group">
                                 <td className="px-6 py-4">
-                                    <div className="font-bold text-slate-900">{m.clientName}</div>
+                                    <div className="font-bold text-slate-900 cursor-pointer hover:text-indigo-600" onClick={() => onClientClick(m.clientId)}>{m.clientName}</div>
                                     <div className="text-xs text-slate-500 mt-0.5 truncate max-w-[200px]">{m.address}</div>
                                     <div className="text-[10px] text-slate-400 mt-1">РМ: {m.rm}</div>
                                 </td>
@@ -76,12 +79,33 @@ const ChurnRadar: React.FC<ChurnRadarProps> = ({ metrics, onClientClick }) => {
                                     </div>
                                 </td>
                                 <td className="px-6 py-4 text-right">
-                                    <button 
-                                        onClick={() => onClientClick(m.clientId)}
-                                        className="p-2 rounded-lg bg-white border border-slate-200 text-slate-500 hover:text-indigo-600 hover:border-indigo-300 transition-all shadow-sm"
-                                    >
-                                        <SearchIcon small />
-                                    </button>
+                                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button 
+                                            onClick={() => onClientClick(m.clientId)}
+                                            className="p-2 rounded-lg bg-white border border-slate-200 text-slate-500 hover:text-indigo-600 hover:border-indigo-300 transition-all shadow-sm"
+                                            title="Перейти к клиенту"
+                                        >
+                                            <SearchIcon small />
+                                        </button>
+                                        {onSnooze && (
+                                            <button 
+                                                onClick={() => onSnooze(m)}
+                                                className="p-2 rounded-lg bg-white border border-slate-200 text-slate-400 hover:text-indigo-600 hover:border-indigo-300 transition-all shadow-sm"
+                                                title="Отложить напоминание"
+                                            >
+                                                <CalendarIcon small />
+                                            </button>
+                                        )}
+                                        {onDelete && (
+                                            <button 
+                                                onClick={() => onDelete(m)}
+                                                className="p-2 rounded-lg bg-white border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-300 transition-all shadow-sm"
+                                                title="Удалить из списка рисков"
+                                            >
+                                                <TrashIcon small />
+                                            </button>
+                                        )}
+                                    </div>
                                 </td>
                             </tr>
                         ))}

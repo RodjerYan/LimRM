@@ -15,6 +15,8 @@ const FOLDER_ID = '1bNcjQp-BhPtgf5azbI5gkkx__eMthCfX'; // Snapshot Folder
 const DELTA_FOLDER_ID = '19SNRc4HNKNs35sP7GeYeFj2UPTtWru5P'; // Savepoint (Delta) Folder
 const SCOPES = ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets'];
 
+const TASKS_FILENAME = 'tasks_log.json';
+
 async function getDriveClient() {
     const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
     if (!serviceAccountKey) throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY missing');
@@ -78,6 +80,41 @@ async function mapConcurrent<T, R>(items: T[], concurrency: number, fn: (item: T
     return results;
 }
 
+// --- TASK MANAGER HELPERS ---
+async function getTasksLog(drive: any) {
+    try {
+        const q = `name = '${TASKS_FILENAME}' and '${FOLDER_ID}' in parents and trashed = false`;
+        const list = await drive.files.list({ q, fields: 'files(id)', supportsAllDrives: true, includeItemsFromAllDrives: true });
+        
+        if (list.data.files && list.data.files.length > 0) {
+            const fileId = list.data.files[0].id;
+            const res = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'json' });
+            return { fileId, data: res.data || [] };
+        }
+        return { fileId: null, data: [] };
+    } catch (e) {
+        console.error("Failed to read tasks log:", e);
+        return { fileId: null, data: [] };
+    }
+}
+
+async function saveTasksLog(drive: any, data: any[], fileId: string | null) {
+    const content = JSON.stringify(data);
+    if (fileId) {
+        await drive.files.update({ 
+            fileId, 
+            media: { mimeType: 'application/json', body: content }, 
+            supportsAllDrives: true 
+        });
+    } else {
+        await drive.files.create({
+            requestBody: { name: TASKS_FILENAME, parents: [FOLDER_ID], mimeType: 'application/json' },
+            media: { mimeType: 'application/json', body: content },
+            supportsAllDrives: true
+        });
+    }
+}
+
 export default async function handler(req: Request) {
     const url = new URL(req.url);
     let action = url.searchParams.get('action');
@@ -95,13 +132,32 @@ export default async function handler(req: Request) {
     }
 
     try {
-        // We only need Drive client for snapshot/delta operations
-        const needsDrive = ['save-delta', 'clear-deltas', 'save-chunk', 'save-meta', 'cleanup-chunks', 'get-deltas', 'get-snapshot-meta', 'get-snapshot-list', 'get-file-content', 'get-settings', 'save-settings'].includes(action || '');
+        // We only need Drive client for snapshot/delta/tasks operations
+        const needsDrive = ['save-delta', 'clear-deltas', 'save-chunk', 'save-meta', 'cleanup-chunks', 'get-deltas', 'get-snapshot-meta', 'get-snapshot-list', 'get-file-content', 'get-settings', 'save-settings', 'get-tasks', 'save-task', 'restore-task'].includes(action || '');
         const drive = needsDrive ? await getDriveClient() : null;
 
         if (req.method === 'POST') {
             const body = await req.json().catch(() => ({}));
             
+            // --- TASK MANAGEMENT POST ---
+            if (action === 'save-task' && drive) {
+                const { fileId, data } = await getTasksLog(drive);
+                const newTask = body;
+                // Add new task
+                data.push(newTask);
+                await saveTasksLog(drive, data, fileId);
+                return new Response(JSON.stringify({ success: true }));
+            }
+
+            if (action === 'restore-task' && drive) {
+                const { taskId } = body;
+                const { fileId, data } = await getTasksLog(drive);
+                const newData = data.filter((t: any) => t.id !== taskId && t.targetId !== taskId);
+                await saveTasksLog(drive, newData, fileId);
+                return new Response(JSON.stringify({ success: true }));
+            }
+            // ---------------------------
+
             if (action === 'save-delta' && drive) {
                 const deltaItem = body;
                 if (!deltaItem || Object.keys(deltaItem).length === 0) {
@@ -282,6 +338,30 @@ export default async function handler(req: Request) {
         }
 
         if (req.method === 'GET') {
+            // --- TASK MANAGEMENT GET ---
+            if (action === 'get-tasks' && drive) {
+                const { fileId, data } = await getTasksLog(drive);
+                const now = Date.now();
+                let modified = false;
+                
+                // AUTO-CLEANUP: Remove items where restoreDeadline has passed
+                const activeTasks = data.filter((task: any) => {
+                    if (task.type === 'delete' && task.restoreDeadline && now > task.restoreDeadline) {
+                        modified = true;
+                        return false; // Remove expired deleted items permanently
+                    }
+                    return true;
+                });
+                
+                if (modified) {
+                    await saveTasksLog(drive, activeTasks, fileId);
+                    console.log(`[Tasks] Auto-cleaned ${data.length - activeTasks.length} expired items.`);
+                }
+                
+                return new Response(JSON.stringify({ tasks: activeTasks }));
+            }
+            // ---------------------------
+
             if (action === 'get-deltas' && drive) {
                 const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID, 'savepoints');
                 const filesToProcess = savepointsFiles.filter((f: any) => f.size > 0);

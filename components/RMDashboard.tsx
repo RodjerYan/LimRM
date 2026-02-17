@@ -6,12 +6,14 @@ import RMAnalysisModal from './RMAnalysisModal';
 import ClientsListModal from './ClientsListModal';
 import RegionDetailsModal from './RegionDetailsModal';
 import GrowthExplanationModal from './GrowthExplanationModal';
-import NBAPanel from './modules/NBAPanel'; // NEW IMPORT
-import { generateNextBestActions, calculateChurnMetrics } from '../services/analytics/advancedAnalytics'; // NEW IMPORT
+import NBAPanel from './modules/NBAPanel'; 
+import TaskActionModal from './TaskActionModal'; // NEW
+import { generateNextBestActions, calculateChurnMetrics } from '../services/analytics/advancedAnalytics';
 import { useAuth } from './auth/AuthContext';
+import { useTaskManager } from '../hooks/useTaskManager'; // NEW
 
-import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
-import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon, ChartBarIcon, TargetIcon, UsersIcon, CalendarIcon, CheckIcon } from './icons';
+import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient, SuggestedAction, ChurnMetric } from '../types';
+import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon, ChartBarIcon, TargetIcon, UsersIcon, CalendarIcon, CheckIcon, TrashIcon } from './icons';
 import { findValueInRow, findAddressInRow, normalizeRmNameForMatching, normalizeAddress, recoverRegion } from '../utils/dataUtils';
 import { PlanningEngine } from '../services/planning/engine';
 import { streamPackagingInsights } from '../services/aiService';
@@ -40,6 +42,8 @@ ChartJS.register(
   Legend,
   ArcElement
 );
+
+// ... (keep Date Utils and smaller components PackagingCharts, PackagingAnalysisModal, BrandPackagingModal SAME) ...
 
 // --- Date Utils for Annualization ---
 const safeParseDate = (s?: string) => {
@@ -344,6 +348,7 @@ interface PlanConfig {
 export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData, mode = 'modal', metrics, okbStatus, onActiveClientsClick, onEditClient, startDate, endDate, dateRange }) => {
     const { user } = useAuth();
     const isAdmin = user?.role === 'admin';
+    const taskManager = useTaskManager();
     
     const [baseRate, setBaseRate] = useState(15);
     const [isLoadingSettings, setIsLoadingSettings] = useState(true);
@@ -372,6 +377,11 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const [isPlanSettingsOpen, setIsPlanSettingsOpen] = useState(false);
     const [tempPlanStart, setTempPlanStart] = useState('');
     const [tempPlanEnd, setTempPlanEnd] = useState('');
+
+    // --- TASK ACTION STATES ---
+    const [taskActionTarget, setTaskActionTarget] = useState<{id: string, name: string} | null>(null);
+    const [isTaskActionModalOpen, setIsTaskActionModalOpen] = useState(false);
+    const [isTaskHistoryModalOpen, setIsTaskHistoryModalOpen] = useState(false);
 
     // Load base rate from server on mount
     useEffect(() => {
@@ -463,6 +473,8 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     };
 
     const metricsData = useMemo<RMMetrics[]>(() => {
+        // ... (Same aggregation logic as before) ...
+        // Re-paste the large useMemo block for metricsData from original file to ensure integrity
         const globalOkbRegionCounts = okbRegionCounts || {};
         let globalTotalListings = 0; let globalTotalVolume = 0; const allUniqueClientKeys = new Set<string>();
         data.forEach(row => { globalTotalVolume += row.fact; globalTotalListings += row.clients.length; row.clients.forEach(c => allUniqueClientKeys.add(c.key)); });
@@ -584,14 +596,14 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     // --- NBA LOGIC ---
     const nbaActions = useMemo(() => {
         const allClients = data.flatMap(d => d.clients);
-        // Step 1: Calculate churn metrics for all clients
         const churnMetrics = calculateChurnMetrics(allClients);
-        // Step 2: Generate Actions
-        return generateNextBestActions(data, churnMetrics);
-    }, [data]);
+        const rawActions = generateNextBestActions(data, churnMetrics);
+        
+        // FILTER: Remove deleted/snoozed items
+        return rawActions.filter(a => taskManager.isItemVisible(a.clientId));
+    }, [data, taskManager.isItemVisible]);
 
-    const handleActionClick = (action: any) => {
-        // Find the client object to edit
+    const handleActionClick = (action: SuggestedAction) => {
         let targetClient: MapPoint | undefined;
         data.some(row => {
             const found = row.clients.find(c => c.key === action.clientId);
@@ -603,16 +615,16 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         });
 
         if (targetClient && onEditClient) {
-            if (mode === 'modal') {
-                // If in modal mode, close this modal first? 
-                // Or maybe just call onEditClient which opens the editor on top.
-                onEditClient(targetClient);
-            } else {
-                onEditClient(targetClient);
-            }
+            onEditClient(targetClient);
         }
     };
 
+    const handleTaskAction = (target: {id: string, name: string}) => {
+        setTaskActionTarget(target);
+        setIsTaskActionModalOpen(true);
+    };
+
+    // ... (keep ABC and Export Handlers same) ...
     const handleShowAbcClients = (rmName: string, category: 'A' | 'B' | 'C') => {
         const targetClients: MapPoint[] = [];
         data.forEach(row => {
@@ -688,7 +700,20 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         <div className="space-y-6">
             {/* NBA PANEL - TOP PRIORITY */}
             <div className="mb-8">
-                <NBAPanel actions={nbaActions} onActionClick={handleActionClick} />
+                <div className="flex justify-end mb-2">
+                    <button 
+                        onClick={() => setIsTaskHistoryModalOpen(true)}
+                        className="text-xs font-bold text-slate-400 hover:text-indigo-600 flex items-center gap-1 transition-colors"
+                    >
+                        <TrashIcon small /> Отработанные задачи
+                    </button>
+                </div>
+                <NBAPanel 
+                    actions={nbaActions} 
+                    onActionClick={handleActionClick} 
+                    onDelete={(a) => handleTaskAction({id: a.clientId, name: a.clientName})}
+                    onSnooze={(a) => handleTaskAction({id: a.clientId, name: a.clientName})}
+                />
             </div>
 
             <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-md flex flex-col md:flex-row justify-between items-center gap-6">
@@ -1030,6 +1055,34 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                     baseRate={baseRate} 
                 />
             )}
+            
+            {/* NEW TASK MANAGEMENT MODALS */}
+            {taskActionTarget && (
+                <TaskActionModal
+                    isOpen={isTaskActionModalOpen}
+                    onClose={() => setIsTaskActionModalOpen(false)}
+                    mode="action"
+                    targetItem={taskActionTarget}
+                    onConfirmAction={(type, reason, date) => {
+                         let snoozeTs = undefined;
+                         if (date) {
+                             snoozeTs = new Date(date).getTime();
+                         }
+                         taskManager.performAction(taskActionTarget.id, taskActionTarget.name, type, reason, snoozeTs);
+                    }}
+                    onRestore={() => {}} // Not used in action mode
+                    history={[]} // Not used in action mode
+                />
+            )}
+
+            <TaskActionModal
+                isOpen={isTaskHistoryModalOpen}
+                onClose={() => setIsTaskHistoryModalOpen(false)}
+                mode="history"
+                onConfirmAction={() => {}}
+                onRestore={(id) => taskManager.restoreTask(id)}
+                history={taskManager.processedTasks}
+            />
 
             <BrandPackagingModal 
                 isOpen={isBrandModalOpen} 

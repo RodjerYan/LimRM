@@ -439,3 +439,16 @@ export interface CoverageMetric {
     gap: number;
     priorityScore: number;
 }
+
+// --- TASK MANAGEMENT (Snooze/Delete) ---
+export interface ProcessedTask {
+    id: string; // Unique ID (e.g. clientId)
+    targetId: string; // To match against NBA/Churn clientIds
+    targetName: string; // For display in history
+    type: 'delete' | 'snooze';
+    reason: string;
+    timestamp: number; // When action was taken
+    restoreDeadline?: number; // For deleted items (30 days from timestamp)
+    snoozeUntil?: number; // For snoozed items
+    user?: string; // Who performed action
+}
