@@ -106,23 +106,28 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
         {/* Metrics Grid */}
         <div className="grid grid-cols-3 gap-4 mb-6">
              <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
-                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Всего зап...</div>
+                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-3">
+                      Всего<br/>записей
+                  </div>
                   <div className="text-xl font-black text-slate-900 tracking-tight">
                       {status?.rowCount ? status.rowCount.toLocaleString('ru-RU') : '—'}
                   </div>
              </div>
              <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
-                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">С коорди...</div>
+                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-3">
+                      С коорди-<br/>натами
+                  </div>
                   <div className="text-xl font-black text-slate-900 tracking-tight">
                       {status?.coordsCount ? status.coordsCount.toLocaleString('ru-RU') : '—'}
                   </div>
              </div>
              <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
-                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Версия от</div>
-                  <div className="text-lg font-black text-slate-900 tracking-tight">
-                      {status?.timestamp ? new Date(status.timestamp).toLocaleTimeString('ru-RU') : '—'}
+                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-3">
+                      Время<br/>обновления
                   </div>
-                  <div className="text-[9px] text-slate-400 mt-[-2px]">Время обновл...</div>
+                  <div className="text-lg font-black text-slate-900 tracking-tight leading-tight">
+                      {status?.timestamp ? new Date(status.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'}) : '—'}
+                  </div>
              </div>
         </div>
 
