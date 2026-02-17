@@ -14,19 +14,31 @@ import { useDataSync } from './useDataSync';
 import { useGeocoding } from './useGeocoding';
 import { useAnalytics } from './useAnalytics';
 
-// Helper for strict error filtering
+const parseNum = (v: any) => {
+    if (v == null) return NaN;
+    const s = String(v).replace(/[\s\u00A0]/g, '').replace(',', '.');
+    return parseFloat(s);
+};
+
+// Strict check: if row has ANY valid coordinates, it is NOT unidentified
+const hasValidCoordsRow = (row: any) => {
+    const latRaw = findValueInRow(row, ['широта', 'lat', 'ldt', 'latitude', 'geo_lat', 'y']);
+    const lonRaw = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'geo_lon', 'x']);
+    
+    const lat = parseNum(latRaw);
+    const lon = parseNum(lonRaw);
+    
+    // If we have valid numbers and they aren't 0, the row is geocoded.
+    return !isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0;
+};
+
+// Helper for strict error filtering based on text markers
 const isStrictErrorStatus = (row: any): boolean => {
-    // FIX: Check ALL possible coordinate keys including 'lng' and use fuzzy finding for values
+    // If coords exist, it's valid regardless of status text
+    if (hasValidCoordsRow(row)) return false;
+
     const latRaw = findValueInRow(row, ['широта', 'lat', 'latitude', 'geo_lat', 'y', 'ldt']);
     const lonRaw = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'geo_lon', 'x']);
-
-    const lat = parseFloat(String(latRaw).replace(',', '.'));
-    const lon = parseFloat(String(lonRaw).replace(',', '.'));
-
-    // If valid numeric coordinates exist, it is NOT an error -> return false (hide from list)
-    if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
-        return false;
-    }
 
     const check = (v: string) => {
         const s = String(v || '').toLowerCase().trim();
@@ -177,7 +189,8 @@ export const useAppLogic = () => {
         setAllData(newData); 
         setUnidentifiedRows(newUnidentified);
         
-        if (!newPoint.isGeocoding && newPoint.lat && newPoint.lon) {
+        // Use strict validation for coordinates before saving to cloud
+        if (!newPoint.isGeocoding && newPoint.lat != null && newPoint.lon != null && newPoint.lat !== 0 && newPoint.lon !== 0) {
             saveDeltaToCloud({ type: 'update', key: oldKey, rm: newPoint.rm, payload: newPoint, timestamp: Date.now() });
         }
     }, [allData, unidentifiedRows, editingClient, setAllData, setUnidentifiedRows, saveDeltaToCloud]);
@@ -266,11 +279,14 @@ export const useAppLogic = () => {
     // --- FILTERED UNIDENTIFIED ROWS ---
     const combinedUnidentifiedRows = useMemo(() => {
         // FILTER: Keep only rows that fail strict validation (meaning NO valid lat/lon/lng found)
-        const parsingFailures = unidentifiedRows.filter(r => isStrictErrorStatus(r.rowData));
+        const parsingFailures = unidentifiedRows
+            .filter(r => !hasValidCoordsRow(r.rowData)) // Explicitly remove rows that HAVE valid coords
+            .filter(r => isStrictErrorStatus(r.rowData));
         
         // Use visibleData here so users only see their own errors
         const geocodingFailures = visibleData.flatMap(group => group.clients) 
             .filter(c => (c.lat == null || c.lon == null) && !c.isGeocoding)
+            .filter(c => !hasValidCoordsRow(c.originalRow)) // Explicitly remove rows that HAVE valid coords
             .filter(c => isStrictErrorStatus(c.originalRow))
             .map(c => ({
                 rm: c.rm,

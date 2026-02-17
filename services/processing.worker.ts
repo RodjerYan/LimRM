@@ -278,10 +278,22 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
                 });
             }
         });
+        
+        // Strict cleanup of restored unidentified rows: Remove any that actually have coords now
+        const hasValidCoordsRowLocal = (row: any) => {
+            const latRaw = findValueInRowLocal(row, ['широта', 'lat', 'ldt', 'latitude', 'geo_lat', 'y', 'lat_clean']);
+            const lonRaw = findValueInRowLocal(row, ['долгота', 'lon', 'lng', 'longitude', 'geo_lon', 'x', 'lon_clean']);
+            const lat = parseCleanFloat(latRaw);
+            const lon = parseCleanFloat(lonRaw);
+            return lat !== 0 && lon !== 0;
+        };
+
         if (restoredUnidentified) {
-            state_unidentifiedRows = [...restoredUnidentified];
-            // Re-populate dedup set from restored
-            restoredUnidentified.forEach(row => {
+            // Apply cleaning filter immediately
+            state_unidentifiedRows = restoredUnidentified.filter(u => !hasValidCoordsRowLocal(u.rowData));
+
+            // Re-populate dedup set only from valid errors
+            state_unidentifiedRows.forEach(row => {
                 const normAddr = normalizeAddress(findAddressInRow(row.rowData) || '');
                 const clientName = findValueInRowLocal(row.rowData, ['name', 'client', 'наименование']) || '';
                 const dedupKey = `${normAddr}#${clientName.toLowerCase().replace(/[^a-zа-я0-9]/g, '')}`;
