@@ -6,6 +6,9 @@ import RMAnalysisModal from './RMAnalysisModal';
 import ClientsListModal from './ClientsListModal';
 import RegionDetailsModal from './RegionDetailsModal';
 import GrowthExplanationModal from './GrowthExplanationModal';
+import NBAPanel from './modules/NBAPanel'; // NEW IMPORT
+import { generateNextBestActions, calculateChurnMetrics } from '../services/analytics/advancedAnalytics'; // NEW IMPORT
+
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
 import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon, ChartBarIcon, TargetIcon, UsersIcon, CalendarIcon, CheckIcon } from './icons';
 import { findValueInRow, findAddressInRow, normalizeRmNameForMatching, normalizeAddress, recoverRegion } from '../utils/dataUtils';
@@ -26,6 +29,7 @@ import {
 } from 'chart.js';
 import { Bar, Doughnut } from 'react-chartjs-2';
 
+// ... (Existing ChartJS registrations and date utils remain unchanged) ...
 // Register ChartJS components
 ChartJS.register(
   CategoryScale,
@@ -87,6 +91,7 @@ const formatDateLabel = (
   return { factLabel, planYear };
 };
 
+// ... (Existing PackagingCharts, PackagingAnalysisModal, BrandPackagingModal components remain unchanged) ...
 const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number; labels: { fact: string; plan: string } }> = ({ fact, plan, growthPct, labels }) => {
     const gap = Math.max(0, plan - fact);
     const percentage = plan > 0 ? (fact / plan) * 100 : 0;
@@ -537,6 +542,38 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         return results.sort((a, b) => b.totalFact - a.totalFact);
     }, [data, okbRegionCounts, okbData, baseRate, periodAnnualizeK, planScalingFactor]);
 
+    // --- NBA LOGIC ---
+    const nbaActions = useMemo(() => {
+        const allClients = data.flatMap(d => d.clients);
+        // Step 1: Calculate churn metrics for all clients
+        const churnMetrics = calculateChurnMetrics(allClients);
+        // Step 2: Generate Actions
+        return generateNextBestActions(data, churnMetrics);
+    }, [data]);
+
+    const handleActionClick = (action: any) => {
+        // Find the client object to edit
+        let targetClient: MapPoint | undefined;
+        data.some(row => {
+            const found = row.clients.find(c => c.key === action.clientId);
+            if (found) {
+                targetClient = found;
+                return true;
+            }
+            return false;
+        });
+
+        if (targetClient && onEditClient) {
+            if (mode === 'modal') {
+                // If in modal mode, close this modal first? 
+                // Or maybe just call onEditClient which opens the editor on top.
+                onEditClient(targetClient);
+            } else {
+                onEditClient(targetClient);
+            }
+        }
+    };
+
     const handleShowAbcClients = (rmName: string, category: 'A' | 'B' | 'C') => {
         const targetClients: MapPoint[] = [];
         data.forEach(row => {
@@ -610,6 +647,11 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
 
     const renderContent = () => (
         <div className="space-y-6">
+            {/* NBA PANEL - TOP PRIORITY */}
+            <div className="mb-8">
+                <NBAPanel actions={nbaActions} onActionClick={handleActionClick} />
+            </div>
+
             <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-md flex flex-col md:flex-row justify-between items-center gap-6">
                 <div><h3 className="text-xl font-bold text-gray-900 mb-1">Управление Целями</h3><p className="text-sm text-gray-500">Настройка базового сценария роста для всей компании. Влияет на расчет индивидуальных планов.</p></div>
                 
