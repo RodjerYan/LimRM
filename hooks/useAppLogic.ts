@@ -16,24 +16,24 @@ import { useAnalytics } from './useAnalytics';
 
 // Helper for strict error filtering
 const isStrictErrorStatus = (row: any): boolean => {
-    // FIX: Check ALL possible coordinate keys including 'lng'
-    const lat = row.lat || row.latitude || row.geo_lat;
-    const lon = row.lon || row.longitude || row.geo_lon || row.lng;
-    
+    // FIX: Check ALL possible coordinate keys including 'lng' and use fuzzy finding for values
+    const latRaw = findValueInRow(row, ['широта', 'lat', 'latitude', 'geo_lat', 'y', 'ldt']);
+    const lonRaw = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'geo_lon', 'x']);
+
+    const lat = parseFloat(String(latRaw).replace(',', '.'));
+    const lon = parseFloat(String(lonRaw).replace(',', '.'));
+
     // If valid numeric coordinates exist, it is NOT an error -> return false (hide from list)
-    if (lat && lon && !isNaN(Number(lat)) && !isNaN(Number(lon)) && Number(lat) !== 0) {
+    if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
         return false;
     }
 
-    const latStr = findValueInRow(row, ['широта', 'lat', 'latitude', 'geo_lat']);
-    const lonStr = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'geo_lon']);
-    
     const check = (v: string) => {
         const s = String(v || '').toLowerCase().trim();
         return s.includes('не определен') || s.includes('не определён') || s.includes('некорректный');
     };
     
-    return check(latStr) || check(lonStr);
+    return check(latRaw) || check(lonRaw);
 };
 
 export const useAppLogic = () => {
@@ -270,7 +270,7 @@ export const useAppLogic = () => {
         
         // Use visibleData here so users only see their own errors
         const geocodingFailures = visibleData.flatMap(group => group.clients) 
-            .filter(c => (!c.lat || !c.lon) && !c.isGeocoding)
+            .filter(c => (c.lat == null || c.lon == null) && !c.isGeocoding)
             .filter(c => isStrictErrorStatus(c.originalRow))
             .map(c => ({
                 rm: c.rm,

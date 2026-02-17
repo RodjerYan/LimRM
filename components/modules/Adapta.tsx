@@ -10,6 +10,7 @@ import TopBar from '../TopBar';
 import DataTable from '../DataTable';
 import { ChartCard, ChannelBarChart } from '../charts/PremiumCharts';
 import { toDayKey } from '../../utils/dataUtils';
+import { useAuth } from '../auth/AuthContext';
 
 import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState, MapPoint } from '../../types';
 import {
@@ -77,6 +78,7 @@ interface OutlierItem {
 }
 
 const Adapta: React.FC<AdaptaProps> = (props) => {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'ingest' | 'hygiene'>('ingest');
   const [selectedOutlier, setSelectedOutlier] = useState<OutlierItem | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
@@ -109,6 +111,19 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
           )
       );
   }, [props.uploadedData]);
+
+  // Dynamic Greeting based on User's local time
+  const dynamicSubtitle = useMemo(() => {
+    const hour = new Date().getHours();
+    let greeting = 'Доброй ночи';
+    
+    if (hour >= 6 && hour < 11) greeting = 'Доброе утро';
+    else if (hour >= 11 && hour < 17) greeting = 'Добрый день';
+    else if (hour >= 17 && hour < 22) greeting = 'Добрый вечер';
+    
+    const userName = user?.firstName || 'Пользователь';
+    return `${greeting}, ${userName}. Для расчёта продаж выберите период в календаре и нажмите кнопку "Загрузить"`;
+  }, [user]);
 
   useEffect(() => {
     if (props.openChannelRequest) {
@@ -331,7 +346,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         <div data-tour="topbar">
             <TopBar
                 title="ADAPTA"
-                subtitle="Для расчёта продаж выберите период в календаре и нажмите кнопку &quot;Загрузить&quot;"
+                subtitle={dynamicSubtitle}
                 startDate={props.startDate}
                 endDate={props.endDate}
                 onStartDateChange={props.onStartDateChange}

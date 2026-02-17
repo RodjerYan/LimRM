@@ -639,7 +639,8 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         if (!rm) rm = 'Unknown_RM';
 
         // --- COORDINATE EXTRACTION (STRICT: ONLY lat/lon columns) ---
-        const latRaw = findValueInRowLocal(row, ['широта', 'lat', 'latitude', 'широта (lat)', 'geo_lat', 'y', 'lat_clean']);
+        // Added 'ldt' based on user report of column naming
+        const latRaw = findValueInRowLocal(row, ['широта', 'lat', 'ldt', 'latitude', 'широта (lat)', 'geo_lat', 'y', 'lat_clean']);
         const lonRaw = findValueInRowLocal(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x', 'lon_clean']);
         
         const rowLat = parseCleanFloat(latRaw);
