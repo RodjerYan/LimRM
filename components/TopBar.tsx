@@ -33,7 +33,7 @@ const TopBar: React.FC<TopBarProps> = ({
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
 
         {/* LEFT BLOCK */}
-        <div className="flex flex-col min-w-0">
+        <div className="flex flex-col">
           <h1 className="text-xl font-semibold tracking-tight text-slate-900 truncate">
             {title}
           </h1>
@@ -44,18 +44,14 @@ const TopBar: React.FC<TopBarProps> = ({
           )}
         </div>
 
-        {/* RIGHT BLOCK - FIXED: Added flex-nowrap and removed wrapping behavior */}
-        <div className="flex flex-nowrap items-center justify-end gap-3 lg:ml-auto overflow-x-auto no-scrollbar py-1">
+        {/* RIGHT BLOCK */}
+        <div className="flex flex-wrap items-center gap-3 lg:ml-auto">
 
           {/* EXTRA CONTROLS (e.g. RM Selector) */}
-          {extraControls && (
-            <div className="flex-shrink-0">
-              {extraControls}
-            </div>
-          )}
+          {extraControls}
 
           {/* PERIOD */}
-          <div className="flex-shrink-0 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 h-9 transition-colors hover:bg-slate-100 hover:border-slate-300">
+          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 h-9 transition-colors hover:bg-slate-100 hover:border-slate-300">
             <CalendarIcon />
             <input
               type="date"
@@ -73,20 +69,20 @@ const TopBar: React.FC<TopBarProps> = ({
           </div>
 
           {/* ONLINE STATUS */}
-          <div className={`flex-shrink-0 flex items-center gap-2 px-3 h-9 text-xs font-medium rounded-2xl border ${isLoading ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+          <div className={`flex items-center gap-2 px-3 h-9 text-xs font-medium rounded-2xl border ${isLoading ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
             {isLoading ? (
                <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
             ) : (
                <CheckIcon />
             )}
-            <span className="whitespace-nowrap">{isLoading ? 'Syncing...' : 'Online'}</span>
+            {isLoading ? 'Syncing...' : 'Online'}
           </div>
 
           {/* SAVE BUTTON */}
           {onSave && (
             <button
               onClick={onSave}
-              className="flex-shrink-0 h-9 px-4 rounded-2xl text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition shadow-sm whitespace-nowrap"
+              className="h-9 px-4 rounded-2xl text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition shadow-sm"
             >
               Сохранить
             </button>
@@ -96,7 +92,7 @@ const TopBar: React.FC<TopBarProps> = ({
           {onCloudSync && (
             <button
               onClick={onCloudSync}
-              className="flex-shrink-0 h-9 px-4 rounded-2xl text-xs font-medium bg-gradient-to-r from-indigo-600 to-blue-600 text-white hover:opacity-90 transition shadow-sm flex items-center gap-2 whitespace-nowrap"
+              className="h-9 px-4 rounded-2xl text-xs font-medium bg-gradient-to-r from-indigo-600 to-blue-600 text-white hover:opacity-90 transition shadow-sm flex items-center gap-2"
             >
               <CloudDownloadIcon />
               Загрузить

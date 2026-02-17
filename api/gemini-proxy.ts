@@ -1,35 +1,34 @@
-
 import { GoogleGenAI } from "@google/genai";
 
 /**
- * Get all configured API keys from environment variables.
- * Checks API_KEY and API_KEY_1 ... API_KEY_20.
+ * Helper to select a random API key from available environment variables.
+ * Supports API_KEY and API_KEY_1 through API_KEY_20.
  */
-function getAllKeys(): string[] {
+function getRandomKey(): string {
     const keys: string[] = [];
 
     // Add main key if exists
     if (process.env.API_KEY) keys.push(process.env.API_KEY);
 
     // Add rotated keys API_KEY_1 to API_KEY_20
-    for (let i = 1; i <= 20; i++) {
-        const k = process.env[`API_KEY_${i}`];
+    const rotatedKeys = [
+        process.env.API_KEY_1, process.env.API_KEY_2, process.env.API_KEY_3, process.env.API_KEY_4, 
+        process.env.API_KEY_5, process.env.API_KEY_6, process.env.API_KEY_7, process.env.API_KEY_8, 
+        process.env.API_KEY_9, process.env.API_KEY_10, process.env.API_KEY_11, process.env.API_KEY_12,
+        process.env.API_KEY_13, process.env.API_KEY_14, process.env.API_KEY_15, process.env.API_KEY_16,
+        process.env.API_KEY_17, process.env.API_KEY_18, process.env.API_KEY_19, process.env.API_KEY_20
+    ];
+
+    rotatedKeys.forEach(k => {
         if (k && k.length > 0) keys.push(k);
+    });
+
+    if (keys.length === 0) {
+        throw new Error("No API keys configured. Please set API_KEY or API_KEY_1...N in environment variables.");
     }
 
-    return keys;
-}
-
-/**
- * Shuffle array in-place using Fisher-Yates algorithm.
- * This ensures load balancing across valid keys.
- */
-function shuffle<T>(array: T[]): T[] {
-    for (let i = array.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [array[i], array[j]] = [array[j], array[i]];
-    }
-    return array;
+    // Pick a random key
+    return keys[Math.floor(Math.random() * keys.length)];
 }
 
 export default async function handler(req: Request) {
@@ -50,73 +49,32 @@ export default async function handler(req: Request) {
       });
     }
 
-    // Get all available keys and shuffle them for load balancing + retry pool
-    const allKeys = getAllKeys();
-    
-    if (allKeys.length === 0) {
-        return new Response(JSON.stringify({ error: "No API keys configured. Please set API_KEY in environment variables." }), { status: 500 });
-    }
-    
-    // Shuffle keys so we don't always hammer the same first key in the list
-    const keyPool = shuffle([...allKeys]);
-    
-    let streamIterator: any = null;
-    let lastError: any = null;
+    // Use rotation logic to get a key
+    const apiKey = getRandomKey();
+    const ai = new GoogleGenAI({ apiKey });
 
-    console.log(`[Gemini Proxy] Starting request. Available keys: ${keyPool.length}`);
+    // Use 'gemini-3-flash-preview' for text tasks.
+    const model = 'gemini-3-flash-preview';
 
-    // Retry loop: Try connecting with each key until one works
-    for (let i = 0; i < keyPool.length; i++) {
-        const apiKey = keyPool[i];
-        try {
-            const ai = new GoogleGenAI({ apiKey });
-            const model = 'gemini-3-flash-preview';
-
-            const generateParams: any = {
-                model,
-                contents: prompt,
-                config: {
-                    temperature: 0.7,
-                }
-            };
-
-            if (tools) {
-                generateParams.config.tools = tools;
-            }
-
-            // Attempt to connect.
-            streamIterator = await ai.models.generateContentStream(generateParams);
-            
-            // If we reach here, connection is successful.
-            // console.log(`[Gemini Proxy] Success with key index ${i}`);
-            break; 
-        } catch (err: any) {
-            lastError = err;
-            const status = err.status || (err.response ? err.response.status : 0);
-            const msg = err.message || String(err);
-            
-            console.warn(`[Gemini Proxy] Key attempt ${i+1}/${keyPool.length} failed (Status: ${status}). Msg: ${msg}`);
-            
-            // If it's not a quota error (429) or server error (500/503), it might be a bad request, so maybe don't retry?
-            // But usually 429 is the main reason to rotate.
+    const generateParams: any = {
+        model,
+        contents: prompt,
+        config: {
+            temperature: 0.7,
         }
+    };
+
+    // Attach tools if provided
+    if (tools) {
+        generateParams.config.tools = tools;
     }
 
-    if (!streamIterator) {
-        // All keys failed
-        const status = (lastError as any)?.status || 500;
-        console.error('[Gemini Proxy] All keys exhausted.');
-        return new Response(JSON.stringify({ error: 'Failed to connect to Gemini API after trying all available keys.', details: lastError?.message }), {
-          status: status,
-          headers: { 'Content-Type': 'application/json' },
-        });
-    }
+    const responseStream = await ai.models.generateContentStream(generateParams);
     
-    // Create a ReadableStream from the valid iterator
     const stream = new ReadableStream({
       async start(controller) {
         try {
-            for await (const chunk of streamIterator) {
+            for await (const chunk of responseStream) {
               const chunkText = chunk.text;
               if (chunkText) {
                 controller.enqueue(new TextEncoder().encode(chunkText));
@@ -124,7 +82,7 @@ export default async function handler(req: Request) {
             }
             controller.close();
         } catch (streamError) {
-            console.error('[Gemini Proxy] Stream processing error:', streamError);
+            console.error('Stream processing error:', streamError);
             controller.error(streamError);
         }
       },
@@ -135,15 +93,18 @@ export default async function handler(req: Request) {
     });
 
   } catch (error) {
-    console.error('[Gemini Proxy] Critical error:', error);
+    console.error('Gemini proxy error:', error);
     let errorMessage = 'An internal server error occurred.';
     let statusCode = 500;
     
     if (error instanceof Error) {
         errorMessage = error.message;
+        if ((error as any).status) {
+             statusCode = (error as any).status;
+        }
     }
     
-    return new Response(JSON.stringify({ error: 'Internal Server Error', details: errorMessage }), {
+    return new Response(JSON.stringify({ error: 'Failed to get response from Gemini API', details: errorMessage }), {
       status: statusCode,
       headers: { 'Content-Type': 'application/json' },
     });
