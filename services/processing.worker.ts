@@ -278,8 +278,11 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
                 });
             }
         });
-        
-        // Strict cleanup of restored unidentified rows: Remove any that actually have coords now
+    }
+
+    // FIX #2: Always process restoredUnidentified, regardless of restoredData presence
+    // This ensures we clean up old errors even if data arrays were weirdly empty
+    if (restoredUnidentified) {
         const hasValidCoordsRowLocal = (row: any) => {
             const latRaw = findValueInRowLocal(row, ['широта', 'lat', 'ldt', 'latitude', 'geo_lat', 'y', 'lat_clean']);
             const lonRaw = findValueInRowLocal(row, ['долгота', 'lon', 'lng', 'longitude', 'geo_lon', 'x', 'lon_clean']);
@@ -288,18 +291,16 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
             return lat !== 0 && lon !== 0;
         };
 
-        if (restoredUnidentified) {
-            // Apply cleaning filter immediately
-            state_unidentifiedRows = restoredUnidentified.filter(u => !hasValidCoordsRowLocal(u.rowData));
+        // Strict cleanup: Filter out rows that actually have numeric coordinates now
+        state_unidentifiedRows = restoredUnidentified.filter(u => !hasValidCoordsRowLocal(u.rowData));
 
-            // Re-populate dedup set only from valid errors
-            state_unidentifiedRows.forEach(row => {
-                const normAddr = normalizeAddress(findAddressInRow(row.rowData) || '');
-                const clientName = findValueInRowLocal(row.rowData, ['name', 'client', 'наименование']) || '';
-                const dedupKey = `${normAddr}#${clientName.toLowerCase().replace(/[^a-zа-я0-9]/g, '')}`;
-                state_unidentifiedKeySet.add(dedupKey);
-            });
-        }
+        // Re-populate dedup set from valid errors only
+        state_unidentifiedRows.forEach(row => {
+            const normAddr = normalizeAddress(findAddressInRow(row.rowData) || '');
+            const clientName = findValueInRowLocal(row.rowData, ['name', 'client', 'наименование']) || '';
+            const dedupKey = `${normAddr}#${clientName.toLowerCase().replace(/[^a-zа-я0-9]/g, '')}`;
+            state_unidentifiedKeySet.add(dedupKey);
+        });
     }
 
     postMessage({ 
@@ -650,8 +651,7 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
         if (!rm) rm = 'Unknown_RM';
 
-        // --- COORDINATE EXTRACTION (STRICT: ONLY lat/lon columns) ---
-        // Added 'ldt' based on user report of column naming
+        // --- COORDINATE EXTRACTION ---
         const latRaw = findValueInRowLocal(row, ['широта', 'lat', 'ldt', 'latitude', 'широта (lat)', 'geo_lat', 'y', 'lat_clean']);
         const lonRaw = findValueInRowLocal(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x', 'lon_clean']);
         
@@ -667,13 +667,24 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         
         const okb = state_okbCoordIndex.get(normAddr);
 
-        // "Неопознанные" = проблема ИМЕННО В ИСХОДНЫХ КОЛОНКАХ lat/lon
-        // (даже если координаты потом восстановились из cache/OKB — строка всё равно проблемная)
-        // STRICT FILTER: Only add to list if explicit text marker found
+        // FIX #1 & #2: Strict Coordinate Logic
+        // Priority: Explicit Row Coords > Cache > OKB Lookup
+        // Use nullish coalescing (??) to correctly handle 0/null vs undefined
+        const effectiveLatRaw = hasRowCoords ? rowLat : (cacheEntry?.lat ?? okb?.lat);
+        const effectiveLonRaw = hasRowCoords ? rowLon : (cacheEntry?.lon ?? okb?.lon);
+
+        // Ensure we strictly have numbers
+        const nLat = typeof effectiveLatRaw === 'number' ? effectiveLatRaw : parseCleanFloat(effectiveLatRaw);
+        const nLon = typeof effectiveLonRaw === 'number' ? effectiveLonRaw : parseCleanFloat(effectiveLonRaw);
+
+        // Valid if numbers are finite and non-zero
+        const hasAnyCoords = !isNaN(nLat) && !isNaN(nLon) && nLat !== 0 && nLon !== 0;
+
+        // "Unidentified" means we tried everything (Row, Cache, OKB) and still have no coords,
+        // AND the original row had an error text marker.
         const isUnidentifiedByText = isSpecificErrorMarker(latRaw) || isSpecificErrorMarker(lonRaw);
 
-        // FIXED LOGIC: Only mark as unidentified if we absolutely DO NOT have valid numeric coordinates
-        if (!hasRowCoords && isUnidentifiedByText) {
+        if (!hasAnyCoords && isUnidentifiedByText) {
             const dedupKey = `${normAddr}#${(clientName || '').toLowerCase().replace(/[^a-zа-я0-9]/g, '')}`;
             if (!state_unidentifiedKeySet.has(dedupKey)) {
                 state_unidentifiedKeySet.add(dedupKey);
@@ -685,7 +696,6 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
                 });
             }
         }
-        // ВАЖНО: НЕ continue — строка дальше должна обрабатываться как обычно, если координаты найдены из других источников
 
         let channel = findValueInRowLocal(row, ['канал продаж', 'тип тт', 'сегмент']);
         if (!channel || channel.length < 2) channel = detectChannelByName(clientName);
@@ -739,14 +749,10 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             }
 
             if (!state_uniquePlottableClients.has(uniqueClientKey)) {
-                // Priority: Explicit Row Coords > Cache > OKB Lookup
-                const effectiveLat = (hasRowCoords) ? rowLat : (cacheEntry?.lat || okb?.lat);
-                const effectiveLon = (hasRowCoords) ? rowLon : (cacheEntry?.lon || okb?.lon);
-
                 state_uniquePlottableClients.set(uniqueClientKey, {
                     key: uniqueClientKey,
-                    lat: effectiveLat,
-                    lon: effectiveLon,
+                    lat: hasAnyCoords ? nLat : undefined,
+                    lon: hasAnyCoords ? nLon : undefined,
                     status: 'match',
                     name: clientName, 
                     address: rawAddr, 
