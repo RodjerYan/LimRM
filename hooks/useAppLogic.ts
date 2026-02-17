@@ -16,15 +16,22 @@ import { useAnalytics } from './useAnalytics';
 
 // Helper for strict error filtering
 const isStrictErrorStatus = (row: any): boolean => {
-    const lat = findValueInRow(row, ['широта', 'lat', 'latitude', 'geo_lat']);
-    const lon = findValueInRow(row, ['долгота', 'lon', 'longitude', 'geo_lon']);
+    // FIX: First check if row actually has valid coordinates. If so, it's NOT an error.
+    const lat = row.lat || row.latitude || row.geo_lat;
+    const lon = row.lon || row.longitude || row.geo_lon;
+    if (lat && lon && !isNaN(Number(lat)) && !isNaN(Number(lon)) && Number(lat) !== 0) {
+        return false;
+    }
+
+    const latStr = findValueInRow(row, ['широта', 'lat', 'latitude', 'geo_lat']);
+    const lonStr = findValueInRow(row, ['долгота', 'lon', 'longitude', 'geo_lon']);
     
     const check = (v: string) => {
         const s = String(v || '').toLowerCase().trim();
         return s.includes('не определен') || s.includes('не определён') || s.includes('некорректный');
     };
     
-    return check(lat) || check(lon);
+    return check(latStr) || check(lonStr);
 };
 
 export const useAppLogic = () => {

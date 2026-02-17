@@ -681,8 +681,8 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         // STRICT FILTER: Only add to list if explicit text marker found
         const isUnidentifiedByText = isSpecificErrorMarker(latRaw) || isSpecificErrorMarker(lonRaw);
 
-        // Дедуп по адресу+имя (чтобы не раздувалось)
-        if (isUnidentifiedByText) {
+        // FIXED LOGIC: Only mark as unidentified if we absolutely DO NOT have valid numeric coordinates
+        if (!hasRowCoords && isUnidentifiedByText) {
             const dedupKey = `${normAddr}#${(clientName || '').toLowerCase().replace(/[^a-zа-я0-9]/g, '')}`;
             if (!state_unidentifiedKeySet.has(dedupKey)) {
                 state_unidentifiedKeySet.add(dedupKey);
@@ -694,7 +694,7 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
                 });
             }
         }
-        // ВАЖНО: НЕ continue — строка дальше должна обрабатываться как обычно
+        // ВАЖНО: НЕ continue — строка дальше должна обрабатываться как обычно, если координаты найдены из других источников
 
         let channel = findValueInRowLocal(row, ['канал продаж', 'тип тт', 'сегмент']);
         if (!channel || channel.length < 2) channel = detectChannelByName(clientName);
