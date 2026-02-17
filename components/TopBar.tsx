@@ -95,7 +95,7 @@ const TopBar: React.FC<TopBarProps> = ({
               className="h-9 px-4 rounded-2xl text-xs font-medium bg-gradient-to-r from-indigo-600 to-blue-600 text-white hover:opacity-90 transition shadow-sm flex items-center gap-2"
             >
               <CloudDownloadIcon />
-              Cloud Sync
+              Загрузить
             </button>
           )}
         </div>
