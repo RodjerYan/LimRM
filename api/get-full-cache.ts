@@ -96,7 +96,7 @@ export default async function handler(req: Request) {
 
     try {
         // We only need Drive client for snapshot/delta operations
-        const needsDrive = ['save-delta', 'clear-deltas', 'save-chunk', 'save-meta', 'cleanup-chunks', 'get-deltas', 'get-snapshot-meta', 'get-snapshot-list', 'get-file-content'].includes(action || '');
+        const needsDrive = ['save-delta', 'clear-deltas', 'save-chunk', 'save-meta', 'cleanup-chunks', 'get-deltas', 'get-snapshot-meta', 'get-snapshot-list', 'get-file-content', 'get-settings', 'save-settings'].includes(action || '');
         const drive = needsDrive ? await getDriveClient() : null;
 
         if (req.method === 'POST') {
@@ -226,6 +226,31 @@ export default async function handler(req: Request) {
                     return new Response(JSON.stringify({ status: 'meta_created', fileId: createRes.data.id }));
                 }
             }
+
+            if (action === 'save-settings' && drive) {
+                const content = JSON.stringify(body); // Expecting { baseRate: number }
+                
+                // Check if file exists
+                const q = `name = 'system_settings.json' and '${FOLDER_ID}' in parents and trashed = false`;
+                const list = await drive.files.list({ q, fields: 'files(id)', supportsAllDrives: true, includeItemsFromAllDrives: true });
+                
+                if (list.data.files && list.data.files.length > 0) {
+                    const fileId = list.data.files[0].id;
+                    await drive.files.update({ 
+                        fileId: fileId!, 
+                        media: { mimeType: 'application/json', body: content }, 
+                        supportsAllDrives: true 
+                    });
+                    return new Response(JSON.stringify({ status: 'updated' }));
+                } else {
+                    await drive.files.create({
+                        requestBody: { name: 'system_settings.json', parents: [FOLDER_ID], mimeType: 'application/json' },
+                        media: { mimeType: 'application/json', body: content },
+                        supportsAllDrives: true
+                    });
+                    return new Response(JSON.stringify({ status: 'created' }));
+                }
+            }
             
             if (action === 'cleanup-chunks' && drive) {
                 const keepCount = parseInt(url.searchParams.get('keepCount') || '', 10);
@@ -306,6 +331,18 @@ export default async function handler(req: Request) {
                 
                 // Return as stream
                 return new Response(file.data as any);
+            }
+
+            if (action === 'get-settings' && drive) {
+                const q = `name = 'system_settings.json' and '${FOLDER_ID}' in parents and trashed = false`;
+                const list = await drive.files.list({ q, fields: 'files(id)', supportsAllDrives: true, includeItemsFromAllDrives: true });
+                if (list.data.files && list.data.files.length > 0) {
+                    const fileId = list.data.files[0].id;
+                    const res = await drive.files.get({ fileId: fileId!, alt: 'media', supportsAllDrives: true }, { responseType: 'json' });
+                    return new Response(JSON.stringify(res.data));
+                }
+                // Return default if not found
+                return new Response(JSON.stringify({ baseRate: 15 }));
             }
 
             if (action === 'get-full-cache' || !action) return new Response(JSON.stringify(await getFullCoordsCache()));

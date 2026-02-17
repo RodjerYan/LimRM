@@ -8,6 +8,7 @@ import RegionDetailsModal from './RegionDetailsModal';
 import GrowthExplanationModal from './GrowthExplanationModal';
 import NBAPanel from './modules/NBAPanel'; // NEW IMPORT
 import { generateNextBestActions, calculateChurnMetrics } from '../services/analytics/advancedAnalytics'; // NEW IMPORT
+import { useAuth } from './auth/AuthContext';
 
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
 import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon, ChartBarIcon, TargetIcon, UsersIcon, CalendarIcon, CheckIcon } from './icons';
@@ -341,7 +342,12 @@ interface PlanConfig {
 }
 
 export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData, mode = 'modal', metrics, okbStatus, onActiveClientsClick, onEditClient, startDate, endDate, dateRange }) => {
+    const { user } = useAuth();
+    const isAdmin = user?.role === 'admin';
+    
     const [baseRate, setBaseRate] = useState(15);
+    const [isLoadingSettings, setIsLoadingSettings] = useState(true);
+    
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
     const [expandedRM, setExpandedRM] = useState<string | null>(null);
@@ -366,6 +372,41 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const [isPlanSettingsOpen, setIsPlanSettingsOpen] = useState(false);
     const [tempPlanStart, setTempPlanStart] = useState('');
     const [tempPlanEnd, setTempPlanEnd] = useState('');
+
+    // Load base rate from server on mount
+    useEffect(() => {
+        const fetchSettings = async () => {
+            setIsLoadingSettings(true);
+            try {
+                const res = await fetch(`/api/get-full-cache?action=get-settings&t=${Date.now()}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && typeof data.baseRate === 'number') {
+                        setBaseRate(data.baseRate);
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to load settings:", e);
+            } finally {
+                setIsLoadingSettings(false);
+            }
+        };
+        fetchSettings();
+    }, []);
+
+    // Save base rate to server (Admin only)
+    const handleSaveRateSettings = async () => {
+        if (!isAdmin) return;
+        try {
+            await fetch(`/api/get-full-cache?action=save-settings`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ baseRate })
+            });
+        } catch (e) {
+            console.error("Failed to save settings:", e);
+        }
+    };
 
     // Dynamic Date Logic for FACT column (what is currently filtered)
     const { factLabel } = useMemo(() => formatDateLabel(startDate, endDate), [startDate, endDate]);
@@ -674,8 +715,23 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
 
                     <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 flex items-center gap-6 w-full md:w-auto shadow-inner">
                         <div className="flex-grow">
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Базовый рост (ставка)</label>
-                            <input type="range" min="0" max="50" step="1" value={baseRate} onChange={(e) => setBaseRate(Number(e.target.value))} className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-amber-400" />
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-2 flex items-center gap-2">
+                                Базовый рост (ставка)
+                                {isLoadingSettings && <LoaderIcon small className="animate-spin text-gray-400" />}
+                                {!isAdmin && <span className="text-[9px] bg-gray-200 px-1.5 rounded text-gray-500">READ ONLY</span>}
+                            </label>
+                            <input 
+                                type="range" 
+                                min="0" 
+                                max="50" 
+                                step="1" 
+                                value={baseRate} 
+                                disabled={!isAdmin || isLoadingSettings}
+                                onChange={(e) => setBaseRate(Number(e.target.value))} 
+                                onMouseUp={handleSaveRateSettings}
+                                onTouchEnd={handleSaveRateSettings}
+                                className={`w-full h-2 bg-gray-300 rounded-lg appearance-none accent-amber-400 ${!isAdmin ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`} 
+                            />
                             <div className="flex justify-between text-[10px] text-gray-400 mt-1"><span>0%</span><span>25%</span><span>50%</span></div>
                         </div>
                         <div className="text-center w-24">
@@ -919,16 +975,21 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         </div>
     );
 
+    if (!isOpen && mode === 'modal') return null;
+
     return (
         <>
             {mode === 'modal' ? (
-                <Modal isOpen={isOpen} onClose={onClose} title="Дашборд эффективности РМ" maxWidth="max-w-[95vw]">
+                <Modal isOpen={isOpen} onClose={onClose} title="Дашборд Эффективности (Plan/Fact)" maxWidth="max-w-[95vw]">
                     {renderContent()}
                 </Modal>
             ) : (
-                renderContent()
+                <div className="relative">
+                    {renderContent()}
+                </div>
             )}
 
+            {/* Modals for Drill-downs */}
             {selectedRMForAnalysis && (
                 <RMAnalysisModal 
                     isOpen={isAnalysisModalOpen} 
@@ -945,92 +1006,84 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 title={abcModalTitle} 
                 clients={abcClients} 
                 onClientSelect={() => {}} 
-                onStartEdit={onEditClient || (() => {})}
+                onStartEdit={(c) => { if (onEditClient) onEditClient(c); }}
                 showAbcLegend={true}
             />
 
             {selectedRegionDetails && (
-                <RegionDetailsModal
-                    isOpen={isRegionModalOpen}
-                    onClose={() => setIsRegionModalOpen(false)}
-                    rmName={selectedRegionDetails.rmName}
-                    regionName={selectedRegionDetails.regionName}
-                    activeClients={selectedRegionDetails.activeClients}
-                    potentialClients={selectedRegionDetails.potentialClients}
+                <RegionDetailsModal 
+                    isOpen={isRegionModalOpen} 
+                    onClose={() => setIsRegionModalOpen(false)} 
+                    rmName={selectedRegionDetails.rmName} 
+                    regionName={selectedRegionDetails.regionName} 
+                    activeClients={selectedRegionDetails.activeClients} 
+                    potentialClients={selectedRegionDetails.potentialClients} 
                     onEditClient={onEditClient}
                 />
             )}
 
             {explanationData && (
-                <GrowthExplanationModal
-                    isOpen={!!explanationData}
-                    onClose={() => setExplanationData(null)}
-                    data={explanationData}
-                    baseRate={baseRate}
+                <GrowthExplanationModal 
+                    isOpen={!!explanationData} 
+                    onClose={() => setExplanationData(null)} 
+                    data={explanationData} 
+                    baseRate={baseRate} 
                 />
             )}
 
-            {selectedBrandForDetails && (
-                <BrandPackagingModal
-                    isOpen={isBrandModalOpen}
-                    onClose={() => setIsBrandModalOpen(false)}
-                    brandMetric={selectedBrandForDetails}
-                    regionName={selectedBrandRegion}
-                    onExplain={(m) => setExplanationData(m)}
-                    onAnalyze={(row) => {
-                        setIsBrandModalOpen(false);
-                        // Accessing brand name from selectedBrandForDetails since aggregated row only has packaging info
-                        const brandName = selectedBrandForDetails?.name || 'Бренд';
-                        setPackagingAnalysisTitle(`Анализ: ${brandName}`);
-                        
-                        setPackagingChartData({
-                            fact: row.fact,
-                            plan: row.plan,
-                            growthPct: row.growthPct,
-                            labels: { fact: factLabel, plan: planLabel }
-                        });
-                        setIsPackagingAnalysisOpen(true);
-                        setIsPackagingAnalysisLoading(true);
-                        setPackagingAnalysisContent('');
-                        
-                        if (packagingAbortController.current) packagingAbortController.current.abort();
-                        packagingAbortController.current = new AbortController();
+            <BrandPackagingModal 
+                isOpen={isBrandModalOpen} 
+                onClose={() => setIsBrandModalOpen(false)} 
+                brandMetric={selectedBrandForDetails} 
+                regionName={selectedBrandRegion}
+                onExplain={(metric) => setExplanationData(metric)}
+                onAnalyze={(row) => {
+                    const skuList: string[] = [];
+                    if (row.skuList) skuList.push(...row.skuList);
+                    
+                    setPackagingAnalysisTitle(`Анализ сегмента: ${row.packaging} (${selectedBrandForDetails?.name})`);
+                    setPackagingAnalysisContent('');
+                    setIsPackagingAnalysisOpen(true);
+                    setIsPackagingAnalysisLoading(true);
+                    
+                    setPackagingChartData({ 
+                        fact: row.fact, 
+                        plan: row.plan, 
+                        growthPct: row.growthPct, 
+                        labels: { fact: factLabel, plan: planLabel } 
+                    });
 
-                        const skuList: string[] = row.skuList || [];
+                    if (packagingAbortController.current) packagingAbortController.current.abort();
+                    packagingAbortController.current = new AbortController();
 
-                        streamPackagingInsights(
-                            `${brandName}`,
-                            skuList,
-                            row.fact,
-                            row.plan,
-                            row.growthPct,
-                            selectedBrandRegion,
-                            (chunk) => setPackagingAnalysisContent(prev => prev + chunk),
-                            (err) => {
-                                if (err.name !== 'AbortError') {
-                                    console.error(err);
-                                    setIsPackagingAnalysisLoading(false);
-                                }
-                            },
-                            packagingAbortController.current.signal
-                        ).finally(() => setIsPackagingAnalysisLoading(false));
-                    }}
-                    dateLabels={{ fact: factLabel, plan: planLabel }}
-                    periodAnnualizeK={periodAnnualizeK}
-                    baseRate={baseRate}
-                    planScalingFactor={planScalingFactor}
-                />
-            )}
+                    streamPackagingInsights(
+                        row.packaging,
+                        skuList,
+                        row.fact,
+                        row.plan,
+                        row.growthPct,
+                        selectedBrandRegion,
+                        (chunk) => setPackagingAnalysisContent(prev => prev + chunk),
+                        (err) => { 
+                            if (err.name !== 'AbortError') {
+                                setPackagingAnalysisContent(prev => prev + `\n\n**Ошибка:** ${err.message}`); 
+                            }
+                            setIsPackagingAnalysisLoading(false); 
+                        },
+                        packagingAbortController.current.signal
+                    ).finally(() => setIsPackagingAnalysisLoading(false));
+                }}
+                dateLabels={{ fact: factLabel, plan: planLabel }}
+                periodAnnualizeK={periodAnnualizeK}
+                baseRate={baseRate}
+                planScalingFactor={planScalingFactor}
+            />
 
             <PackagingAnalysisModal 
-                isOpen={isPackagingAnalysisOpen}
-                onClose={() => {
-                    setIsPackagingAnalysisOpen(false);
-                    setPackagingAnalysisContent('');
-                    if (packagingAbortController.current) packagingAbortController.current.abort();
-                }}
-                title={packagingAnalysisTitle}
-                content={packagingAnalysisContent}
+                isOpen={isPackagingAnalysisOpen} 
+                onClose={() => { setIsPackagingAnalysisOpen(false); packagingAbortController.current?.abort(); }} 
+                title={packagingAnalysisTitle} 
+                content={packagingAnalysisContent} 
                 isLoading={isPackagingAnalysisLoading}
                 chartData={packagingChartData}
             />

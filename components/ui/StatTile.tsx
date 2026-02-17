@@ -45,7 +45,7 @@ export function StatTile({
       }
     >
       <div 
-        className="text-[10px] uppercase tracking-[0.18em] text-slate-600 font-semibold truncate" 
+        className="text-[10px] uppercase tracking-wide text-slate-600 font-semibold leading-tight break-words" 
         title={label}
       >
         {label}
