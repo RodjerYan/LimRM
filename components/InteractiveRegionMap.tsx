@@ -778,24 +778,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         <div
             className={[
                 "relative w-full overflow-hidden transition-all duration-500",
-                "rounded-3xl border border-slate-200/70 bg-white/70 backdrop-blur-xl",
+                "rounded-3xl border border-slate-200 bg-white",
                 "shadow-[0_18px_50px_rgba(15,23,42,0.08)]",
                 isFullscreen ? "fixed inset-0 z-[100] h-screen" : "h-[600px] group",
             ].join(" ")}
         >
-            {/* premium glow */}
-            <div
-                className="pointer-events-none absolute inset-0 opacity-70"
-                style={{
-                    background:
-                        "radial-gradient(900px 520px at 20% 10%, rgba(99,102,241,0.14), transparent 60%)," +
-                        "radial-gradient(880px 520px at 72% 18%, rgba(34,211,238,0.12), transparent 60%)," +
-                        "radial-gradient(950px 560px at 40% 92%, rgba(163,230,53,0.10), transparent 60%)",
-                }}
-            />
-
-            {/* Map */}
-            <div ref={mapContainer} className="relative z-0 h-full w-full bg-slate-50" />
+            {/* Map - Ensure solid white background to hide subpixel gaps */}
+            <div ref={mapContainer} className="relative z-0 h-full w-full bg-white" />
 
             {/* Search */}
             <div className="absolute top-4 left-14 z-[400] w-80">
