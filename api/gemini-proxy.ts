@@ -63,11 +63,13 @@ export default async function handler(req: Request) {
     let streamIterator: any = null;
     let lastError: any = null;
 
+    console.log(`[Gemini Proxy] Starting request. Available keys: ${keyPool.length}`);
+
     // Retry loop: Try connecting with each key until one works
-    for (const apiKey of keyPool) {
+    for (let i = 0; i < keyPool.length; i++) {
+        const apiKey = keyPool[i];
         try {
             const ai = new GoogleGenAI({ apiKey });
-            // Use 'gemini-3-flash-preview' for text tasks.
             const model = 'gemini-3-flash-preview';
 
             const generateParams: any = {
@@ -78,24 +80,25 @@ export default async function handler(req: Request) {
                 }
             };
 
-            // Attach tools if provided
             if (tools) {
                 generateParams.config.tools = tools;
             }
 
-            // Attempt to connect. This throws immediately if quota is hit (429) or invalid key.
+            // Attempt to connect.
             streamIterator = await ai.models.generateContentStream(generateParams);
             
             // If we reach here, connection is successful.
+            // console.log(`[Gemini Proxy] Success with key index ${i}`);
             break; 
         } catch (err: any) {
             lastError = err;
             const status = err.status || (err.response ? err.response.status : 0);
             const msg = err.message || String(err);
             
-            console.warn(`[Gemini Proxy] Key ending in ...${apiKey.slice(-4)} failed (Status: ${status}). Msg: ${msg}`);
+            console.warn(`[Gemini Proxy] Key attempt ${i+1}/${keyPool.length} failed (Status: ${status}). Msg: ${msg}`);
             
-            // Continue loop to try next key
+            // If it's not a quota error (429) or server error (500/503), it might be a bad request, so maybe don't retry?
+            // But usually 429 is the main reason to rotate.
         }
     }
 
