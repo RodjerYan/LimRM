@@ -29,7 +29,6 @@ import {
 } from 'chart.js';
 import { Bar, Doughnut } from 'react-chartjs-2';
 
-// ... (Existing ChartJS registrations and date utils remain unchanged) ...
 // Register ChartJS components
 ChartJS.register(
   CategoryScale,
@@ -91,7 +90,6 @@ const formatDateLabel = (
   return { factLabel, planYear };
 };
 
-// ... (Existing PackagingCharts, PackagingAnalysisModal, BrandPackagingModal components remain unchanged) ...
 const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number; labels: { fact: string; plan: string } }> = ({ fact, plan, growthPct, labels }) => {
     const gap = Math.max(0, plan - fact);
     const percentage = plan > 0 ? (fact / plan) * 100 : 0;
@@ -658,7 +656,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 <div className="flex items-center gap-4">
                     <button 
                         onClick={() => setIsPlanSettingsOpen(true)}
-                        className={`flex items-center gap-2 px-4 py-3 text-xs font-bold rounded-xl border transition-colors shadow-sm h-full ${planConfig.isActive ? 'bg-indigo-600 text-white border-indigo-500 hover:bg-indigo-500' : 'bg-white hover:bg-gray-50 text-slate-700 border-gray-200'}`}
+                        className={`flex items-center gap-2 px-4 py-3 text-xs font-bold rounded-xl border transition-colors shadow-sm h-full ${planConfig.isActive ? 'bg-emerald-600 text-white border-emerald-500 hover:bg-emerald-500' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}`}
                         title="Настроить период и рассчитать план"
                     >
                         <CalendarIcon small /> 
@@ -921,136 +919,121 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         </div>
     );
 
-    if (mode === 'page') {
-        return (
-            <div className="min-h-screen bg-gray-50 text-gray-900">
-                <div className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-200 px-8 py-4 flex justify-between items-center shadow-sm">
-                    <div className="flex items-center gap-4">
-                        <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors"><ArrowLeftIcon /></button>
-                        <div><h1 className="text-xl font-bold text-gray-900">Дашборд План/Факт</h1><p className="text-xs text-gray-500">Стратегическое планирование {planConfig.isActive ? `(${new Date(planConfig.start).toLocaleDateString()} - ${new Date(planConfig.end).toLocaleDateString()})` : ''}</p></div>
-                    </div>
-                </div>
-                <div className="p-8 max-w-[1600px] mx-auto">{renderContent()}</div>
-                <RMAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => setIsAnalysisModalOpen(false)} rmData={selectedRMForAnalysis} baseRate={baseRate} dateRange={dateRange} />
-                <GrowthExplanationModal isOpen={!!explanationData} onClose={() => setExplanationData(null)} data={explanationData} baseRate={baseRate} />
-                <RegionDetailsModal isOpen={isRegionModalOpen} onClose={() => setIsRegionModalOpen(false)} rmName={selectedRegionDetails?.rmName || ''} regionName={selectedRegionDetails?.regionName || ''} activeClients={selectedRegionDetails?.activeClients || []} potentialClients={selectedRegionDetails?.potentialClients || []} onEditClient={onEditClient} />
-                <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(m) => setExplanationData(m)} dateLabels={{ fact: factLabel, plan: planLabel }} periodAnnualizeK={periodAnnualizeK} baseRate={baseRate} planScalingFactor={planScalingFactor} onAnalyze={(row) => {
-                    const skuList = row.skuList || [];
-                    setPackagingAnalysisTitle(`Анализ: ${row.packaging} (${selectedBrandRegion})`);
-                    setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct, labels: { fact: factLabel, plan: planLabel } });
-                    setPackagingAnalysisContent('');
-                    setIsPackagingAnalysisOpen(true);
-                    setIsPackagingAnalysisLoading(true);
-                    if (packagingAbortController.current) packagingAbortController.current.abort();
-                    packagingAbortController.current = new AbortController();
-                    streamPackagingInsights(
-                        row.packaging, skuList, row.fact, row.plan, row.growthPct, selectedBrandRegion,
-                        (chunk) => setPackagingAnalysisContent(prev => prev + chunk),
-                        (err) => { console.error(err); setIsPackagingAnalysisLoading(false); },
-                        packagingAbortController.current.signal
-                    ).finally(() => setIsPackagingAnalysisLoading(false));
-                }} />
-                <PackagingAnalysisModal isOpen={isPackagingAnalysisOpen} onClose={() => setIsPackagingAnalysisOpen(false)} title={packagingAnalysisTitle} content={packagingAnalysisContent} isLoading={isPackagingAnalysisLoading} chartData={packagingChartData} />
-                
-                <ClientsListModal 
-                    isOpen={isAbcModalOpen}
-                    onClose={() => setIsAbcModalOpen(false)}
-                    title={abcModalTitle}
-                    clients={abcClients}
-                    onClientSelect={() => {}}
-                    onStartEdit={(client) => {
-                        setIsAbcModalOpen(false);
-                        if (onEditClient) onEditClient(client);
-                    }}
-                    showAbcLegend={true}
-                />
-            </div>
-        );
-    }
-
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Дашборд План/Факт" maxWidth="max-w-[95vw]">
-            {renderContent()}
-            <RMAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => setIsAnalysisModalOpen(false)} rmData={selectedRMForAnalysis} baseRate={baseRate} dateRange={dateRange} />
-            <GrowthExplanationModal isOpen={!!explanationData} onClose={() => setExplanationData(null)} data={explanationData} baseRate={baseRate} />
-            <RegionDetailsModal isOpen={isRegionModalOpen} onClose={() => setIsRegionModalOpen(false)} rmName={selectedRegionDetails?.rmName || ''} regionName={selectedRegionDetails?.regionName || ''} activeClients={selectedRegionDetails?.activeClients || []} potentialClients={selectedRegionDetails?.potentialClients || []} onEditClient={onEditClient} />
-            <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(m) => setExplanationData(m)} dateLabels={{ fact: factLabel, plan: planLabel }} periodAnnualizeK={periodAnnualizeK} baseRate={baseRate} planScalingFactor={planScalingFactor} onAnalyze={(row) => {
-                const skuList = row.skuList || [];
-                setPackagingAnalysisTitle(`Анализ: ${row.packaging} (${selectedBrandRegion})`);
-                setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct, labels: { fact: factLabel, plan: planLabel } });
-                setPackagingAnalysisContent('');
-                setIsPackagingAnalysisOpen(true);
-                setIsPackagingAnalysisLoading(true);
-                if (packagingAbortController.current) packagingAbortController.current.abort();
-                packagingAbortController.current = new AbortController();
-                streamPackagingInsights(
-                    row.packaging, skuList, row.fact, row.plan, row.growthPct, selectedBrandRegion,
-                    (chunk) => setPackagingAnalysisContent(prev => prev + chunk),
-                    (err) => { console.error(err); setIsPackagingAnalysisLoading(false); },
-                    packagingAbortController.current.signal
-                ).finally(() => setIsPackagingAnalysisLoading(false));
-            }} />
-            <PackagingAnalysisModal isOpen={isPackagingAnalysisOpen} onClose={() => setIsPackagingAnalysisOpen(false)} title={packagingAnalysisTitle} content={packagingAnalysisContent} isLoading={isPackagingAnalysisLoading} chartData={packagingChartData} />
-            
+        <>
+            {mode === 'modal' ? (
+                <Modal isOpen={isOpen} onClose={onClose} title="Дашборд эффективности РМ" maxWidth="max-w-[95vw]">
+                    {renderContent()}
+                </Modal>
+            ) : (
+                renderContent()
+            )}
+
+            {selectedRMForAnalysis && (
+                <RMAnalysisModal 
+                    isOpen={isAnalysisModalOpen} 
+                    onClose={() => setIsAnalysisModalOpen(false)} 
+                    rmData={selectedRMForAnalysis} 
+                    baseRate={baseRate}
+                    dateRange={dateRange}
+                />
+            )}
+
             <ClientsListModal 
-                isOpen={isAbcModalOpen}
-                onClose={() => setIsAbcModalOpen(false)}
-                title={abcModalTitle}
-                clients={abcClients}
-                onClientSelect={() => {}}
-                onStartEdit={(client) => {
-                    setIsAbcModalOpen(false);
-                    if (onEditClient) onEditClient(client);
-                }}
+                isOpen={isAbcModalOpen} 
+                onClose={() => setIsAbcModalOpen(false)} 
+                title={abcModalTitle} 
+                clients={abcClients} 
+                onClientSelect={() => {}} 
+                onStartEdit={onEditClient || (() => {})}
                 showAbcLegend={true}
             />
-            {/* PLAN SETTINGS MODAL FOR MODAL MODE */}
-            <Modal
-                isOpen={isPlanSettingsOpen}
-                onClose={() => setIsPlanSettingsOpen(false)}
-                title="Настройка периода планирования"
-                maxWidth="max-w-md"
-                zIndex="z-[1100]"
-            >
-                <div className="p-2 space-y-6">
-                    <p className="text-sm text-slate-600 leading-relaxed">
-                        Выберите период, на который необходимо рассчитать план продаж.
-                        Система автоматически учтет сезонность и исторические данные для построения прогноза.
-                    </p>
-                    
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
-                        <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Начало периода</label>
-                            <input 
-                                type="date" 
-                                value={tempPlanStart} 
-                                onChange={(e) => setTempPlanStart(e.target.value)}
-                                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Конец периода</label>
-                            <input 
-                                type="date" 
-                                value={tempPlanEnd} 
-                                onChange={(e) => setTempPlanEnd(e.target.value)}
-                                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                            />
-                        </div>
-                    </div>
 
-                    <div className="flex justify-end gap-2">
-                        <button onClick={() => setIsPlanSettingsOpen(false)} className="px-4 py-2 text-sm font-bold text-slate-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">Отмена</button>
-                        <button 
-                            onClick={handleCalculatePlan}
-                            disabled={!tempPlanStart || !tempPlanEnd}
-                            className="px-4 py-2 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            Рассчитать
-                        </button>
-                    </div>
-                </div>
-            </Modal>
-        </Modal>
+            {selectedRegionDetails && (
+                <RegionDetailsModal
+                    isOpen={isRegionModalOpen}
+                    onClose={() => setIsRegionModalOpen(false)}
+                    rmName={selectedRegionDetails.rmName}
+                    regionName={selectedRegionDetails.regionName}
+                    activeClients={selectedRegionDetails.activeClients}
+                    potentialClients={selectedRegionDetails.potentialClients}
+                    onEditClient={onEditClient}
+                />
+            )}
+
+            {explanationData && (
+                <GrowthExplanationModal
+                    isOpen={!!explanationData}
+                    onClose={() => setExplanationData(null)}
+                    data={explanationData}
+                    baseRate={baseRate}
+                />
+            )}
+
+            {selectedBrandForDetails && (
+                <BrandPackagingModal
+                    isOpen={isBrandModalOpen}
+                    onClose={() => setIsBrandModalOpen(false)}
+                    brandMetric={selectedBrandForDetails}
+                    regionName={selectedBrandRegion}
+                    onExplain={(m) => setExplanationData(m)}
+                    onAnalyze={(row) => {
+                        setIsBrandModalOpen(false);
+                        // Accessing brand name from selectedBrandForDetails since aggregated row only has packaging info
+                        const brandName = selectedBrandForDetails?.name || 'Бренд';
+                        setPackagingAnalysisTitle(`Анализ: ${brandName}`);
+                        
+                        setPackagingChartData({
+                            fact: row.fact,
+                            plan: row.plan,
+                            growthPct: row.growthPct,
+                            labels: { fact: factLabel, plan: planLabel }
+                        });
+                        setIsPackagingAnalysisOpen(true);
+                        setIsPackagingAnalysisLoading(true);
+                        setPackagingAnalysisContent('');
+                        
+                        if (packagingAbortController.current) packagingAbortController.current.abort();
+                        packagingAbortController.current = new AbortController();
+
+                        const skuList: string[] = row.skuList || [];
+
+                        streamPackagingInsights(
+                            `${brandName}`,
+                            skuList,
+                            row.fact,
+                            row.plan,
+                            row.growthPct,
+                            selectedBrandRegion,
+                            (chunk) => setPackagingAnalysisContent(prev => prev + chunk),
+                            (err) => {
+                                if (err.name !== 'AbortError') {
+                                    console.error(err);
+                                    setIsPackagingAnalysisLoading(false);
+                                }
+                            },
+                            packagingAbortController.current.signal
+                        ).finally(() => setIsPackagingAnalysisLoading(false));
+                    }}
+                    dateLabels={{ fact: factLabel, plan: planLabel }}
+                    periodAnnualizeK={periodAnnualizeK}
+                    baseRate={baseRate}
+                    planScalingFactor={planScalingFactor}
+                />
+            )}
+
+            <PackagingAnalysisModal 
+                isOpen={isPackagingAnalysisOpen}
+                onClose={() => {
+                    setIsPackagingAnalysisOpen(false);
+                    setPackagingAnalysisContent('');
+                    if (packagingAbortController.current) packagingAbortController.current.abort();
+                }}
+                title={packagingAnalysisTitle}
+                content={packagingAnalysisContent}
+                isLoading={isPackagingAnalysisLoading}
+                chartData={packagingChartData}
+            />
+        </>
     );
 };
