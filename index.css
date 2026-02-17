@@ -194,3 +194,16 @@ html {
   animation: shimmer 1200ms ease-in-out infinite;
   pointer-events: none;
 }
+
+/* --- MAP FIXES --- */
+/* Force opaque background for Leaflet container to prevent grid bleed-through */
+.leaflet-container {
+    background: #ffffff !important;
+}
+
+/* Prevent subpixel gap rendering issues in tiles */
+.leaflet-tile-container img {
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+    transform: translate3d(0,0,0);
+}

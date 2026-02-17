@@ -22,7 +22,7 @@ import {
   FilterIcon,
   FactIcon,
   CloudDownloadIcon,
-  CheckIcon // Added icon
+  CheckIcon
 } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
@@ -88,13 +88,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   // Determine Effective Period
   const effectiveStart = props.startDate;
   const effectiveEnd = props.endDate;
-
-  // --- DEBUG LOGGING ---
-  useEffect(() => {
-    if (props.uploadedData?.length) {
-        // console.log('[ADAPTA] Data Loaded. Rows:', props.uploadedData.length);
-    }
-  }, [props.uploadedData]);
 
   // Extract unique RMs for the dropdown
   const availableRMs = useMemo(() => {
@@ -419,7 +412,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
           {/* Left stack */}
           <div className="space-y-6">
             <Motion delayMs={100}>
-              {/* Cloud Engine card */}
+              {/* Cloud Engine card - White Theme */}
               <div className="bg-white p-6 rounded-3xl border border-slate-200/70 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
                 <div className="flex justify-between items-center mb-4">
                     <div>
