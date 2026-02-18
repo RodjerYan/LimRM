@@ -48,6 +48,14 @@ const parseCleanFloat = (val: any): number => {
     return isNaN(floatVal) ? 0 : floatVal;
 };
 
+const isValidCoordPair = (lat: number, lon: number) => {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+    if (lat < -90 || lat > 90) return false;
+    if (lon < -180 || lon > 180) return false;
+    if (lat === 0 && lon === 0) return false;
+    return true;
+};
+
 const getCanonicalRegion = (row: any): string => {
     const subjectValue = findValueInRow(row, ['субъект', 'регион', 'область']);
     if (subjectValue && subjectValue.trim()) {
@@ -122,15 +130,36 @@ export function processBatch(
 
         const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
 
+        // Extract coordinates directly from row (handle both 'lon' and 'lng')
+        const rowLat = parseCleanFloat(findValueInRow(row, ['lat', 'latitude', 'широта']));
+        const rowLon = parseCleanFloat(findValueInRow(row, ['lon', 'lng', 'longitude', 'долгота']));
+        const hasRowCoords = isValidCoordPair(rowLat, rowLon);
+
         const parsed = parseRussianAddress(rawAddr);
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
-        const cacheEntry = cacheAddressMap.get(normAddr);
+        let cacheEntry = cacheAddressMap.get(normAddr);
         
+        // If not in cache but we have coords in the row, use them to avoid "Unidentified" status
+        if (!cacheEntry && hasRowCoords) {
+            const tempEntry = {
+                lat: rowLat,
+                lon: rowLon,
+                originalAddress: rawAddr,
+                isInvalid: false
+            };
+            cacheAddressMap.set(normAddr, tempEntry);
+            cacheEntry = tempEntry;
+        }
+
         const isCityFound = parsed.city !== 'Город не определен';
-        const reg = getCanonicalRegion(row) || parsed.region;
+        
+        // FIXED REGION LOGIC: Check canonical return value correctly
+        const canonical = getCanonicalRegion(row);
+        const reg = canonical !== 'Регион не определен' ? canonical : parsed.region;
         const isRegionFound = reg !== 'Регион не определен';
 
-        if (!isCityFound && !isRegionFound && !cacheEntry) {
+        // If city/region not parsed AND not in cache AND no coords in row -> Unidentified
+        if (!isCityFound && !isRegionFound && !cacheEntry && !hasRowCoords) {
             unidentifiedRows.push({ rm, rowData: row, originalIndex: i }); // Note: Index is relative to batch here
             continue;
         }
@@ -155,7 +184,7 @@ export function processBatch(
                     fact: 0, 
                     potential: 0, 
                     growthPotential: 0, 
-                    growthPercentage: 0,
+                    growthPercentage: 0, 
                     clients: new Map(),
                 };
             }
@@ -164,10 +193,12 @@ export function processBatch(
 
             if (!uniquePlottableClients.has(normAddr)) {
                 const okb = okbCoordIndex.get(normAddr);
+                
+                // FIXED COORDS LOGIC: Use nullish coalescing (??) instead of ||
                 uniquePlottableClients.set(normAddr, {
                     key: normAddr,
-                    lat: cacheEntry?.lat || okb?.lat,
-                    lon: cacheEntry?.lon || okb?.lon,
+                    lat: cacheEntry?.lat ?? okb?.lat,
+                    lon: cacheEntry?.lon ?? okb?.lon,
                     status: 'match',
                     name: String(row[clientNameHeader || ''] || 'ТТ'),
                     address: rawAddr, 

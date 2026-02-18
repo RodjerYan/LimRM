@@ -137,6 +137,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const fEnd = toDayKey(effectiveEnd);
     const hasFilter = Boolean(fStart || fEnd);
 
+    // 1. Try Daily Precision first (Highest Accuracy)
     if (client.dailyFact && Object.keys(client.dailyFact).length > 0) {
         let sum = 0;
         for (const [dayKey, val] of Object.entries(client.dailyFact)) {
@@ -153,6 +154,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         return sum;
     }
 
+    // 2. Fallback to Monthly (Low Accuracy for partial months)
     if (client.monthlyFact && Object.keys(client.monthlyFact).length > 0) {
         let sum = 0;
         const startMonth = fStart ? fStart.slice(0, 7) : null;
@@ -169,6 +171,12 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
              sum += (val as number) || 0;
         }
         return sum;
+    }
+
+    // 3. No temporal data? Return total fact if no filter is set.
+    // If filter IS set, strict mode says 0 because we don't know the date.
+    if (hasFilter) {
+         return 0;
     }
 
     return client.fact || 0;
