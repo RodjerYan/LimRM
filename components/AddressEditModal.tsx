@@ -21,6 +21,7 @@ import {
   MoonIcon,
   SearchIcon,
   SyncIcon,
+  ChannelIcon,
 } from './icons';
 
 // ... (keep all imports and helper components same up to AddressEditModal) ...
@@ -80,6 +81,16 @@ interface AddressEditModalProps {
   onDelete: (rm: string, address: string) => void;
   globalTheme?: Theme;
 }
+
+const SALES_CHANNELS = [
+    'Зоо розница',
+    'FMCG',
+    'Интернет-канал',
+    'Бридер канал',
+    'Ветеринарный канал',
+    'Специализированный канал',
+    'Не определен'
+];
 
 const isUnidentifiedRow = (item: any): item is UnidentifiedRow => item && item.originalIndex !== undefined;
 
@@ -374,6 +385,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
   globalTheme = 'light',
 }) => {
   const [editedAddress, setEditedAddress] = useState('');
+  const [editedChannel, setEditedChannel] = useState('');
   const [comment, setComment] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -412,6 +424,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     const originalRow = getSafeOriginalRow(data);
 
     let currentAddress = '';
+    let currentChannel = '';
+
     if (isUnidentifiedRow(data)) {
       const rawAddress = findAddressInRow(originalRow) || '';
       let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor', 'партнер']);
@@ -422,14 +436,21 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       }
       const parsed = parseRussianAddress(rawAddress, distributor);
       currentAddress = parsed.finalAddress || rawAddress;
+      
+      const rowChannel = findValueInRow(originalRow, ['канал продаж', 'тип тт', 'сегмент']);
+      const detected = detectChannelByName(findValueInRow(originalRow, ['клиент', 'name']) || '');
+      currentChannel = (detected && detected !== 'Не определен') ? detected : (rowChannel || 'Не определен');
+
     } else {
       currentAddress = (data as MapPoint).address;
+      currentChannel = (data as MapPoint).type || 'Не определен';
     }
 
     const currentKey = (data as MapPoint).key || (data as UnidentifiedRow).originalIndex;
 
     if (currentKey !== prevKeyRef.current) {
       setEditedAddress(currentAddress);
+      setEditedChannel(currentChannel);
       setComment((data as MapPoint).comment || '');
       isCommentTouched.current = false;
 
@@ -552,14 +573,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
         ? `${normalizeAddress(editedAddress)}#${Date.now()}` 
         : oldKey;
     
-    // Auto-detect channel/type logic
-    const rawType = findValueInRow(originalRow, ['канал продаж', 'тип тт', 'сегмент']);
     const clientName = findValueInRow(originalRow, ['наименование клиенты', 'контрагент', 'клиент', 'name']) || 'N/A';
     
-    // Use enhanced detection: If name strongly suggests "Breeder" (e.g. contains 'заводчик'), force it.
-    // Otherwise rely on existing column, or fallback to detected generic.
-    const detectedType = detectChannelByName(clientName);
-    const finalType = (detectedType && detectedType !== 'Не определен') ? detectedType : (rawType || 'Не определен');
+    // Explicit channel selection overrides autodetection
+    const finalType = editedChannel || 'Не определен';
 
     const baseNewPoint: MapPoint = {
       key: stableKey, // Use stable key for new items
@@ -573,7 +590,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       rm: rm,
       brand: findValueInRow(originalRow, ['торговая марка']),
       packaging: findValueInRow(originalRow, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана',
-      type: finalType,
+      type: finalType, // IMPORTANT: Use manually selected channel
       contacts: findValueInRow(originalRow, ['контакты']),
       originalRow: originalRow,
       fact: (data as MapPoint).fact,
@@ -667,11 +684,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
   const isAddressChangedState = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddressStr.toLowerCase();
   const isCoordsChanged = manualCoords !== null;
   const isCommentChanged = comment.trim() !== ((data as MapPoint).comment || '').trim();
+  const isChannelChanged = editedChannel !== ((data as MapPoint).type || 'Не определен');
 
   if (isAddressChangedState) saveButtonText = 'Сохранить новый адрес';
   if (isCoordsChanged) saveButtonText = 'Сохранить новые координаты';
   if (isAddressChangedState && isCoordsChanged) saveButtonText = 'Сохранить адрес и координаты';
-  if (isCommentChanged && !isAddressChangedState && !isCoordsChanged) saveButtonText = 'Сохранить комментарий';
+  if (isChannelChanged && !isAddressChangedState && !isCoordsChanged) saveButtonText = 'Сохранить канал';
+  if (isCommentChanged && !isAddressChangedState && !isCoordsChanged && !isChannelChanged) saveButtonText = 'Сохранить комментарий';
 
   return (
     <>
@@ -700,7 +719,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                           Редактирование: {clientName || 'Неизвестный клиент'}
                         </div>
                         <div className="text-xs text-slate-500 truncate">
-                          Адрес • координаты • история изменений
+                          Адрес • координаты • канал продаж • история
                         </div>
                       </div>
                     </div>
@@ -860,6 +879,23 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                               <CheckIcon className="w-4 h-4" /> Сохранено
                             </div>
                           )}
+                        </div>
+
+                        {/* NEW: Channel Selector */}
+                        <div>
+                          <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2 flex items-center gap-2">
+                            <ChannelIcon small /> Канал продаж
+                          </label>
+                          <select
+                            value={editedChannel}
+                            onChange={(e) => setEditedChannel(e.target.value)}
+                            disabled={isProcessing || status === 'geocoding' || status === 'success'}
+                            className="w-full rounded-2xl border border-slate-200 bg-white/85 px-4 py-3 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition cursor-pointer appearance-none"
+                          >
+                             {SALES_CHANNELS.map(ch => (
+                                 <option key={ch} value={ch}>{ch}</option>
+                             ))}
+                          </select>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
