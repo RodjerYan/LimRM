@@ -94,6 +94,13 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   const effectiveStart = props.startDate;
   const effectiveEnd = props.endDate;
 
+  // UX Improvement: Auto-reset strict mode when dates are cleared to prevent confusion
+  useEffect(() => {
+    if (!effectiveStart && !effectiveEnd) {
+      setStrictMode(false);
+    }
+  }, [effectiveStart, effectiveEnd]);
+
   // Extract unique RMs for the dropdown
   const availableRMs = useMemo(() => {
       if (!props.uploadedData) return [];
@@ -200,8 +207,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       return set;
   }, [props.uploadedData]);
 
-  // 2. Period Universe (Filtered by Date AND RM)
-  const periodClientKeys = useMemo(() => {
+  // 2. Effective Universe (Filtered by Date, RM, and Strict Mode)
+  // Renamed from periodClientKeys to better reflect it might include undated records in Soft Mode
+  const effectiveUniverseKeys = useMemo(() => {
     const set = new Set<string>();
     if (props.uploadedData) {
       props.uploadedData.forEach((row) => {
@@ -210,9 +218,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
         row.clients.forEach((c) => {
           const { inPeriod, undated } = getClientFact(c);
-          // Effective fact depends on strict mode
-          // If strict: only inPeriod matters.
-          // If not strict: inPeriod + undated.
           const effectiveFact = inPeriod + (strictMode ? 0 : undated);
           
           if (effectiveFact > 0.001) set.add(c.key);
@@ -223,7 +228,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   }, [props.uploadedData, getClientFact, props.selectedRm, strictMode]);
 
   const totalUniqueCount = totalClientKeys.size;
-  const periodUniqueCount = periodClientKeys.size;
+  const effectiveUniqueCount = effectiveUniverseKeys.size;
   const displayActiveCount = props.uploadedData ? totalUniqueCount : props.activeClientsCount;
 
   const healthScore = useMemo(() => {
@@ -272,10 +277,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       if (props.selectedRm && row.rm !== props.selectedRm) return;
 
       row.clients.forEach((client) => {
-        if (!periodClientKeys.has(client.key)) return;
-
+        // Direct calculation instead of pre-filtered Set lookup for robustness
         const { inPeriod, undated } = getClientFact(client);
         const effectiveFact = inPeriod + (strictMode ? 0 : undated);
+
+        if (effectiveFact <= 0.001) return;
 
         const type = client.type || 'Не определен';
         if (!acc[type]) acc[type] = { uniqueKeys: new Set(), volume: 0 };
@@ -296,7 +302,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         percentage: totalPeriodCount > 0 ? (data.uniqueKeys.size / totalPeriodCount) * 100 : 0,
       }))
       .sort((a, b) => b.count - a.count);
-  }, [props.uploadedData, getClientFact, periodClientKeys, props.selectedRm, strictMode]);
+  }, [props.uploadedData, getClientFact, props.selectedRm, strictMode]);
 
   const groupedChannelData = useMemo(() => {
     if (!selectedChannel || !props.uploadedData) return null;
@@ -308,10 +314,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       if (props.selectedRm && row.rm !== props.selectedRm) return;
 
       row.clients.forEach((c) => {
-        if (!periodClientKeys.has(c.key)) return;
-
+        // Direct calculation instead of pre-filtered Set lookup
         const { inPeriod, undated } = getClientFact(c);
         const effectiveFact = inPeriod + (strictMode ? 0 : undated);
+
+        if (effectiveFact <= 0.001) return;
 
         if ((c.type || 'Не определен') === selectedChannel) {
           const search = channelSearchTerm.toLowerCase();
@@ -340,7 +347,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       hierarchy[rm][city].push(c);
     });
     return hierarchy;
-  }, [selectedChannel, props.uploadedData, channelSearchTerm, getClientFact, periodClientKeys, props.selectedRm, strictMode]);
+  }, [selectedChannel, props.uploadedData, channelSearchTerm, getClientFact, props.selectedRm, strictMode]);
 
   const rowsToDisplay = useMemo(() => {
     if (props.processingState.isProcessing) {
@@ -446,7 +453,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       </Motion>
 
       {/* Logic: Database exists but Filter hides everything */}
-      {displayActiveCount > 0 && periodUniqueCount === 0 && (
+      {displayActiveCount > 0 && effectiveUniqueCount === 0 && (
         <Motion delayMs={80}>
           <EmptyState
             kind="noResults"
@@ -622,7 +629,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                             ? 'Чтение снимка…'
                             : hasTemporalData 
                                 ? (effectiveStart || effectiveEnd 
-                                    ? `В периоде: ${periodUniqueCount.toLocaleString()}` 
+                                    ? `В выборке: ${effectiveUniqueCount.toLocaleString()}` 
                                     : 'За все время')
                                 : 'Без дат'
                         }
