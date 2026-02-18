@@ -86,6 +86,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   
   // ETL State
   const [isEtlRunning, setIsEtlRunning] = useState(false);
+  
+  // Strict Mode for Date Filtering (Default: false -> Show undated items to prevent "missing data" confusion)
+  const [strictMode, setStrictMode] = useState(false);
 
   // Determine Effective Period
   const effectiveStart = props.startDate;
@@ -132,7 +135,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     }
   }, [props.openChannelRequest, props.onConsumeOpenChannelRequest]);
 
-  const getClientFact = useCallback((client: MapPoint) => {
+  // Updated getClientFact: Returns split metrics for precise handling
+  const getClientFact = useCallback((client: MapPoint): { inPeriod: number, undated: number, source: 'daily'|'monthly'|'undated'|'none' } => {
     const fStart = toDayKey(effectiveStart);
     const fEnd = toDayKey(effectiveEnd);
     const hasFilter = Boolean(fStart || fEnd);
@@ -151,7 +155,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             }
             sum += (val as number) || 0;
         }
-        return sum;
+        return { inPeriod: sum, undated: 0, source: 'daily' };
     }
 
     // 2. Fallback to Monthly (Low Accuracy for partial months)
@@ -170,16 +174,21 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
              }
              sum += (val as number) || 0;
         }
-        return sum;
+        return { inPeriod: sum, undated: 0, source: 'monthly' };
     }
 
-    // 3. No temporal data? Return total fact if no filter is set.
-    // If filter IS set, strict mode says 0 because we don't know the date.
+    // 3. No temporal data
+    const raw = client.fact || 0;
     if (hasFilter) {
-         return 0;
+        // Filter is active but client has no dates.
+        // inPeriod is 0 because we don't know the date.
+        // undated gets the value. Consumer decides whether to show it (based on strictMode).
+        return { inPeriod: 0, undated: raw, source: 'undated' };
     }
+    
+    // No filter: Undated data matches the "all time" view (effectively inPeriod)
+    return { inPeriod: raw, undated: 0, source: 'undated' };
 
-    return client.fact || 0;
   }, [effectiveStart, effectiveEnd]);
 
   // 1. Total Universe
@@ -200,13 +209,18 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         if (props.selectedRm && row.rm !== props.selectedRm) return;
 
         row.clients.forEach((c) => {
-          const fact = getClientFact(c);
-          if (fact > 0.001) set.add(c.key);
+          const { inPeriod, undated } = getClientFact(c);
+          // Effective fact depends on strict mode
+          // If strict: only inPeriod matters.
+          // If not strict: inPeriod + undated.
+          const effectiveFact = inPeriod + (strictMode ? 0 : undated);
+          
+          if (effectiveFact > 0.001) set.add(c.key);
         });
       });
     }
     return set;
-  }, [props.uploadedData, getClientFact, props.selectedRm]);
+  }, [props.uploadedData, getClientFact, props.selectedRm, strictMode]);
 
   const totalUniqueCount = totalClientKeys.size;
   const periodUniqueCount = periodClientKeys.size;
@@ -228,10 +242,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       .filter(row => !props.selectedRm || row.rm === props.selectedRm) // Apply RM Filter
       .map((row) => {
         const activeClients = row.clients
-          .map((client) => ({
-            ...client,
-            fact: getClientFact(client),
-          }))
+          .map((client) => {
+             const { inPeriod, undated } = getClientFact(client);
+             const fact = inPeriod + (strictMode ? 0 : undated);
+             return { ...client, fact };
+          })
           .filter((c) => (c.fact || 0) > 0);
 
         const rowFact = activeClients.reduce((sum, c) => sum + (c.fact || 0), 0);
@@ -245,7 +260,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       .filter((row) => row.fact > 0);
 
     return detectOutliers(relevantData);
-  }, [props.uploadedData, getClientFact, props.selectedRm]);
+  }, [props.uploadedData, getClientFact, props.selectedRm, strictMode]);
 
   const channelStats = useMemo(() => {
     if (!props.uploadedData || props.uploadedData.length === 0) return [];
@@ -259,7 +274,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       row.clients.forEach((client) => {
         if (!periodClientKeys.has(client.key)) return;
 
-        const effectiveFact = getClientFact(client);
+        const { inPeriod, undated } = getClientFact(client);
+        const effectiveFact = inPeriod + (strictMode ? 0 : undated);
+
         const type = client.type || 'Не определен';
         if (!acc[type]) acc[type] = { uniqueKeys: new Set(), volume: 0 };
 
@@ -279,7 +296,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         percentage: totalPeriodCount > 0 ? (data.uniqueKeys.size / totalPeriodCount) * 100 : 0,
       }))
       .sort((a, b) => b.count - a.count);
-  }, [props.uploadedData, getClientFact, periodClientKeys, props.selectedRm]);
+  }, [props.uploadedData, getClientFact, periodClientKeys, props.selectedRm, strictMode]);
 
   const groupedChannelData = useMemo(() => {
     if (!selectedChannel || !props.uploadedData) return null;
@@ -293,7 +310,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       row.clients.forEach((c) => {
         if (!periodClientKeys.has(c.key)) return;
 
-        const effectiveFact = getClientFact(c);
+        const { inPeriod, undated } = getClientFact(c);
+        const effectiveFact = inPeriod + (strictMode ? 0 : undated);
 
         if ((c.type || 'Не определен') === selectedChannel) {
           const search = channelSearchTerm.toLowerCase();
@@ -322,7 +340,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       hierarchy[rm][city].push(c);
     });
     return hierarchy;
-  }, [selectedChannel, props.uploadedData, channelSearchTerm, getClientFact, periodClientKeys, props.selectedRm]);
+  }, [selectedChannel, props.uploadedData, channelSearchTerm, getClientFact, periodClientKeys, props.selectedRm, strictMode]);
 
   const rowsToDisplay = useMemo(() => {
     if (props.processingState.isProcessing) {
@@ -365,21 +383,42 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                     if (props.onForceUpdate) props.onForceUpdate();
                 }}
                 extraControls={
-                   availableRMs.length > 0 && props.onRmChange ? (
-                       <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 h-9">
-                          <FilterIcon />
-                          <select 
-                             value={props.selectedRm || ''} 
-                             onChange={(e) => props.onRmChange!(e.target.value)}
-                             className="bg-transparent text-sm text-slate-800 outline-none w-[160px] cursor-pointer"
-                          >
-                             <option value="">Все менеджеры</option>
-                             {availableRMs.map(rm => (
-                                 <option key={rm} value={rm}>{rm}</option>
-                             ))}
-                          </select>
-                       </div>
-                   ) : null
+                   <div className="flex items-center gap-2">
+                       {/* RM Selector */}
+                       {availableRMs.length > 0 && props.onRmChange && (
+                           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 h-9">
+                              <FilterIcon />
+                              <select 
+                                 value={props.selectedRm || ''} 
+                                 onChange={(e) => props.onRmChange!(e.target.value)}
+                                 className="bg-transparent text-sm text-slate-800 outline-none w-[160px] cursor-pointer"
+                              >
+                                 <option value="">Все менеджеры</option>
+                                 {availableRMs.map(rm => (
+                                     <option key={rm} value={rm}>{rm}</option>
+                                 ))}
+                              </select>
+                           </div>
+                       )}
+
+                       {/* Strict Mode Toggle (Only visible if filtering is potentially active) */}
+                       {hasTemporalData && (effectiveStart || effectiveEnd) && (
+                            <button 
+                                onClick={() => setStrictMode(!strictMode)}
+                                className={`flex items-center gap-2 px-3 h-9 rounded-2xl border text-xs font-bold transition-all ${
+                                    strictMode 
+                                    ? 'bg-indigo-100 text-indigo-700 border-indigo-200' 
+                                    : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
+                                }`}
+                                title={strictMode 
+                                    ? "Включено: скрывать данные без привязки к дате (строгий фильтр)" 
+                                    : "Выключено: показывать также данные без дат (мягкий фильтр)"}
+                            >
+                                <div className={`w-3 h-3 rounded-full border ${strictMode ? 'bg-indigo-500 border-indigo-500' : 'bg-white border-slate-300'}`} />
+                                <span className="whitespace-nowrap">Строгий период</span>
+                            </button>
+                       )}
+                   </div>
                 }
             />
         </div>
@@ -413,18 +452,32 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             kind="noResults"
             tone="info"
             title="По выбранному периоду данных нет"
-            description={`В базе ${displayActiveCount.toLocaleString()} клиентов, но в выбранном периоде (или для выбранного РМ) продаж не найдено.`}
+            description={
+                strictMode 
+                ? `В базе ${displayActiveCount.toLocaleString()} клиентов, но в выбранном "Строгом периоде" продаж не найдено.` 
+                : `В базе ${displayActiveCount.toLocaleString()} клиентов, но данных по ним не найдено (даже без дат).`
+            }
             action={
-              <button
-                onClick={() => { 
-                    props.onStartDateChange(''); 
-                    props.onEndDateChange(''); 
-                    if (props.onRmChange) props.onRmChange('');
-                }}
-                className="rounded-2xl px-4 py-2.5 text-sm font-semibold bg-gradient-to-r from-indigo-600 to-sky-500 text-white shadow-[0_14px_40px_rgba(99,102,241,0.22)] hover:from-indigo-500 hover:to-sky-400 transition-all"
-              >
-                Сбросить фильтры
-              </button>
+              <div className="flex gap-2">
+                  <button
+                    onClick={() => { 
+                        props.onStartDateChange(''); 
+                        props.onEndDateChange(''); 
+                        if (props.onRmChange) props.onRmChange('');
+                    }}
+                    className="rounded-2xl px-4 py-2.5 text-sm font-semibold bg-gradient-to-r from-indigo-600 to-sky-500 text-white shadow-[0_14px_40px_rgba(99,102,241,0.22)] hover:from-indigo-500 hover:to-sky-400 transition-all"
+                  >
+                    Сбросить фильтры
+                  </button>
+                  {strictMode && (
+                      <button 
+                        onClick={() => setStrictMode(false)}
+                        className="rounded-2xl px-4 py-2.5 text-sm font-bold bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 transition-all"
+                      >
+                          Выключить строгий режим
+                      </button>
+                  )}
+              </div>
             }
           />
         </Motion>
