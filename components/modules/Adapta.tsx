@@ -31,6 +31,8 @@ import { Card, CardHeader, CardBody } from '../ui/Card';
 import { Chip } from '../ui/Chip';
 import { StatTile } from '../ui/StatTile';
 
+const MIN_FACT = 0.001;
+
 interface AdaptaProps {
   processingState: FileProcessingState;
   onForceUpdate?: () => void;
@@ -207,7 +209,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     // No filter: Undated data matches the "all time" view (effectively inPeriod)
     return { inPeriod: raw, undated: 0, source: 'undated' };
 
-  }, [effectiveStart, effectiveEnd]);
+  }, [effectiveStart, effectiveEnd, toDayKey]);
 
   // 1. Total Universe
   const totalClientKeys = useMemo(() => {
@@ -234,7 +236,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
           const { inPeriod, undated } = getClientFact(c);
           const effectiveFact = inPeriod + (strictMode ? 0 : undated);
           
-          if (effectiveFact > 0.001) {
+          if (effectiveFact > MIN_FACT) {
               const k = getSafeKey(c);
               if (k) set.add(k);
           }
@@ -270,7 +272,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
              const k = getSafeKey(client);
              return { ...client, key: k, fact };
           })
-          .filter((c) => (c.fact || 0) > 0);
+          .filter((c) => (c.fact || 0) > MIN_FACT);
 
         const rowFact = activeClients.reduce((sum, c) => sum + (c.fact || 0), 0);
 
@@ -280,7 +282,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             fact: rowFact,
         };
       })
-      .filter((row) => row.fact > 0);
+      .filter((row) => row.fact > MIN_FACT);
 
     return detectOutliers(relevantData);
   }, [props.uploadedData, getClientFact, props.selectedRm, strictMode, getSafeKey]);
@@ -299,7 +301,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         const { inPeriod, undated } = getClientFact(client);
         const effectiveFact = inPeriod + (strictMode ? 0 : undated);
 
-        if (effectiveFact <= 0.001) return;
+        if (effectiveFact <= MIN_FACT) return;
 
         const type = client.type || 'Не определен';
         if (!acc[type]) acc[type] = { uniqueKeys: new Set(), volume: 0 };
@@ -337,7 +339,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         const { inPeriod, undated } = getClientFact(c);
         const effectiveFact = inPeriod + (strictMode ? 0 : undated);
 
-        if (effectiveFact <= 0.001) return;
+        if (effectiveFact <= MIN_FACT) return;
 
         if ((c.type || 'Не определен') === selectedChannel) {
           const search = channelSearchTerm.toLowerCase();
