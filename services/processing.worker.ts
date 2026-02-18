@@ -9,7 +9,7 @@ import {
 } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
-import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
+import { normalizeAddress, findAddressInRow, detectChannelByName } from '../utils/dataUtils';
 
 // Helper for Unique IDs
 const generateRowId = () => {
@@ -94,16 +94,6 @@ const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): 
         }
     }
     return '';
-};
-
-const detectChannelByName = (name: string): string => {
-    const n = name.toLowerCase();
-    if (n.includes('wildberries') || n.includes('вайлдберриз') || n.includes('ozon') || n.includes('озон') || n.includes('яндекс') || n.includes('интернет') || n.includes('e-com') || n.includes('маркетплейс')) return 'Интернет-канал';
-    if (n.includes('питомник') || n.includes('заводчик') || n.includes('клуб ') || n.includes('п-к') || n.includes('приют') || n.includes('кинолог')) return 'Бридер канал';
-    if (n.includes('вет') || n.includes('клиника') || n.includes('госпиталь') || n.includes('врач') || n.includes('аптека')) return 'Ветеринарный канал';
-    if (n.includes('ашан') || n.includes('лента') || n.includes('магнит') || n.includes('пятерочка') || n.includes('перекресток') || n.includes('окей') || n.includes('метро') || n.includes('гипермаркет') || n.includes('супермаркет')) return 'FMCG';
-    if (n.includes('ип ') || n.includes('зоо') || n.includes('магазин') || n.includes('лавка') || n.includes('корм')) return 'Зоо розница';
-    return 'Не определен';
 };
 
 const parseCleanFloat = (val: any): number => {
@@ -698,7 +688,15 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         }
 
         let channel = findValueInRowLocal(row, ['канал продаж', 'тип тт', 'сегмент']);
-        if (!channel || channel.length < 2) channel = detectChannelByName(clientName);
+        const detectedChannel = detectChannelByName(clientName);
+
+        // Forced overwrite if specific channel detected (e.g. Breeder from name)
+        // or if channel is missing/generic
+        if (detectedChannel !== 'Не определен') {
+             channel = detectedChannel;
+        } else if (!channel || channel.length < 2) {
+             channel = 'Не определен';
+        }
 
         const rawBrand = findValueInRowLocal(row, ['торговая марка', 'бренд']) || 'Без бренда';
         const brands = rawBrand.split(/[,;|\r\n]+/).map((b: string) => b.trim()).filter((b: string) => b.length > 0);

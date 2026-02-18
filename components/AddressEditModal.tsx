@@ -4,7 +4,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
 import { MapPoint, UnidentifiedRow } from '../types';
-import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
+import { findAddressInRow, findValueInRow, normalizeAddress, detectChannelByName } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
 import {
   LoaderIcon,
@@ -551,20 +551,29 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     const stableKey = isUnidentifiedRow(data) 
         ? `${normalizeAddress(editedAddress)}#${Date.now()}` 
         : oldKey;
+    
+    // Auto-detect channel/type logic
+    const rawType = findValueInRow(originalRow, ['канал продаж', 'тип тт', 'сегмент']);
+    const clientName = findValueInRow(originalRow, ['наименование клиенты', 'контрагент', 'клиент', 'name']) || 'N/A';
+    
+    // Use enhanced detection: If name strongly suggests "Breeder" (e.g. contains 'заводчик'), force it.
+    // Otherwise rely on existing column, or fallback to detected generic.
+    const detectedType = detectChannelByName(clientName);
+    const finalType = (detectedType && detectedType !== 'Не определен') ? detectedType : (rawType || 'Не определен');
 
     const baseNewPoint: MapPoint = {
       key: stableKey, // Use stable key for new items
       lat: needsGeocoding ? undefined : manualCoords?.lat || (data as MapPoint).lat,
       lon: needsGeocoding ? undefined : manualCoords?.lon || (data as MapPoint).lon,
       status: 'match',
-      name: findValueInRow(originalRow, ['наименование клиенты', 'контрагент', 'клиент']) || 'N/A',
+      name: clientName,
       address: editedAddress,
       city: parsed.city,
       region: parsed.region,
       rm: rm,
       brand: findValueInRow(originalRow, ['торговая марка']),
       packaging: findValueInRow(originalRow, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана',
-      type: findValueInRow(originalRow, ['канал продаж']),
+      type: finalType,
       contacts: findValueInRow(originalRow, ['контакты']),
       originalRow: originalRow,
       fact: (data as MapPoint).fact,

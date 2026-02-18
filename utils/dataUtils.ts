@@ -21,6 +21,41 @@ export const normalizeRmNameForMatching = (str: string): string => {
 };
 
 /**
+ * Detects sales channel based on client name keywords.
+ * Centralized logic used by Worker and UI.
+ */
+export const detectChannelByName = (name: string): string => {
+    const n = name.toLowerCase();
+    
+    // Internet / Marketplace
+    if (n.includes('wildberries') || n.includes('вайлдберриз') || n.includes('ozon') || n.includes('озон') || n.includes('яндекс') || n.includes('интернет') || n.includes('e-com') || n.includes('маркетплейс') || n.includes('сбермаркет')) {
+        return 'Интернет-канал';
+    }
+    
+    // Breeder (Priority)
+    if (n.includes('питомник') || n.includes('заводчик') || n.includes('клуб ') || n.includes('п-к') || n.includes('приют') || n.includes('кинолог') || n.includes('бридер')) {
+        return 'Бридер канал';
+    }
+    
+    // Vet
+    if (n.includes('вет') || n.includes('клиника') || n.includes('госпиталь') || n.includes('врач') || n.includes('аптека')) {
+        return 'Ветеринарный канал';
+    }
+    
+    // FMCG / Networks
+    if (n.includes('ашан') || n.includes('лента') || n.includes('магнит') || n.includes('пятерочка') || n.includes('перекресток') || n.includes('окей') || n.includes('метро') || n.includes('гипермаркет') || n.includes('супермаркет')) {
+        return 'FMCG';
+    }
+    
+    // Retail
+    if (n.includes('ип ') || n.includes('зоо') || n.includes('магазин') || n.includes('лавка') || n.includes('корм') || n.includes('товары')) {
+        return 'Зоо розница';
+    }
+    
+    return 'Не определен';
+};
+
+/**
  * Applies the current filter state to the aggregated data.
  */
 export const applyFilters = (data: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
