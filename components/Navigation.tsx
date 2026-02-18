@@ -58,20 +58,6 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
               </div>
             </div>
           </div>
-
-          {/* Quick status chip */}
-          <div className="mt-4 flex items-center justify-between rounded-2xl border border-slate-200/70 bg-white/60 px-3 py-2 shadow-[0_10px_30px_rgba(15,23,42,0.06)]">
-            <div className="flex items-center gap-2">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
-              </span>
-              <span className="text-xs font-bold text-slate-700">Система активна</span>
-            </div>
-            <span className="text-[10px] font-extrabold text-slate-500 bg-slate-900/5 border border-slate-200 rounded-xl px-2 py-1">
-              LIVE
-            </span>
-          </div>
         </div>
 
         {/* Nav items */}
