@@ -41,11 +41,11 @@ const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): 
 // Safe float parsing (handles commas, spaces)
 const parseCleanFloat = (val: any): number => {
     if (typeof val === 'number') return val;
-    if (!val) return 0;
+    if (val === null || val === undefined || val === '') return NaN;
     const strVal = String(val);
     const cleaned = strVal.replace(/[\s\u00A0]/g, '').replace(',', '.');
     const floatVal = parseFloat(cleaned);
-    return isNaN(floatVal) ? 0 : floatVal;
+    return Number.isFinite(floatVal) ? floatVal : NaN;
 };
 
 const isValidCoordPair = (lat: number, lon: number) => {
@@ -165,7 +165,7 @@ export function processBatch(
         }
 
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
-        const totalWeight = parseCleanFloat(weightRaw);
+        const totalWeight = parseCleanFloat(weightRaw) || 0; // Fallback to 0 if NaN
         // 3. Divide weight
         const weightPerBrand = brands.length > 0 ? totalWeight / brands.length : 0;
 
@@ -179,7 +179,7 @@ export function processBatch(
                     brand: brand, 
                     packaging: packaging, 
                     rm, 
-                    city: parsed.city,
+                    city: parsed.city, 
                     region: reg, 
                     fact: 0, 
                     potential: 0, 
@@ -194,11 +194,19 @@ export function processBatch(
             if (!uniquePlottableClients.has(normAddr)) {
                 const okb = okbCoordIndex.get(normAddr);
                 
-                // FIXED COORDS LOGIC: Use nullish coalescing (??) instead of ||
+                // FIXED COORDS LOGIC: Use nullish coalescing (??) instead of ||, default to NaN
+                const finalLat = cacheEntry?.lat ?? okb?.lat ?? NaN;
+                const finalLon = cacheEntry?.lon ?? okb?.lon ?? NaN;
+
+                // Ensure valid coordinates before creating MapPoint to prevent UI errors or "0,0" points
+                if (!isValidCoordPair(finalLat, finalLon)) {
+                    continue;
+                }
+
                 uniquePlottableClients.set(normAddr, {
                     key: normAddr,
-                    lat: cacheEntry?.lat ?? okb?.lat,
-                    lon: cacheEntry?.lon ?? okb?.lon,
+                    lat: finalLat,
+                    lon: finalLon,
                     status: 'match',
                     name: String(row[clientNameHeader || ''] || 'ТТ'),
                     address: rawAddr, 
@@ -206,7 +214,7 @@ export function processBatch(
                     region: reg, 
                     rm, 
                     brand: brand, 
-                    packaging: packaging,
+                    packaging: packaging, 
                     type: channel,
                     originalRow: row, 
                     fact: 0,
@@ -221,7 +229,6 @@ export function processBatch(
             }
         }
     }
-
     return {
         aggregatedData,
         unidentifiedRows,
