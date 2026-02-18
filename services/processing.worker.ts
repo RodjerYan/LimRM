@@ -48,31 +48,86 @@ let state_filterEnd: string | null = null;
 const CHECKPOINT_THRESHOLD = 50000; 
 const UI_UPDATE_THRESHOLD = 20000;
 
+// --- OPTIMIZATION CACHES ---
+type RowKeyIndex = {
+  exact: Map<string, string>; // normKey -> originalKey
+  partial: Array<{ norm: string; original: string }>; // for includes()
+};
+
+const rowIndexCache = new WeakMap<object, RowKeyIndex>();
+
 const normalizeHeaderKey = (key: string): string => {
     if (!key) return '';
     return String(key).toLowerCase().replace(/[\r\n\t\s\u00A0]/g, '').trim();
 };
 
-// INLINE HELPER: Robust value finding to ensure we don't miss columns due to import caching
-const findValueInRowLocal = (row: any, keywords: string[]): string => {
+const buildRowKeyIndex = (row: any): RowKeyIndex => {
+  if (!row || typeof row !== 'object') return { exact: new Map(), partial: [] };
+  const cached = rowIndexCache.get(row);
+  if (cached) return cached;
+
+  const exact = new Map<string, string>();
+  const partial: Array<{ norm: string; original: string }> = [];
+
+  for (const k of Object.keys(row)) {
+    const nk = normalizeHeaderKey(k);
+    if (!nk) continue;
+    // save first occurrence
+    if (!exact.has(nk)) exact.set(nk, k);
+    partial.push({ norm: nk, original: k });
+  }
+
+  const idx = { exact, partial };
+  rowIndexCache.set(row, idx);
+  return idx;
+};
+
+// Cache for heavy normalizeAddress
+const addrNormCache = new Map<string, string>();
+const normalizeAddressCached = (addr: string): string => {
+  const key = String(addr || '');
+  const hit = addrNormCache.get(key);
+  if (hit !== undefined) return hit;
+  const norm = normalizeAddress(key);
+  // prevent infinite growth
+  if (addrNormCache.size > 200000) addrNormCache.clear();
+  addrNormCache.set(key, norm);
+  return norm;
+};
+
+// Cache for "cleaning name" (dedupKey/uniqueClientKey)
+const cleanNameCache = new Map<string, string>();
+const cleanNameCached = (name: string): string => {
+  const key = String(name || '');
+  const hit = cleanNameCache.get(key);
+  if (hit !== undefined) return hit;
+  const cleaned = key.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
+  if (cleanNameCache.size > 200000) cleanNameCache.clear();
+  cleanNameCache.set(key, cleaned);
+  return cleaned;
+};
+
+// INLINE HELPER: Robust value finding with index support
+const findValueInRowLocal = (row: any, keywords: string[], idx?: RowKeyIndex): string => {
     if (!row) return '';
-    const rowKeys = Object.keys(row);
-    
-    // 1. Exact match (fast)
+    const index = idx ?? buildRowKeyIndex(row);
+
+    // 1) Exact match (fast)
     for (const keyword of keywords) {
         const k = normalizeHeaderKey(keyword);
-        const exactKey = rowKeys.find(rKey => normalizeHeaderKey(rKey) === k);
+        const exactKey = index.exact.get(k);
         if (exactKey && row[exactKey] != null) return String(row[exactKey]);
     }
 
-    // 2. Partial match (slower but covers "Адрес (доставки)" etc)
+    // 2) Partial match (slower)
     for (const keyword of keywords) {
         const k = normalizeHeaderKey(keyword);
-        const boundaryKey = rowKeys.find(rKey => {
-            const normRKey = normalizeHeaderKey(rKey);
-            return normRKey.includes(k);
-        });
-        if (boundaryKey && row[boundaryKey] != null) return String(row[boundaryKey]);
+        for (const it of index.partial) {
+            if (it.norm.includes(k)) {
+                const key = it.original;
+                if (key && row[key] != null) return String(row[key]);
+            }
+        }
     }
     return '';
 };
@@ -146,8 +201,8 @@ const getMonthFromDay = (dayKey: string): string => {
     return dayKey.slice(0, 7);
 };
 
-const getCanonicalRegion = (row: any): string => {
-    const subjectValue = findValueInRowLocal(row, ['субъект', 'регион', 'область']);
+const getCanonicalRegion = (row: any, idx?: RowKeyIndex): string => {
+    const subjectValue = findValueInRowLocal(row, ['субъект', 'регион', 'область'], idx);
     if (subjectValue && subjectValue.trim()) {
         const cleanVal = subjectValue.trim();
         let lowerVal = cleanVal.toLowerCase().replace(/ё/g, 'е').replace(/[.,]/g, ' ').replace(/\s+/g, ' ');
@@ -233,6 +288,8 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     
     if (okbData) {
         okbData.forEach(row => {
+            // No rowIdx needed here as okbData structure is usually standard, 
+            // but if variable, we could use it. For now simple.
             const reg = getCanonicalRegion(row);
             if (reg !== 'Регион не определен') {
                 state_okbRegionCounts[reg] = (state_okbRegionCounts[reg] || 0) + 1;
@@ -274,8 +331,9 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     // This ensures we clean up old errors even if data arrays were weirdly empty
     if (restoredUnidentified) {
         const hasValidCoordsRowLocal = (row: any) => {
-            const latRaw = findValueInRowLocal(row, ['широта', 'lat', 'ldt', 'latitude', 'geo_lat', 'y', 'lat_clean']);
-            const lonRaw = findValueInRowLocal(row, ['долгота', 'lon', 'lng', 'longitude', 'geo_lon', 'x', 'lon_clean']);
+            const idx = buildRowKeyIndex(row);
+            const latRaw = findValueInRowLocal(row, ['широта', 'lat', 'ldt', 'latitude', 'geo_lat', 'y', 'lat_clean'], idx);
+            const lonRaw = findValueInRowLocal(row, ['долгота', 'lon', 'lng', 'longitude', 'geo_lon', 'x', 'lon_clean'], idx);
             const lat = parseCleanFloat(latRaw);
             const lon = parseCleanFloat(lonRaw);
             return lat !== 0 && lon !== 0;
@@ -286,9 +344,10 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
 
         // Re-populate dedup set from valid errors only
         state_unidentifiedRows.forEach(row => {
-            const normAddr = normalizeAddress(findAddressInRow(row.rowData) || '');
-            const clientName = findValueInRowLocal(row.rowData, ['name', 'client', 'наименование']) || '';
-            const dedupKey = `${normAddr}#${clientName.toLowerCase().replace(/[^a-zа-я0-9]/g, '')}`;
+            const idx = buildRowKeyIndex(row.rowData);
+            const normAddr = normalizeAddressCached(findAddressInRow(row.rowData) || '');
+            const clientName = findValueInRowLocal(row.rowData, ['name', 'client', 'наименование'], idx) || '';
+            const dedupKey = `${normAddr}#${cleanNameCached(clientName)}`;
             state_unidentifiedKeySet.add(dedupKey);
         });
     }
@@ -328,8 +387,8 @@ function restoreChunk(payload: { chunkData: any, progress?: number }, postMessag
             if (!safeKey) {
                 const addr = client.address || 'unknown';
                 const name = client.name || client.clientName || 'unknown';
-                const normAddr = normalizeAddress(addr);
-                const normName = name.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
+                const normAddr = normalizeAddressCached(addr);
+                const normName = cleanNameCached(name);
                 safeKey = `${normAddr}#${normName}`;
             }
             const rawDate = getValueFuzzy(client, ['sale_date', 'saleDate', 'date', 'period', 'day', 'дата', 'дата документа']);
@@ -613,7 +672,10 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         const row = jsonData[i];
         state_seenRowsCount++; 
         
-        const dateRaw = findValueInRowLocal(row, ['дата', 'период', 'месяц', 'date', 'period', 'day', 'sale_date']);
+        // Build index ONCE per row for fast lookups
+        const rowIdx = buildRowKeyIndex(row);
+
+        const dateRaw = findValueInRowLocal(row, ['дата', 'период', 'месяц', 'date', 'period', 'day', 'sale_date'], rowIdx);
         let dayKey = parseDayKey(dateRaw);
         const finalDayKey = dayKey || 'unknown';
 
@@ -642,15 +704,17 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         if (!rm) rm = 'Unknown_RM';
 
         // --- COORDINATE EXTRACTION ---
-        const latRaw = findValueInRowLocal(row, ['широта', 'lat', 'ldt', 'latitude', 'широта (lat)', 'geo_lat', 'y', 'lat_clean']);
-        const lonRaw = findValueInRowLocal(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x', 'lon_clean']);
+        const latRaw = findValueInRowLocal(row, ['широта', 'lat', 'ldt', 'latitude', 'широта (lat)', 'geo_lat', 'y', 'lat_clean'], rowIdx);
+        const lonRaw = findValueInRowLocal(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x', 'lon_clean'], rowIdx);
         
         const rowLat = parseCleanFloat(latRaw);
         const rowLon = parseCleanFloat(lonRaw);
         const hasRowCoords = (rowLat !== 0) && (rowLon !== 0);
 
         const parsed = parseRussianAddress(rawAddr);
-        const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
+        
+        // Optimized: Cached normalization
+        const normAddr = normalizeAddressCached(parsed.finalAddress || rawAddr);
         const cacheEntry = state_cacheAddressMap.get(normAddr);
 
         if (cacheEntry && cacheEntry.isDeleted) continue;
@@ -658,24 +722,18 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         const okb = state_okbCoordIndex.get(normAddr);
 
         // FIX #1 & #2: Strict Coordinate Logic
-        // Priority: Explicit Row Coords > Cache > OKB Lookup
-        // Use nullish coalescing (??) to correctly handle 0/null vs undefined
         const effectiveLatRaw = hasRowCoords ? rowLat : (cacheEntry?.lat ?? okb?.lat);
         const effectiveLonRaw = hasRowCoords ? rowLon : (cacheEntry?.lon ?? okb?.lon);
 
-        // Ensure we strictly have numbers
         const nLat = typeof effectiveLatRaw === 'number' ? effectiveLatRaw : parseCleanFloat(effectiveLatRaw);
         const nLon = typeof effectiveLonRaw === 'number' ? effectiveLonRaw : parseCleanFloat(effectiveLonRaw);
 
-        // Valid if numbers are finite and non-zero
         const hasAnyCoords = !isNaN(nLat) && !isNaN(nLon) && nLat !== 0 && nLon !== 0;
-
-        // "Unidentified" means we tried everything (Row, Cache, OKB) and still have no coords,
-        // AND the original row had an error text marker.
         const isUnidentifiedByText = isSpecificErrorMarker(latRaw) || isSpecificErrorMarker(lonRaw);
 
         if (!hasAnyCoords && isUnidentifiedByText) {
-            const dedupKey = `${normAddr}#${(clientName || '').toLowerCase().replace(/[^a-zа-я0-9]/g, '')}`;
+            // Optimized: Cached string cleaning
+            const dedupKey = `${normAddr}#${cleanNameCached(clientName || '')}`;
             if (!state_unidentifiedKeySet.has(dedupKey)) {
                 state_unidentifiedKeySet.add(dedupKey);
                 state_unidentifiedRows.push({
@@ -687,28 +745,27 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
             }
         }
 
-        let channel = findValueInRowLocal(row, ['канал продаж', 'тип тт', 'сегмент']);
+        let channel = findValueInRowLocal(row, ['канал продаж', 'тип тт', 'сегмент'], rowIdx);
         const detectedChannel = detectChannelByName(clientName);
 
-        // Forced overwrite if specific channel detected (e.g. Breeder from name)
-        // or if channel is missing/generic
         if (detectedChannel !== 'Не определен') {
              channel = detectedChannel;
         } else if (!channel || channel.length < 2) {
              channel = 'Не определен';
         }
 
-        const rawBrand = findValueInRowLocal(row, ['торговая марка', 'бренд']) || 'Без бренда';
+        const rawBrand = findValueInRowLocal(row, ['торговая марка', 'бренд'], rowIdx) || 'Без бренда';
         const brands = rawBrand.split(/[,;|\r\n]+/).map((b: string) => b.trim()).filter((b: string) => b.length > 0);
-        const packaging = findValueInRowLocal(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
+        const packaging = findValueInRowLocal(row, ['фасовка', 'упаковка', 'вид упаковки'], rowIdx) || 'Не указана';
         
-        const reg = getCanonicalRegion(row) || parsed.region;
+        // Optimized: Uses rowIdx for lookups
+        const reg = getCanonicalRegion(row, rowIdx) || parsed.region;
 
-        const weightRaw = findValueInRowLocal(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
+        const weightRaw = findValueInRowLocal(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн'], rowIdx);
         const totalWeight = parseCleanFloat(weightRaw);
         const weightPerBrand = brands.length > 0 ? totalWeight / brands.length : 0;
         
-        const normName = clientName.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
+        const normName = cleanNameCached(clientName);
         const uniqueClientKey = (normName.length > 2 && normName !== 'тт') ? `${normAddr}#${normName}` : normAddr;
 
         for (const brand of brands) {

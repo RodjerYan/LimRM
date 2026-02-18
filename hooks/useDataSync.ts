@@ -35,6 +35,18 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
     const applyDeltasToData = useCallback((rows: AggregatedDataRow[], deltas: DeltaItem[]) => {
         if (!deltas || deltas.length === 0) return rows;
         console.info(`🔄 [Sync] Applying ${deltas.length} deltas/savepoints...`);
+        
+        // Cache normalization results to avoid recalculating for every row
+        const normCache = new Map<string, string>();
+        const normAddr = (addr: any) => {
+          const key = String(addr || '');
+          const hit = normCache.get(key);
+          if (hit !== undefined) return hit;
+          const v = normalizeAddress(key);
+          normCache.set(key, v);
+          return v;
+        };
+
         const changesByKey = new Map<string, DeltaItem>();
         const sortedDeltas = [...deltas].sort((a, b) => a.timestamp - b.timestamp);
         sortedDeltas.forEach(currentDelta => {
@@ -50,13 +62,13 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
         const changesByAddress = new Map<string, DeltaItem>();
         changesByKey.forEach(delta => {
             const baseKeyAddr = delta.key.includes('#') ? delta.key.split('#')[0] : delta.key;
-            const normKeyAddr = normalizeAddress(baseKeyAddr);
+            const normKeyAddr = normAddr(baseKeyAddr);
             if (normKeyAddr) changesByAddress.set(normKeyAddr, delta);
         });
         return rows.map(group => {
             let groupModified = false;
             const activeClients = group.clients.reduce((acc, client) => {
-                const normClientAddr = normalizeAddress(client.address);
+                const normClientAddr = normAddr(client.address);
                 let relevantDelta = changesByKey.get(client.key);
                 if (!relevantDelta && normClientAddr.length > 8) relevantDelta = changesByAddress.get(normClientAddr);
                 if (!relevantDelta) { acc.push(client); return acc; }
@@ -72,7 +84,7 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                     delete (payload as any).growthPercentage;
                     delete (payload as any).monthlyFact;
 
-                    const isAddressChanged = payload.address && (normalizeAddress(payload.address) !== normalizeAddress(client.address));
+                    const isAddressChanged = payload.address && (normAddr(payload.address) !== normAddr(client.address));
                     const hasNewCoords = payload.lat !== undefined && payload.lon !== undefined;
                     
                     const mergedClient = { ...client, ...payload, status: (payload.lat && payload.lon) ? 'match' : client.status };
@@ -447,18 +459,6 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                         console.warn('[Sync] Snapshot lacks monthly details. Skipping period normalization to preserve data.');
                     }
                 }
-
-                // --- DEBUG INSPECTION ---
-                if (finalData.length > 0) {
-                    const sample = finalData[0]?.clients?.slice(0, 5).map(c => ({
-                        key: c.key,
-                        fact: c.fact,
-                        hasMonthly: !!c.monthlyFact,
-                        monthlyLen: c.monthlyFact ? Object.keys(c.monthlyFact).length : 0
-                    })) || [];
-                    console.log('[SYNC] FINAL DATA SAMPLE:', sample);
-                }
-                // -----------------------
 
                 enrichWithAbcCategories(finalData);
                 setAllData(finalData);

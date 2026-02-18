@@ -449,6 +449,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             L.control.zoom({ position: 'topleft' }).addTo(map);
             layerControl.current = L.control.layers({}, {}, { position: 'bottomleft' }).addTo(map);
 
+            // OPTIMIZATION: Initialize Layers ONCE and add to control
+            potentialClientMarkersLayer.current = L.layerGroup().addTo(map);
+            activeClientMarkersLayer.current = L.layerGroup().addTo(map);
+            layerControl.current.addOverlay(potentialClientMarkersLayer.current, '<span class="text-blue-500 font-bold">●</span> Потенциал (ОКБ)');
+            layerControl.current.addOverlay(activeClientMarkersLayer.current, '<span class="text-emerald-500 font-bold">●</span> Активные ТТ');
+
             const legend = new (L.Control.extend({
                 onAdd: function() { const div = L.DomUtil.create('div', 'info legend'); legendContainerRef.current = div; return div; },
                 onRemove: function() { legendContainerRef.current = null; }
@@ -587,10 +593,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const standardRenderer = L.canvas({ pane: 'markersPane' });
         const activeRenderer = L.canvas({ pane: 'activeMarkersPane' }); 
 
-        if (potentialClientMarkersLayer.current) { map.removeLayer(potentialClientMarkersLayer.current); layerControl.current.removeLayer(potentialClientMarkersLayer.current); }
-        potentialClientMarkersLayer.current = L.layerGroup();
-        if (activeClientMarkersLayer.current) { map.removeLayer(activeClientMarkersLayer.current); layerControl.current.removeLayer(activeClientMarkersLayer.current); }
-        activeClientMarkersLayer.current = L.layerGroup(); activeClientMarkersRef.current.clear();
+        // OPTIMIZATION: Clear layers instead of recreating them
+        (potentialClientMarkersLayer.current as any)?.clearLayers?.();
+        (activeClientMarkersLayer.current as any)?.clearLayers?.();
+        activeClientMarkersRef.current.clear();
     
         const pointsForBounds: L.LatLngExpression[] = [];
 
@@ -733,12 +739,16 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         });
 
-        if (overlayMode !== 'abc') potentialClientMarkersLayer.current.addTo(map);
-        activeClientMarkersLayer.current.addTo(map);
+        // Optimization: Layers are already added at initialization.
+        // We only toggle potential layer visibility.
+        if (overlayMode === 'abc') {
+            map.removeLayer(potentialClientMarkersLayer.current!);
+        } else {
+            if (!map.hasLayer(potentialClientMarkersLayer.current!)) {
+                map.addLayer(potentialClientMarkersLayer.current!);
+            }
+        }
         
-        if (overlayMode !== 'abc') layerControl.current.addOverlay(potentialClientMarkersLayer.current, '<span class="text-blue-500 font-bold">●</span> Потенциал (ОКБ)');
-        layerControl.current.addOverlay(activeClientMarkersLayer.current, '<span class="text-emerald-500 font-bold">●</span> Активные ТТ');
-
         if (pointsForBounds.length > 0 && !flyToClientKey) { map.fitBounds(L.latLngBounds(pointsForBounds).pad(0.1)); }
     }, [potentialClients, activeClients, overlayMode, getLastSaleDateForGroup]);
 
