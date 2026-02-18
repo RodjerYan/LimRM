@@ -10,6 +10,7 @@ import TopBar from '../TopBar';
 import DataTable from '../DataTable';
 import { ChartCard, ChannelBarChart } from '../charts/PremiumCharts';
 import { toDayKey } from '../../utils/dataUtils';
+import { useAuth } from '../auth/AuthContext';
 
 import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState, MapPoint } from '../../types';
 import {
@@ -21,13 +22,16 @@ import {
   UsersIcon,
   FilterIcon,
   FactIcon,
-  CloudDownloadIcon // Added icon
+  CloudDownloadIcon,
+  CheckIcon
 } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
 import { Card, CardHeader, CardBody } from '../ui/Card';
 import { Chip } from '../ui/Chip';
 import { StatTile } from '../ui/StatTile';
+
+const MIN_FACT = 0.001;
 
 interface AdaptaProps {
   processingState: FileProcessingState;
@@ -76,6 +80,7 @@ interface OutlierItem {
 }
 
 const Adapta: React.FC<AdaptaProps> = (props) => {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'ingest' | 'hygiene'>('ingest');
   const [selectedOutlier, setSelectedOutlier] = useState<OutlierItem | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
@@ -83,17 +88,20 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   
   // ETL State
   const [isEtlRunning, setIsEtlRunning] = useState(false);
+  
+  // Strict Mode for Date Filtering (Default: false -> Show undated items to prevent "missing data" confusion)
+  const [strictMode, setStrictMode] = useState(false);
 
   // Determine Effective Period
   const effectiveStart = props.startDate;
   const effectiveEnd = props.endDate;
 
-  // --- DEBUG LOGGING ---
+  // UX Improvement: Auto-reset strict mode when dates are cleared to prevent confusion
   useEffect(() => {
-    if (props.uploadedData?.length) {
-        // console.log('[ADAPTA] Data Loaded. Rows:', props.uploadedData.length);
+    if (!effectiveStart && !effectiveEnd) {
+      setStrictMode(false);
     }
-  }, [props.uploadedData]);
+  }, [effectiveStart, effectiveEnd]);
 
   // Extract unique RMs for the dropdown
   const availableRMs = useMemo(() => {
@@ -116,6 +124,19 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       );
   }, [props.uploadedData]);
 
+  // Dynamic Greeting based on User's local time
+  const dynamicSubtitle = useMemo(() => {
+    const hour = new Date().getHours();
+    let greeting = 'Доброй ночи';
+    
+    if (hour >= 6 && hour < 11) greeting = 'Доброе утро';
+    else if (hour >= 11 && hour < 17) greeting = 'Добрый день';
+    else if (hour >= 17 && hour < 22) greeting = 'Добрый вечер';
+    
+    const userName = user?.firstName || 'Пользователь';
+    return `${greeting}, ${userName}. Для расчёта продаж выберите период в календаре и нажмите кнопку "Загрузить"`;
+  }, [user]);
+
   useEffect(() => {
     if (props.openChannelRequest) {
       setSelectedChannel(props.openChannelRequest);
@@ -123,11 +144,24 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     }
   }, [props.openChannelRequest, props.onConsumeOpenChannelRequest]);
 
-  const getClientFact = useCallback((client: MapPoint) => {
+  // Helper to ensure unique identification even if primary key is missing
+  const getSafeKey = useCallback((c: MapPoint) => {
+    const k = (c?.key ?? '').toString().trim();
+    if (k) return k;
+
+    // fallback key, stable-ish for “no key” cases
+    return `__nokey__:${(c.address || '')}|${(c.name || '')}|${(c.rm || '')}|${(c.city || '')}|${(c.region || '')}`
+      .toLowerCase()
+      .trim();
+  }, []);
+
+  // Updated getClientFact: Returns split metrics for precise handling
+  const getClientFact = useCallback((client: MapPoint): { inPeriod: number, undated: number, source: 'daily'|'monthly'|'undated'|'none' } => {
     const fStart = toDayKey(effectiveStart);
     const fEnd = toDayKey(effectiveEnd);
     const hasFilter = Boolean(fStart || fEnd);
 
+    // 1. Try Daily Precision first (Highest Accuracy)
     if (client.dailyFact && Object.keys(client.dailyFact).length > 0) {
         let sum = 0;
         for (const [dayKey, val] of Object.entries(client.dailyFact)) {
@@ -141,9 +175,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             }
             sum += (val as number) || 0;
         }
-        return sum;
+        return { inPeriod: sum, undated: 0, source: 'daily' };
     }
 
+    // 2. Fallback to Monthly (Low Accuracy for partial months)
     if (client.monthlyFact && Object.keys(client.monthlyFact).length > 0) {
         let sum = 0;
         const startMonth = fStart ? fStart.slice(0, 7) : null;
@@ -159,23 +194,38 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
              }
              sum += (val as number) || 0;
         }
-        return sum;
+        return { inPeriod: sum, undated: 0, source: 'monthly' };
     }
 
-    return client.fact || 0;
-  }, [effectiveStart, effectiveEnd]);
+    // 3. No temporal data
+    const raw = client.fact || 0;
+    if (hasFilter) {
+        // Filter is active but client has no dates.
+        // inPeriod is 0 because we don't know the date.
+        // undated gets the value. Consumer decides whether to show it (based on strictMode).
+        return { inPeriod: 0, undated: raw, source: 'undated' };
+    }
+    
+    // No filter: Undated data matches the "all time" view (effectively inPeriod)
+    return { inPeriod: raw, undated: 0, source: 'undated' };
+
+  }, [effectiveStart, effectiveEnd, toDayKey]);
 
   // 1. Total Universe
   const totalClientKeys = useMemo(() => {
       const set = new Set<string>();
       props.uploadedData?.forEach(row => {
-          row.clients.forEach(c => { if (c?.key) set.add(c.key); });
+          row.clients.forEach(c => { 
+              const k = getSafeKey(c);
+              if (k) set.add(k); 
+          });
       });
       return set;
-  }, [props.uploadedData]);
+  }, [props.uploadedData, getSafeKey]);
 
-  // 2. Period Universe (Filtered by Date AND RM)
-  const periodClientKeys = useMemo(() => {
+  // 2. Effective Universe (Filtered by Date, RM, and Strict Mode)
+  // Renamed from periodClientKeys to better reflect it might include undated records in Soft Mode
+  const effectiveUniverseKeys = useMemo(() => {
     const set = new Set<string>();
     if (props.uploadedData) {
       props.uploadedData.forEach((row) => {
@@ -183,16 +233,21 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         if (props.selectedRm && row.rm !== props.selectedRm) return;
 
         row.clients.forEach((c) => {
-          const fact = getClientFact(c);
-          if (fact > 0.001) set.add(c.key);
+          const { inPeriod, undated } = getClientFact(c);
+          const effectiveFact = inPeriod + (strictMode ? 0 : undated);
+          
+          if (effectiveFact > MIN_FACT) {
+              const k = getSafeKey(c);
+              if (k) set.add(k);
+          }
         });
       });
     }
     return set;
-  }, [props.uploadedData, getClientFact, props.selectedRm]);
+  }, [props.uploadedData, getClientFact, props.selectedRm, strictMode, getSafeKey]);
 
   const totalUniqueCount = totalClientKeys.size;
-  const periodUniqueCount = periodClientKeys.size;
+  const effectiveUniqueCount = effectiveUniverseKeys.size;
   const displayActiveCount = props.uploadedData ? totalUniqueCount : props.activeClientsCount;
 
   const healthScore = useMemo(() => {
@@ -211,11 +266,13 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       .filter(row => !props.selectedRm || row.rm === props.selectedRm) // Apply RM Filter
       .map((row) => {
         const activeClients = row.clients
-          .map((client) => ({
-            ...client,
-            fact: getClientFact(client),
-          }))
-          .filter((c) => (c.fact || 0) > 0);
+          .map((client) => {
+             const { inPeriod, undated } = getClientFact(client);
+             const fact = inPeriod + (strictMode ? 0 : undated);
+             const k = getSafeKey(client);
+             return { ...client, key: k, fact };
+          })
+          .filter((c) => (c.fact || 0) > MIN_FACT);
 
         const rowFact = activeClients.reduce((sum, c) => sum + (c.fact || 0), 0);
 
@@ -225,10 +282,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             fact: rowFact,
         };
       })
-      .filter((row) => row.fact > 0);
+      .filter((row) => row.fact > MIN_FACT);
 
     return detectOutliers(relevantData);
-  }, [props.uploadedData, getClientFact, props.selectedRm]);
+  }, [props.uploadedData, getClientFact, props.selectedRm, strictMode, getSafeKey]);
 
   const channelStats = useMemo(() => {
     if (!props.uploadedData || props.uploadedData.length === 0) return [];
@@ -240,15 +297,19 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       if (props.selectedRm && row.rm !== props.selectedRm) return;
 
       row.clients.forEach((client) => {
-        if (!periodClientKeys.has(client.key)) return;
+        // Direct calculation instead of pre-filtered Set lookup for robustness
+        const { inPeriod, undated } = getClientFact(client);
+        const effectiveFact = inPeriod + (strictMode ? 0 : undated);
 
-        const effectiveFact = getClientFact(client);
+        if (effectiveFact <= MIN_FACT) return;
+
         const type = client.type || 'Не определен';
         if (!acc[type]) acc[type] = { uniqueKeys: new Set(), volume: 0 };
 
-        acc[type].uniqueKeys.add(client.key);
+        const k = getSafeKey(client);
+        acc[type].uniqueKeys.add(k);
         acc[type].volume += effectiveFact;
-        globalUniqueKeys.add(client.key);
+        globalUniqueKeys.add(k);
       });
     });
 
@@ -262,7 +323,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         percentage: totalPeriodCount > 0 ? (data.uniqueKeys.size / totalPeriodCount) * 100 : 0,
       }))
       .sort((a, b) => b.count - a.count);
-  }, [props.uploadedData, getClientFact, periodClientKeys, props.selectedRm]);
+  }, [props.uploadedData, getClientFact, props.selectedRm, strictMode, getSafeKey]);
 
   const groupedChannelData = useMemo(() => {
     if (!selectedChannel || !props.uploadedData) return null;
@@ -274,9 +335,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       if (props.selectedRm && row.rm !== props.selectedRm) return;
 
       row.clients.forEach((c) => {
-        if (!periodClientKeys.has(c.key)) return;
+        // Direct calculation instead of pre-filtered Set lookup
+        const { inPeriod, undated } = getClientFact(c);
+        const effectiveFact = inPeriod + (strictMode ? 0 : undated);
 
-        const effectiveFact = getClientFact(c);
+        if (effectiveFact <= MIN_FACT) return;
 
         if ((c.type || 'Не определен') === selectedChannel) {
           const search = channelSearchTerm.toLowerCase();
@@ -286,10 +349,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             safeLower(c.address).includes(search) ||
             safeLower(c.rm).includes(search)
           ) {
-            if (!uniqueClientsInChannel.has(c.key)) {
-              uniqueClientsInChannel.set(c.key, { ...c, totalFact: 0 });
+            const k = getSafeKey(c);
+            if (!uniqueClientsInChannel.has(k)) {
+              uniqueClientsInChannel.set(k, { ...c, key: k, totalFact: 0 });
             }
-            const existing = uniqueClientsInChannel.get(c.key)!;
+            const existing = uniqueClientsInChannel.get(k)!;
             existing.totalFact += effectiveFact;
           }
         }
@@ -305,7 +369,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       hierarchy[rm][city].push(c);
     });
     return hierarchy;
-  }, [selectedChannel, props.uploadedData, channelSearchTerm, getClientFact, periodClientKeys, props.selectedRm]);
+  }, [selectedChannel, props.uploadedData, channelSearchTerm, getClientFact, props.selectedRm, strictMode, getSafeKey]);
 
   const rowsToDisplay = useMemo(() => {
     if (props.processingState.isProcessing) {
@@ -337,7 +401,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         <div data-tour="topbar">
             <TopBar
                 title="ADAPTA"
-                subtitle="Live Data Ingestion & Quality Control"
+                subtitle={dynamicSubtitle}
                 startDate={props.startDate}
                 endDate={props.endDate}
                 onStartDateChange={props.onStartDateChange}
@@ -348,21 +412,42 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                     if (props.onForceUpdate) props.onForceUpdate();
                 }}
                 extraControls={
-                   availableRMs.length > 0 && props.onRmChange ? (
-                       <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 h-9">
-                          <FilterIcon />
-                          <select 
-                             value={props.selectedRm || ''} 
-                             onChange={(e) => props.onRmChange!(e.target.value)}
-                             className="bg-transparent text-sm text-slate-800 outline-none w-[160px] cursor-pointer"
-                          >
-                             <option value="">Все менеджеры</option>
-                             {availableRMs.map(rm => (
-                                 <option key={rm} value={rm}>{rm}</option>
-                             ))}
-                          </select>
-                       </div>
-                   ) : null
+                   <div className="flex items-center gap-2">
+                       {/* RM Selector */}
+                       {availableRMs.length > 0 && props.onRmChange && (
+                           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 h-9">
+                              <FilterIcon />
+                              <select 
+                                 value={props.selectedRm || ''} 
+                                 onChange={(e) => props.onRmChange!(e.target.value)}
+                                 className="bg-transparent text-sm text-slate-800 outline-none w-[160px] cursor-pointer"
+                              >
+                                 <option value="">Все менеджеры</option>
+                                 {availableRMs.map(rm => (
+                                     <option key={rm} value={rm}>{rm}</option>
+                                 ))}
+                              </select>
+                           </div>
+                       )}
+
+                       {/* Strict Mode Toggle (Only visible if filtering is potentially active) */}
+                       {hasTemporalData && (effectiveStart || effectiveEnd) && (
+                            <button 
+                                onClick={() => setStrictMode(!strictMode)}
+                                className={`flex items-center gap-2 px-3 h-9 rounded-2xl border text-xs font-bold transition-all ${
+                                    strictMode 
+                                    ? 'bg-indigo-100 text-indigo-700 border-indigo-200' 
+                                    : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
+                                }`}
+                                title={strictMode 
+                                    ? "Включено: скрывать данные без привязки к дате (строгий фильтр)" 
+                                    : "Выключено: показывать также данные без дат (мягкий фильтр)"}
+                            >
+                                <div className={`w-3 h-3 rounded-full border ${strictMode ? 'bg-indigo-500 border-indigo-500' : 'bg-white border-slate-300'}`} />
+                                <span className="whitespace-nowrap">Строгий период</span>
+                            </button>
+                       )}
+                   </div>
                 }
             />
         </div>
@@ -390,24 +475,38 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       </Motion>
 
       {/* Logic: Database exists but Filter hides everything */}
-      {displayActiveCount > 0 && periodUniqueCount === 0 && (
+      {displayActiveCount > 0 && effectiveUniqueCount === 0 && (
         <Motion delayMs={80}>
           <EmptyState
             kind="noResults"
             tone="info"
             title="По выбранному периоду данных нет"
-            description={`В базе ${displayActiveCount.toLocaleString()} клиентов, но в выбранном периоде (или для выбранного РМ) продаж не найдено.`}
+            description={
+                strictMode 
+                ? `В базе ${displayActiveCount.toLocaleString()} клиентов, но в выбранном "Строгом периоде" продаж не найдено.` 
+                : `В базе ${displayActiveCount.toLocaleString()} клиентов, но данных по ним не найдено (даже без дат).`
+            }
             action={
-              <button
-                onClick={() => { 
-                    props.onStartDateChange(''); 
-                    props.onEndDateChange(''); 
-                    if (props.onRmChange) props.onRmChange('');
-                }}
-                className="rounded-2xl px-4 py-2.5 text-sm font-semibold bg-gradient-to-r from-indigo-600 to-sky-500 text-white shadow-[0_14px_40px_rgba(99,102,241,0.22)] hover:from-indigo-500 hover:to-sky-400 transition-all"
-              >
-                Сбросить фильтры
-              </button>
+              <div className="flex gap-2">
+                  <button
+                    onClick={() => { 
+                        props.onStartDateChange(''); 
+                        props.onEndDateChange(''); 
+                        if (props.onRmChange) props.onRmChange('');
+                    }}
+                    className="rounded-2xl px-4 py-2.5 text-sm font-semibold bg-gradient-to-r from-indigo-600 to-sky-500 text-white shadow-[0_14px_40px_rgba(99,102,241,0.22)] hover:from-indigo-500 hover:to-sky-400 transition-all"
+                  >
+                    Сбросить фильтры
+                  </button>
+                  {strictMode && (
+                      <button 
+                        onClick={() => setStrictMode(false)}
+                        className="rounded-2xl px-4 py-2.5 text-sm font-bold bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 transition-all"
+                      >
+                          Выключить строгий режим
+                      </button>
+                  )}
+              </div>
             }
           />
         </Motion>
@@ -418,68 +517,53 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
           {/* Left stack */}
           <div className="space-y-6">
             <Motion delayMs={100}>
-              {/* Cloud Engine card */}
-              <Card className="relative overflow-hidden">
-                <CardHeader
-                  title="Облачный движок"
-                  subtitle="Статус индекса и потоковой обработки"
-                  right={
-                    props.processingState.isProcessing ? (
-                      <Chip tone="blue">
-                        <span className="inline-flex items-center gap-2">
-                          <LoaderIcon className="w-3 h-3" /> Streaming
-                        </span>
-                      </Chip>
+              {/* Cloud Engine card - White Theme */}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200/70 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+                <div className="flex justify-between items-center mb-4">
+                    <div>
+                        <h3 className="text-sm font-black text-slate-900 uppercase tracking-wide">Облачный движок</h3>
+                        <p className="text-xs text-slate-500 mt-1">Статус индекса и потоковой обработки</p>
+                    </div>
+                    {props.processingState.isProcessing ? (
+                        <div className="flex items-center gap-2 bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-200">
+                             <LoaderIcon className="w-3 h-3 text-indigo-500 animate-spin" />
+                             <span className="text-[10px] font-black text-indigo-600 uppercase tracking-wider">Streaming</span>
+                        </div>
                     ) : (
-                      <Chip tone="lime">
-                        <span className="inline-flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-emerald-500" /> Online
-                        </span>
-                      </Chip>
-                    )
-                  }
-                />
-                <CardBody className="space-y-4">
-                  <div className="flex items-center gap-4">
-                    <div
-                      className={[
-                        'w-12 h-12 rounded-2xl border flex items-center justify-center shadow-sm',
-                        props.dbStatus === 'ready'
-                          ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
-                          : 'bg-slate-50 text-slate-400 border-slate-200',
-                      ].join(' ')}
-                    >
-                      {props.dbStatus === 'ready' ? <SuccessIcon /> : <InfoIcon />}
+                        <div className="flex items-center gap-2 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200">
+                             <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]" />
+                             <span className="text-[10px] font-black text-emerald-600 uppercase tracking-wider">Online</span>
+                        </div>
+                    )}
+                </div>
+                
+                <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 shadow-sm">
+                        {props.dbStatus === 'ready' ? <CheckIcon /> : <InfoIcon />}
                     </div>
                     <div>
-                      <div className="t-h2 leading-none">
-                        {props.dbStatus === 'ready' ? 'Live Index: OK' : 'No Index Found'}
-                      </div>
-                      <div className="t-muted mt-1">
-                        {displayActiveCount.toLocaleString()} уник. ТТ
-                      </div>
+                         <div className="text-base font-bold text-slate-900 leading-tight">
+                            {props.dbStatus === 'ready' ? 'Live Index: OK' : 'No Index Found'}
+                         </div>
+                         <div className="text-xs text-slate-500 mt-1">
+                            {displayActiveCount.toLocaleString('ru-RU')} уник. ТТ
+                         </div>
                     </div>
-                  </div>
+                </div>
 
-                  {props.processingState.isProcessing && (
-                    <div className="pt-2">
-                      <div className="flex justify-between text-[11px] text-slate-500 mb-2 font-semibold uppercase tracking-[0.08em]">
-                        <span>Прогресс индексации</span>
-                        <span className="text-indigo-700">{Math.round(props.processingState.progress)}%</span>
-                      </div>
-                      <div className="w-full bg-slate-200/80 h-2 rounded-full overflow-hidden relative">
-                        <div
-                          className="h-full bg-gradient-to-r from-indigo-600 to-sky-500 transition-all duration-500 shimmer"
-                          style={{ width: `${props.processingState.progress}%` }}
-                        />
-                      </div>
-                      <p className="text-[11px] text-slate-500 mt-2 italic leading-tight">
-                        {props.processingState.message}
-                      </p>
+                {props.processingState.isProcessing && (
+                    <div className="mt-4 pt-4 border-t border-slate-100">
+                        <div className="flex justify-between text-[10px] text-slate-500 mb-1 font-bold uppercase tracking-wider">
+                            <span>Прогресс</span>
+                            <span className="text-indigo-600">{Math.round(props.processingState.progress)}%</span>
+                        </div>
+                        <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                            <div className="h-full bg-gradient-to-r from-indigo-500 to-sky-400 transition-all duration-500" style={{ width: `${props.processingState.progress}%` }} />
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-2 italic truncate">{props.processingState.message}</p>
                     </div>
-                  )}
-                </CardBody>
-              </Card>
+                )}
+              </div>
             </Motion>
 
             {/* Step 1 & Step 2 */}
@@ -567,7 +651,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                             ? 'Чтение снимка…'
                             : hasTemporalData 
                                 ? (effectiveStart || effectiveEnd 
-                                    ? `В периоде: ${periodUniqueCount.toLocaleString()}` 
+                                    ? `В выборке: ${effectiveUniqueCount.toLocaleString()}` 
                                     : 'За все время')
                                 : 'Без дат'
                         }
