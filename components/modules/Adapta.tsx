@@ -10,7 +10,6 @@ import TopBar from '../TopBar';
 import DataTable from '../DataTable';
 import { ChartCard, ChannelBarChart } from '../charts/PremiumCharts';
 import { toDayKey } from '../../utils/dataUtils';
-import { useAuth } from '../auth/AuthContext';
 
 import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState, MapPoint } from '../../types';
 import {
@@ -22,8 +21,7 @@ import {
   UsersIcon,
   FilterIcon,
   FactIcon,
-  CloudDownloadIcon,
-  CheckIcon
+  CloudDownloadIcon // Added icon
 } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
@@ -78,7 +76,6 @@ interface OutlierItem {
 }
 
 const Adapta: React.FC<AdaptaProps> = (props) => {
-  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'ingest' | 'hygiene'>('ingest');
   const [selectedOutlier, setSelectedOutlier] = useState<OutlierItem | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
@@ -90,6 +87,13 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   // Determine Effective Period
   const effectiveStart = props.startDate;
   const effectiveEnd = props.endDate;
+
+  // --- DEBUG LOGGING ---
+  useEffect(() => {
+    if (props.uploadedData?.length) {
+        // console.log('[ADAPTA] Data Loaded. Rows:', props.uploadedData.length);
+    }
+  }, [props.uploadedData]);
 
   // Extract unique RMs for the dropdown
   const availableRMs = useMemo(() => {
@@ -111,19 +115,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
           )
       );
   }, [props.uploadedData]);
-
-  // Dynamic Greeting based on User's local time
-  const dynamicSubtitle = useMemo(() => {
-    const hour = new Date().getHours();
-    let greeting = 'Доброй ночи';
-    
-    if (hour >= 6 && hour < 11) greeting = 'Доброе утро';
-    else if (hour >= 11 && hour < 17) greeting = 'Добрый день';
-    else if (hour >= 17 && hour < 22) greeting = 'Добрый вечер';
-    
-    const userName = user?.firstName || 'Пользователь';
-    return `${greeting}, ${userName}. Для расчёта продаж выберите период в календаре и нажмите кнопку "Загрузить"`;
-  }, [user]);
 
   useEffect(() => {
     if (props.openChannelRequest) {
@@ -346,7 +337,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         <div data-tour="topbar">
             <TopBar
                 title="ADAPTA"
-                subtitle={dynamicSubtitle}
+                subtitle="Live Data Ingestion & Quality Control"
                 startDate={props.startDate}
                 endDate={props.endDate}
                 onStartDateChange={props.onStartDateChange}
@@ -427,53 +418,68 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
           {/* Left stack */}
           <div className="space-y-6">
             <Motion delayMs={100}>
-              {/* Cloud Engine card - White Theme */}
-              <div className="bg-white p-6 rounded-3xl border border-slate-200/70 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
-                <div className="flex justify-between items-center mb-4">
-                    <div>
-                        <h3 className="text-sm font-black text-slate-900 uppercase tracking-wide">Облачный движок</h3>
-                        <p className="text-xs text-slate-500 mt-1">Статус индекса и потоковой обработки</p>
-                    </div>
-                    {props.processingState.isProcessing ? (
-                        <div className="flex items-center gap-2 bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-200">
-                             <LoaderIcon className="w-3 h-3 text-indigo-500 animate-spin" />
-                             <span className="text-[10px] font-black text-indigo-600 uppercase tracking-wider">Streaming</span>
-                        </div>
+              {/* Cloud Engine card */}
+              <Card className="relative overflow-hidden">
+                <CardHeader
+                  title="Облачный движок"
+                  subtitle="Статус индекса и потоковой обработки"
+                  right={
+                    props.processingState.isProcessing ? (
+                      <Chip tone="blue">
+                        <span className="inline-flex items-center gap-2">
+                          <LoaderIcon className="w-3 h-3" /> Streaming
+                        </span>
+                      </Chip>
                     ) : (
-                        <div className="flex items-center gap-2 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200">
-                             <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]" />
-                             <span className="text-[10px] font-black text-emerald-600 uppercase tracking-wider">Online</span>
-                        </div>
-                    )}
-                </div>
-                
-                <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 shadow-sm">
-                        {props.dbStatus === 'ready' ? <CheckIcon /> : <InfoIcon />}
+                      <Chip tone="lime">
+                        <span className="inline-flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500" /> Online
+                        </span>
+                      </Chip>
+                    )
+                  }
+                />
+                <CardBody className="space-y-4">
+                  <div className="flex items-center gap-4">
+                    <div
+                      className={[
+                        'w-12 h-12 rounded-2xl border flex items-center justify-center shadow-sm',
+                        props.dbStatus === 'ready'
+                          ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
+                          : 'bg-slate-50 text-slate-400 border-slate-200',
+                      ].join(' ')}
+                    >
+                      {props.dbStatus === 'ready' ? <SuccessIcon /> : <InfoIcon />}
                     </div>
                     <div>
-                         <div className="text-base font-bold text-slate-900 leading-tight">
-                            {props.dbStatus === 'ready' ? 'Live Index: OK' : 'No Index Found'}
-                         </div>
-                         <div className="text-xs text-slate-500 mt-1">
-                            {displayActiveCount.toLocaleString('ru-RU')} уник. ТТ
-                         </div>
+                      <div className="t-h2 leading-none">
+                        {props.dbStatus === 'ready' ? 'Live Index: OK' : 'No Index Found'}
+                      </div>
+                      <div className="t-muted mt-1">
+                        {displayActiveCount.toLocaleString()} уник. ТТ
+                      </div>
                     </div>
-                </div>
+                  </div>
 
-                {props.processingState.isProcessing && (
-                    <div className="mt-4 pt-4 border-t border-slate-100">
-                        <div className="flex justify-between text-[10px] text-slate-500 mb-1 font-bold uppercase tracking-wider">
-                            <span>Прогресс</span>
-                            <span className="text-indigo-600">{Math.round(props.processingState.progress)}%</span>
-                        </div>
-                        <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                            <div className="h-full bg-gradient-to-r from-indigo-500 to-sky-400 transition-all duration-500" style={{ width: `${props.processingState.progress}%` }} />
-                        </div>
-                        <p className="text-[10px] text-slate-400 mt-2 italic truncate">{props.processingState.message}</p>
+                  {props.processingState.isProcessing && (
+                    <div className="pt-2">
+                      <div className="flex justify-between text-[11px] text-slate-500 mb-2 font-semibold uppercase tracking-[0.08em]">
+                        <span>Прогресс индексации</span>
+                        <span className="text-indigo-700">{Math.round(props.processingState.progress)}%</span>
+                      </div>
+                      <div className="w-full bg-slate-200/80 h-2 rounded-full overflow-hidden relative">
+                        <div
+                          className="h-full bg-gradient-to-r from-indigo-600 to-sky-500 transition-all duration-500 shimmer"
+                          style={{ width: `${props.processingState.progress}%` }}
+                        />
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-2 italic leading-tight">
+                        {props.processingState.message}
+                      </p>
                     </div>
-                )}
-              </div>
+                  )}
+                </CardBody>
+              </Card>
             </Motion>
 
             {/* Step 1 & Step 2 */}
