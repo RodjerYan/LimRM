@@ -142,6 +142,17 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     }
   }, [props.openChannelRequest, props.onConsumeOpenChannelRequest]);
 
+  // Helper to ensure unique identification even if primary key is missing
+  const getSafeKey = useCallback((c: MapPoint) => {
+    const k = (c?.key ?? '').toString().trim();
+    if (k) return k;
+
+    // fallback key, stable-ish for “no key” cases
+    return `__nokey__:${(c.address || '')}|${(c.name || '')}|${(c.rm || '')}|${(c.city || '')}|${(c.region || '')}`
+      .toLowerCase()
+      .trim();
+  }, []);
+
   // Updated getClientFact: Returns split metrics for precise handling
   const getClientFact = useCallback((client: MapPoint): { inPeriod: number, undated: number, source: 'daily'|'monthly'|'undated'|'none' } => {
     const fStart = toDayKey(effectiveStart);
@@ -202,10 +213,13 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   const totalClientKeys = useMemo(() => {
       const set = new Set<string>();
       props.uploadedData?.forEach(row => {
-          row.clients.forEach(c => { if (c?.key) set.add(c.key); });
+          row.clients.forEach(c => { 
+              const k = getSafeKey(c);
+              if (k) set.add(k); 
+          });
       });
       return set;
-  }, [props.uploadedData]);
+  }, [props.uploadedData, getSafeKey]);
 
   // 2. Effective Universe (Filtered by Date, RM, and Strict Mode)
   // Renamed from periodClientKeys to better reflect it might include undated records in Soft Mode
@@ -220,12 +234,15 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
           const { inPeriod, undated } = getClientFact(c);
           const effectiveFact = inPeriod + (strictMode ? 0 : undated);
           
-          if (effectiveFact > 0.001) set.add(c.key);
+          if (effectiveFact > 0.001) {
+              const k = getSafeKey(c);
+              if (k) set.add(k);
+          }
         });
       });
     }
     return set;
-  }, [props.uploadedData, getClientFact, props.selectedRm, strictMode]);
+  }, [props.uploadedData, getClientFact, props.selectedRm, strictMode, getSafeKey]);
 
   const totalUniqueCount = totalClientKeys.size;
   const effectiveUniqueCount = effectiveUniverseKeys.size;
@@ -250,7 +267,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
           .map((client) => {
              const { inPeriod, undated } = getClientFact(client);
              const fact = inPeriod + (strictMode ? 0 : undated);
-             return { ...client, fact };
+             const k = getSafeKey(client);
+             return { ...client, key: k, fact };
           })
           .filter((c) => (c.fact || 0) > 0);
 
@@ -265,7 +283,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       .filter((row) => row.fact > 0);
 
     return detectOutliers(relevantData);
-  }, [props.uploadedData, getClientFact, props.selectedRm, strictMode]);
+  }, [props.uploadedData, getClientFact, props.selectedRm, strictMode, getSafeKey]);
 
   const channelStats = useMemo(() => {
     if (!props.uploadedData || props.uploadedData.length === 0) return [];
@@ -286,9 +304,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         const type = client.type || 'Не определен';
         if (!acc[type]) acc[type] = { uniqueKeys: new Set(), volume: 0 };
 
-        acc[type].uniqueKeys.add(client.key);
+        const k = getSafeKey(client);
+        acc[type].uniqueKeys.add(k);
         acc[type].volume += effectiveFact;
-        globalUniqueKeys.add(client.key);
+        globalUniqueKeys.add(k);
       });
     });
 
@@ -302,7 +321,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         percentage: totalPeriodCount > 0 ? (data.uniqueKeys.size / totalPeriodCount) * 100 : 0,
       }))
       .sort((a, b) => b.count - a.count);
-  }, [props.uploadedData, getClientFact, props.selectedRm, strictMode]);
+  }, [props.uploadedData, getClientFact, props.selectedRm, strictMode, getSafeKey]);
 
   const groupedChannelData = useMemo(() => {
     if (!selectedChannel || !props.uploadedData) return null;
@@ -328,10 +347,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             safeLower(c.address).includes(search) ||
             safeLower(c.rm).includes(search)
           ) {
-            if (!uniqueClientsInChannel.has(c.key)) {
-              uniqueClientsInChannel.set(c.key, { ...c, totalFact: 0 });
+            const k = getSafeKey(c);
+            if (!uniqueClientsInChannel.has(k)) {
+              uniqueClientsInChannel.set(k, { ...c, key: k, totalFact: 0 });
             }
-            const existing = uniqueClientsInChannel.get(c.key)!;
+            const existing = uniqueClientsInChannel.get(k)!;
             existing.totalFact += effectiveFact;
           }
         }
@@ -347,7 +367,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
       hierarchy[rm][city].push(c);
     });
     return hierarchy;
-  }, [selectedChannel, props.uploadedData, channelSearchTerm, getClientFact, props.selectedRm, strictMode]);
+  }, [selectedChannel, props.uploadedData, channelSearchTerm, getClientFact, props.selectedRm, strictMode, getSafeKey]);
 
   const rowsToDisplay = useMemo(() => {
     if (props.processingState.isProcessing) {
