@@ -116,15 +116,9 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
 
         {/* Footer */}
         <div className="shrink-0 p-4 border-t border-slate-200/60">
-          <div className="rounded-2xl border border-slate-200/70 bg-white/60 p-3 shadow-[0_12px_30px_rgba(15,23,42,0.05)]">
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-extrabold text-slate-800">Premium Light</div>
-              <div className="text-[10px] font-black text-slate-500 bg-slate-900/5 border border-slate-200 rounded-xl px-2 py-1">
-                v2.5.0
-              </div>
-            </div>
-            <div className="mt-1 text-[10px] text-slate-500">
-              Современный UI слой без изменений логики
+          <div className="rounded-2xl border border-slate-200/70 bg-white/60 p-3 shadow-[0_12px_30px_rgba(15,23,42,0.05)] flex justify-center">
+            <div className="text-[10px] font-bold text-slate-400">
+              By RodjerYan
             </div>
           </div>
         </div>
