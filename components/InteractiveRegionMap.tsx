@@ -189,7 +189,7 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
                         <span className="text-xs">Молодые (&lt;35)</span>
                     </div>
                     <div className="flex items-center" title={tooltip}>
-                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f59e0b', opacity: 0.5}}></span>
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f97316', opacity: 0.5}}></span>
                         <span className="text-xs">Средний (35-45)</span>
                     </div>
                     <div className="flex items-center" title={tooltip}>
@@ -247,10 +247,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
     const legendContainerRef = useRef<HTMLDivElement | null>(null);
     
-    // NEW: Refs for hit testing in Canvas mode
-    const potentialMarkersRef = useRef<L.CircleMarker[]>([]);
-    const activeMarkersRef = useRef<L.CircleMarker[]>([]);
-
     const activeClientsDataRef = useRef<MapPoint[]>(activeClients);
     const onEditClientRef = useRef(onEditClient);
 
@@ -291,47 +287,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         });
         
         return maxDate;
-    }, []);
-
-    // NEW: Manual Hit-Test function for Canvas rendering mode
-    const tryOpenMarkerPopupAt = useCallback((latlng: L.LatLng, maxPx = 10) => {
-        const map = mapInstance.current;
-        if (!map) return false;
-        
-        const clickPt = map.latLngToContainerPoint(latlng);
-        
-        const isHit = (m: L.CircleMarker) => {
-            const pt = map.latLngToContainerPoint(m.getLatLng());
-            const r = (m.options.radius as number) ?? 4;
-            const dist = clickPt.distanceTo(pt);
-            return dist <= (r + maxPx);
-        };
-
-        // 1. Check potential markers first (usually smaller, might be under bigger active ones)
-        // Actually, let's check active first as they are more important?
-        // Let's stick to zIndex logic: Active markers are usually on top.
-        
-        // Check Active markers
-        for (const m of activeMarkersRef.current) {
-            if (isHit(m)) {
-                // If it's part of a LayerGroup that is hidden (removed from map), skip it
-                if (!map.hasLayer(activeClientMarkersLayer.current!)) return false;
-                
-                m.openPopup();
-                return true;
-            }
-        }
-
-        // Check Potential markers
-        for (const m of potentialMarkersRef.current) {
-             if (isHit(m)) {
-                if (!map.hasLayer(potentialClientMarkersLayer.current!)) return false;
-                m.openPopup();
-                return true;
-            }
-        }
-        
-        return false;
     }, []);
 
     useEffect(() => {
@@ -638,7 +593,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
         
-        const standardRenderer = L.canvas({ pane: 'markersPane' });
+        // FIX: Switch potential markers (blue) to SVG renderer for reliable clicks
+        // Keep active markers (green) on canvas for performance
+        const potentialRenderer = L.svg({ pane: 'markersPane' });
         const activeRenderer = L.canvas({ pane: 'activeMarkersPane' }); 
 
         // OPTIMIZATION: Clear layers instead of recreating them
@@ -646,10 +603,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         (activeClientMarkersLayer.current as any)?.clearLayers?.();
         activeClientMarkersRef.current.clear();
         
-        // NEW: Clear ref arrays for manual hit testing
-        potentialMarkersRef.current = [];
-        activeMarkersRef.current = [];
-    
         const pointsForBounds: L.LatLngExpression[] = [];
 
         if (overlayMode !== 'abc') {
@@ -669,15 +622,22 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
                     const popupContent = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
                     const marker = L.circleMarker([lat, lon], {
-                        fillColor: '#3b82f6', color: '#1d4ed8', weight: 1, opacity: 0.8, fillOpacity: 0.6, radius: 4, 
-                        pane: 'markersPane', renderer: standardRenderer
-                    }).bindPopup(popupContent).on('click', (e) => {
-                        L.DomEvent.stopPropagation(e); // Prevent click from bubbling to region polygon
-                    });
-                    potentialClientMarkersLayer.current?.addLayer(marker);
+                        fillColor: '#3b82f6', 
+                        color: '#1d4ed8', 
+                        weight: 1, 
+                        opacity: 0.9, 
+                        fillOpacity: 0.7, 
+                        radius: 5, // slightly larger for SVG click target
+                        pane: 'markersPane', 
+                        renderer: potentialRenderer, // SVG Renderer
+                        interactive: true,
+                        bubblingMouseEvents: false
+                    }).bindPopup(popupContent, { closeButton: true, autoPan: true })
+                      .on('click', (e) => {
+                          L.DomEvent.stopPropagation(e); 
+                      });
                     
-                    // NEW: Add to ref for manual hit-testing
-                    potentialMarkersRef.current.push(marker);
+                    potentialClientMarkersLayer.current?.addLayer(marker);
                 }
             });
         }
@@ -789,16 +749,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     radius: markerRadius, 
                     pane: 'activeMarkersPane',
                     renderer: activeRenderer
-                }).bindPopup(popupContent, { minWidth: 280, maxWidth: 320 })
+                }).bindPopup(popupContent, { minWidth: 280, maxWidth: 320, className: 'rm-popup-solid' })
                   .on('click', (e) => {
                       L.DomEvent.stopPropagation(e); // Prevent click from bubbling to region polygon
                   });
                 
                 activeClientMarkersLayer.current?.addLayer(marker);
                 activeClientMarkersRef.current.set(popupRep.key, marker);
-                
-                // NEW: Add to ref for manual hit-testing
-                activeMarkersRef.current.push(marker);
             }
         });
 
@@ -823,12 +780,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 onEachFeature: (feature, layer) => {
                     layer.on({
                         click: (e: any) => {
-                            // NEW: Manual hit test for markers
-                            // If user clicked a marker, do NOT process region click logic
-                            if (tryOpenMarkerPopupAt(e.latlng)) {
-                                return;
-                            }
-                            
                             L.DomEvent.stopPropagation(e);
                             mapInstance.current?.fitBounds(e.target.getBounds());
                             highlightRegion(layer);
@@ -844,7 +795,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         } else if (geoJsonLayer.current) {
             geoJsonLayer.current.setStyle(getStyleForRegion);
         }
-    }, [geoJsonData, selectedRegions, localTheme, overlayMode, tryOpenMarkerPopupAt]);
+    }, [geoJsonData, selectedRegions, localTheme, overlayMode]);
 
     useEffect(() => {
         if (flyToClientKey && mapInstance.current && activeClientMarkersRef.current.has(flyToClientKey)) {
