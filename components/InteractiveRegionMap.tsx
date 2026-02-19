@@ -484,7 +484,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                             const comment = row.comment || '';
                             
                             const mapPoint: MapPoint = {
-                                key: '', // Will be generated in handler
+                                key: String(row.key || ''), // Use the unique key we injected in useAppLogic
                                 lat: pLat,
                                 lon: pLon,
                                 status: 'potential',

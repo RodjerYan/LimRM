@@ -120,31 +120,37 @@ export const useAppLogic = () => {
     // --- FILTER OKB DATA BASED ON INTEREST DELTAS (Deleted Blue Points) ---
     const filteredOkbData = useMemo(() => {
         if (!okbData || okbData.length === 0) return [];
-        if (!interestDeltas || interestDeltas.length === 0) return okbData;
 
-        // Create a set of deleted keys
+        // Create a set of deleted keys & comments map
         const deletedKeys = new Set<string>();
         const commentsMap = new Map<string, string[]>();
 
-        interestDeltas.forEach(d => {
-            if (d.type === 'delete') {
-                deletedKeys.add(d.key);
-            } else if (d.type === 'comment' && d.comment) {
-                if (!commentsMap.has(d.key)) commentsMap.set(d.key, []);
-                commentsMap.get(d.key)!.push(`${d.user} (${new Date(d.timestamp).toLocaleDateString()}): ${d.comment}`);
-            }
-        });
+        if (interestDeltas && interestDeltas.length > 0) {
+            interestDeltas.forEach(d => {
+                if (d.type === 'delete') {
+                    deletedKeys.add(d.key);
+                } else if (d.type === 'comment' && d.comment) {
+                    if (!commentsMap.has(d.key)) commentsMap.set(d.key, []);
+                    commentsMap.get(d.key)!.push(`${d.user} (${new Date(d.timestamp).toLocaleDateString()}): ${d.comment}`);
+                }
+            });
+        }
 
         // Filter and Enrich
+        // IMPORTANT: We inject the 'key' here so downstream components (Map) 
+        // can use it to identify the row consistently.
         return okbData.filter(row => {
             const key = getUniqueKeyForBluePoint(row);
             return !deletedKeys.has(key);
         }).map(row => {
             const key = getUniqueKeyForBluePoint(row);
+            // Inject key into the row object
+            const newRow = { ...row, key }; 
+            
             if (commentsMap.has(key)) {
-                return { ...row, changeHistory: commentsMap.get(key) };
+                return { ...newRow, changeHistory: commentsMap.get(key) };
             }
-            return row;
+            return newRow;
         });
 
     }, [okbData, interestDeltas]);
