@@ -189,7 +189,7 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
                         <span className="text-xs">Молодые (&lt;35)</span>
                     </div>
                     <div className="flex items-center" title={tooltip}>
-                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f59e0b', opacity: 0.5}}></span>
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f97316', opacity: 0.5}}></span>
                         <span className="text-xs">Средний (35-45)</span>
                     </div>
                     <div className="flex items-center" title={tooltip}>
@@ -293,32 +293,31 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         return maxDate;
     }, []);
 
-    // NEW: Manual Hit-Test function for robust clicking
+    // NEW: Helper function to find a hit on any marker set
+    const findHit = useCallback((map: L.Map, latlng: L.LatLng, markers: L.CircleMarker[], extraPx: number): L.CircleMarker | null => {
+        const clickPt = map.latLngToContainerPoint(latlng);
+        let best: { m: L.CircleMarker; d: number } | null = null;
+
+        for (const m of markers) {
+            const pt = map.latLngToContainerPoint(m.getLatLng());
+            const r = (m.options.radius as number) ?? 4;
+            const d = clickPt.distanceTo(pt);
+
+            if (d <= (r + extraPx)) {
+                if (!best || d < best.d) best = { m, d };
+            }
+        }
+        return best?.m ?? null;
+    }, []);
+
+    // NEW: Manual Hit-Test function for robust clicking and HOVER
     const tryOpenMarkerPopupAt = useCallback((latlng: L.LatLng) => {
         const map = mapInstance.current;
         if (!map) return false;
 
-        const clickPt = map.latLngToContainerPoint(latlng);
-
-        // Finds the closest marker within a radius
-        const findHit = (markers: L.CircleMarker[], extraPx: number) => {
-            let best: { m: L.CircleMarker; d: number } | null = null;
-
-            for (const m of markers) {
-                const pt = map.latLngToContainerPoint(m.getLatLng());
-                const r = (m.options.radius as number) ?? 4;
-                const d = clickPt.distanceTo(pt);
-
-                if (d <= (r + extraPx)) {
-                    if (!best || d < best.d) best = { m, d };
-                }
-            }
-            return best?.m ?? null;
-        };
-
         // Priority to Green markers (activeMarkersPane) - usually on top
         if (map.hasLayer(activeClientMarkersLayer.current!)) {
-             const hitActive = findHit(activeMarkersCanvasRef.current, 10);
+             const hitActive = findHit(map, latlng, activeMarkersCanvasRef.current, 10);
              if (hitActive) {
                  hitActive.openPopup();
                  return true;
@@ -327,7 +326,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         // Check Blue markers (markersPane)
         if (map.hasLayer(potentialClientMarkersLayer.current!)) {
-            const hitPotential = findHit(potentialMarkersRef.current, 10);
+            const hitPotential = findHit(map, latlng, potentialMarkersRef.current, 10);
             if (hitPotential) {
                 hitPotential.openPopup();
                 return true;
@@ -335,7 +334,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
 
         return false;
-    }, []);
+    }, [findHit]);
 
     useEffect(() => {
         const fetchGeoData = async () => {
@@ -487,14 +486,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const map = L.map(mapContainer.current, { center: [55, 60], zoom: 3, minZoom: 2, scrollWheelZoom: true, preferCanvas: true, worldCopyJump: true, zoomControl: false, attributionControl: false });
             mapInstance.current = map;
             
+            // Fix: Re-order panes to put popups on top of everything
+            // Default popupPane zIndex is 700
+            
             map.createPane('regionsPane');
             map.getPane('regionsPane')!.style.zIndex = '300';
             
             map.createPane('markersPane');
-            map.getPane('markersPane')!.style.zIndex = '700'; 
+            map.getPane('markersPane')!.style.zIndex = '450'; // Lowered from 700 to sit below popups
             
             map.createPane('activeMarkersPane');
-            map.getPane('activeMarkersPane')!.style.zIndex = '750';
+            map.getPane('activeMarkersPane')!.style.zIndex = '500'; // Lowered from 750 to sit below popups
+            
             // IMPORTANT: activeMarkersPane (top canvas) must not block clicks for layers below (blue markers)
             // We use manual hit testing for interaction.
             map.getPane('activeMarkersPane')!.style.pointerEvents = 'none';
@@ -519,6 +522,19 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             map.on('click', (e: any) => {
                 if (tryOpenMarkerPopupAt(e.latlng)) return;
                 resetHighlight();
+            });
+
+            // NEW: Mousemove handler to change cursor for Canvas markers (Green)
+            // Blue SVG markers handle this natively via CSS
+            map.on('mousemove', (e: any) => {
+                if (!mapContainer.current) return;
+                // Only check the green canvas markers as they have pointer-events: none
+                if (map.hasLayer(activeClientMarkersLayer.current!)) {
+                    const hit = findHit(map, e.latlng, activeMarkersCanvasRef.current, 6);
+                    mapContainer.current.style.cursor = hit ? 'pointer' : '';
+                } else {
+                    mapContainer.current.style.cursor = '';
+                }
             });
 
             map.on('popupopen', (e) => {
