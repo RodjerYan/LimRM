@@ -189,7 +189,7 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
                         <span className="text-xs">Молодые (&lt;35)</span>
                     </div>
                     <div className="flex items-center" title={tooltip}>
-                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f97316', opacity: 0.5}}></span>
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f59e0b', opacity: 0.5}}></span>
                         <span className="text-xs">Средний (35-45)</span>
                     </div>
                     <div className="flex items-center" title={tooltip}>
@@ -439,15 +439,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const map = L.map(mapContainer.current, { center: [55, 60], zoom: 3, minZoom: 2, scrollWheelZoom: true, preferCanvas: true, worldCopyJump: true, zoomControl: false, attributionControl: false });
             mapInstance.current = map;
             
-            // Fix: Strict pane ordering to prevent polygons from blocking clicks
             map.createPane('regionsPane');
-            map.getPane('regionsPane')!.style.zIndex = '300';
-            
+            map.getPane('regionsPane')!.style.zIndex = '400';
             map.createPane('markersPane');
-            map.getPane('markersPane')!.style.zIndex = '700'; 
-            
+            map.getPane('markersPane')!.style.zIndex = '600'; 
             map.createPane('activeMarkersPane');
-            map.getPane('activeMarkersPane')!.style.zIndex = '750';
+            map.getPane('activeMarkersPane')!.style.zIndex = '650';
 
             L.control.zoom({ position: 'topleft' }).addTo(map);
             layerControl.current = L.control.layers({}, {}, { position: 'bottomleft' }).addTo(map);
@@ -593,16 +590,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
         
-        // FIX: Switch potential markers (blue) to SVG renderer for reliable clicks
-        // Keep active markers (green) on canvas for performance
-        const potentialRenderer = L.svg({ pane: 'markersPane' });
+        const standardRenderer = L.canvas({ pane: 'markersPane' });
         const activeRenderer = L.canvas({ pane: 'activeMarkersPane' }); 
 
         // OPTIMIZATION: Clear layers instead of recreating them
         (potentialClientMarkersLayer.current as any)?.clearLayers?.();
         (activeClientMarkersLayer.current as any)?.clearLayers?.();
         activeClientMarkersRef.current.clear();
-        
+    
         const pointsForBounds: L.LatLngExpression[] = [];
 
         if (overlayMode !== 'abc') {
@@ -622,21 +617,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
                     const popupContent = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
                     const marker = L.circleMarker([lat, lon], {
-                        fillColor: '#3b82f6', 
-                        color: '#1d4ed8', 
-                        weight: 1, 
-                        opacity: 0.9, 
-                        fillOpacity: 0.7, 
-                        radius: 5, // slightly larger for SVG click target
-                        pane: 'markersPane', 
-                        renderer: potentialRenderer, // SVG Renderer
-                        interactive: true,
-                        bubblingMouseEvents: false
-                    }).bindPopup(popupContent, { closeButton: true, autoPan: true })
-                      .on('click', (e) => {
-                          L.DomEvent.stopPropagation(e); 
-                      });
-                    
+                        fillColor: '#3b82f6', color: '#1d4ed8', weight: 1, opacity: 0.8, fillOpacity: 0.6, radius: 4, 
+                        pane: 'markersPane', renderer: standardRenderer
+                    }).bindPopup(popupContent);
                     potentialClientMarkersLayer.current?.addLayer(marker);
                 }
             });
@@ -749,10 +732,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     radius: markerRadius, 
                     pane: 'activeMarkersPane',
                     renderer: activeRenderer
-                }).bindPopup(popupContent, { minWidth: 280, maxWidth: 320, className: 'rm-popup-solid' })
-                  .on('click', (e) => {
-                      L.DomEvent.stopPropagation(e); // Prevent click from bubbling to region polygon
-                  });
+                }).bindPopup(popupContent, { minWidth: 280, maxWidth: 320 });
                 
                 activeClientMarkersLayer.current?.addLayer(marker);
                 activeClientMarkersRef.current.set(popupRep.key, marker);
@@ -775,11 +755,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     useEffect(() => {
         if (geoJsonData && mapInstance.current && geoJsonLayer.current === null) {
             geoJsonLayer.current = L.geoJSON(geoJsonData as any, {
-                pane: 'regionsPane', // Assign to specific pane to control stacking
                 style: getStyleForRegion,
                 onEachFeature: (feature, layer) => {
                     layer.on({
-                        click: (e: any) => {
+                        click: (e) => {
                             L.DomEvent.stopPropagation(e);
                             mapInstance.current?.fitBounds(e.target.getBounds());
                             highlightRegion(layer);
@@ -790,7 +769,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         layer.bindTooltip(name, { permanent: false, direction: 'center', className: 'region-tooltip' });
                     }
                 },
-                
+                pane: 'regionsPane'
             }).addTo(mapInstance.current);
         } else if (geoJsonLayer.current) {
             geoJsonLayer.current.setStyle(getStyleForRegion);
