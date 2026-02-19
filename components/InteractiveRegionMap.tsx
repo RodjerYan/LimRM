@@ -439,12 +439,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const map = L.map(mapContainer.current, { center: [55, 60], zoom: 3, minZoom: 2, scrollWheelZoom: true, preferCanvas: true, worldCopyJump: true, zoomControl: false, attributionControl: false });
             mapInstance.current = map;
             
+            // Fix: Strict pane ordering to prevent polygons from blocking clicks
             map.createPane('regionsPane');
-            map.getPane('regionsPane')!.style.zIndex = '400';
+            map.getPane('regionsPane')!.style.zIndex = '300';
+            
             map.createPane('markersPane');
-            map.getPane('markersPane')!.style.zIndex = '600'; 
+            map.getPane('markersPane')!.style.zIndex = '700'; 
+            
             map.createPane('activeMarkersPane');
-            map.getPane('activeMarkersPane')!.style.zIndex = '650';
+            map.getPane('activeMarkersPane')!.style.zIndex = '750';
 
             L.control.zoom({ position: 'topleft' }).addTo(map);
             layerControl.current = L.control.layers({}, {}, { position: 'bottomleft' }).addTo(map);
@@ -619,7 +622,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     const marker = L.circleMarker([lat, lon], {
                         fillColor: '#3b82f6', color: '#1d4ed8', weight: 1, opacity: 0.8, fillOpacity: 0.6, radius: 4, 
                         pane: 'markersPane', renderer: standardRenderer
-                    }).bindPopup(popupContent);
+                    }).bindPopup(popupContent).on('click', (e) => {
+                        L.DomEvent.stopPropagation(e); // Prevent click from bubbling to region polygon
+                    });
                     potentialClientMarkersLayer.current?.addLayer(marker);
                 }
             });
@@ -732,7 +737,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     radius: markerRadius, 
                     pane: 'activeMarkersPane',
                     renderer: activeRenderer
-                }).bindPopup(popupContent, { minWidth: 280, maxWidth: 320 });
+                }).bindPopup(popupContent, { minWidth: 280, maxWidth: 320 })
+                  .on('click', (e) => {
+                      L.DomEvent.stopPropagation(e); // Prevent click from bubbling to region polygon
+                  });
                 
                 activeClientMarkersLayer.current?.addLayer(marker);
                 activeClientMarkersRef.current.set(popupRep.key, marker);
@@ -755,6 +763,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     useEffect(() => {
         if (geoJsonData && mapInstance.current && geoJsonLayer.current === null) {
             geoJsonLayer.current = L.geoJSON(geoJsonData as any, {
+                pane: 'regionsPane', // Assign to specific pane to control stacking
                 style: getStyleForRegion,
                 onEachFeature: (feature, layer) => {
                     layer.on({
@@ -769,7 +778,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         layer.bindTooltip(name, { permanent: false, direction: 'center', className: 'region-tooltip' });
                     }
                 },
-                pane: 'regionsPane'
+                
             }).addTo(mapInstance.current);
         } else if (geoJsonLayer.current) {
             geoJsonLayer.current.setStyle(getStyleForRegion);
