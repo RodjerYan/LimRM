@@ -83,6 +83,20 @@ export interface OkbDataRow {
     'Контакты'?: string;
     lat?: number;
     lon?: number;
+    // Generated properties
+    isDeleted?: boolean;
+    comment?: string;
+    changeHistory?: string[]; // Array of strings "Action by User at Time"
+}
+
+// NEW: Delta for Potential Points (Blue Points)
+export interface InterestDelta {
+    key: string; // normalized address + # + name
+    type: 'delete' | 'comment';
+    user: string;
+    timestamp: number;
+    reason?: string; // Mandatory for delete
+    comment?: string;
 }
 
 export interface UnidentifiedRow {

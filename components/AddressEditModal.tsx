@@ -24,8 +24,7 @@ import {
   ChannelIcon,
 } from './icons';
 
-// ... (keep all imports and helper components same up to AddressEditModal) ...
-// --- Fix Leaflet default icons ---
+// ... (Leaflet icons setup same) ...
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
@@ -69,7 +68,7 @@ interface AddressEditModalProps {
   onClose: () => void;
   onBack: () => void;
   data: EditableData | null;
-  onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number, options?: { skipHistory?: boolean }) => void;
+  onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number, options?: { skipHistory?: boolean, reason?: string, type?: 'delete' | 'comment' }) => void;
   onStartPolling: (
     rmName: string,
     address: string,
@@ -107,7 +106,7 @@ const getRmName = (data: EditableData | null): string => {
   return findValueInRow(row, ['рм', 'региональный менеджер', 'менеджер', 'manager', 'ответственный']) || '';
 };
 
-// --- Premium light helpers ---
+// ... (Glow, Card, Chip, Btn components same) ...
 const Glow = () => (
   <div
     className="pointer-events-none absolute inset-0 opacity-70"
@@ -170,7 +169,7 @@ const Btn: React.FC<
   );
 };
 
-// --- Map component (no dependency on Modal) ---
+// ... (SinglePointMap component same) ...
 const SinglePointMap: React.FC<{
   lat?: number;
   lon?: number;
@@ -229,9 +228,7 @@ const SinglePointMap: React.FC<{
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-
     if (tileLayerRef.current) map.removeLayer(tileLayerRef.current);
-
     const newUrl = theme === 'dark' ? darkUrl : lightUrl;
     tileLayerRef.current = L.tileLayer(newUrl, { attribution: '&copy; CARTO' }).addTo(map);
     tileLayerRef.current.bringToBack();
@@ -257,10 +254,8 @@ const SinglePointMap: React.FC<{
       } else {
         markerRef.current.setLatLng(latLng).setIcon(iconToUse);
       }
-
       const popup = `<b>${address}</b><br><span style="font-size:10px; color:#64748b">Перетащите маркер для уточнения</span>`;
       markerRef.current.bindPopup(popup, { maxWidth: 360 });
-
       map.setView(latLng, isExpanded ? 17 : 14, { animate: true });
     } else {
       if (markerRef.current) {
@@ -320,14 +315,7 @@ const SinglePointMap: React.FC<{
   return (
     <div className="relative h-full w-full">
       <style>{`.leaflet-control-attribution { display: none !important; }`}</style>
-
-      <div
-        ref={mapContainerRef}
-        className="h-full w-full rounded-2xl bg-slate-100 border border-slate-200"
-        style={{ minHeight: '100%' }}
-      />
-
-      {/* Search */}
+      <div ref={mapContainerRef} className="h-full w-full rounded-2xl bg-slate-100 border border-slate-200" style={{ minHeight: '100%' }} />
       <div className="absolute top-3 left-3 z-[1000] w-[calc(100%-4rem)] md:w-96">
         <div className="relative rounded-2xl shadow-[0_18px_50px_rgba(15,23,42,0.10)]">
           <div className="absolute inset-y-0 left-0 flex items-center pl-4 text-slate-400 pointer-events-none">
@@ -339,54 +327,30 @@ const SinglePointMap: React.FC<{
             placeholder="Поиск места на карте…"
             className="w-full rounded-2xl border border-slate-200 bg-white/90 backdrop-blur px-4 py-3 pl-11 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition"
           />
-
           {searchResults.length > 0 && (
             <ul className="absolute mt-2 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.12)] max-h-64 overflow-y-auto custom-scrollbar">
               {searchResults.map((r, idx) => (
-                <li
-                  key={idx}
-                  onClick={() => selectResult(r)}
-                  className="px-4 py-3 text-sm text-slate-800 hover:bg-indigo-50 hover:text-indigo-700 cursor-pointer border-b border-slate-200 last:border-0"
-                >
-                  {r.display_name}
-                </li>
+                <li key={idx} onClick={() => selectResult(r)} className="px-4 py-3 text-sm text-slate-800 hover:bg-indigo-50 hover:text-indigo-700 cursor-pointer border-b border-slate-200 last:border-0">{r.display_name}</li>
               ))}
             </ul>
           )}
         </div>
       </div>
-
-      {/* Controls */}
       <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
-        <button onClick={onToggleTheme} className={ctrlBtn} title="Сменить тему карты">
-          {theme === 'dark' ? <SunIcon className="w-5 h-5" /> : <MoonIcon className="w-5 h-5" />}
-        </button>
-        <button
-          onClick={isExpanded ? onCollapse : onExpand}
-          className={ctrlBtn}
-          title={isExpanded ? 'Свернуть' : 'Развернуть'}
-        >
-          {isExpanded ? <MinimizeIcon className="w-5 h-5" /> : <MaximizeIcon className="w-5 h-5" />}
-        </button>
+        <button onClick={onToggleTheme} className={ctrlBtn} title="Сменить тему карты">{theme === 'dark' ? <SunIcon className="w-5 h-5" /> : <MoonIcon className="w-5 h-5" />}</button>
+        <button onClick={isExpanded ? onCollapse : onExpand} className={ctrlBtn} title={isExpanded ? 'Свернуть' : 'Развернуть'}>{isExpanded ? <MinimizeIcon className="w-5 h-5" /> : <MaximizeIcon className="w-5 h-5" />}</button>
       </div>
     </div>
   );
 };
 
-// --- Main component (Variant A: no Modal.tsx) ---
 const AddressEditModal: React.FC<AddressEditModalProps> = ({
-  isOpen,
-  onClose,
-  onBack,
-  data,
-  onDataUpdate,
-  onStartPolling,
-  onDelete,
-  globalTheme = 'light',
+  isOpen, onClose, onBack, data, onDataUpdate, onStartPolling, onDelete, globalTheme = 'light',
 }) => {
   const [editedAddress, setEditedAddress] = useState('');
   const [editedChannel, setEditedChannel] = useState('');
   const [comment, setComment] = useState('');
+  const [deleteReason, setDeleteReason] = useState(''); // New State for delete reason
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -398,7 +362,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
   const [isMapExpanded, setIsMapExpanded] = useState(false);
 
   const prevKeyRef = useRef<string | number | undefined>(undefined);
-  const isCommentTouched = useRef(false);
+  
+  // Check if it's a potential client (Blue Point)
+  const isPotential = (data as MapPoint)?.status === 'potential';
 
   const fetchHistory = async (rm: string, address: string) => {
     try {
@@ -407,26 +373,20 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       if (!res.ok) throw new Error('Ошибка загрузки истории');
       const json = await res.json();
       setHistory(Array.isArray(json.history) ? json.history : []);
-    } catch (e) {
-      console.warn('History load error:', e);
-      setHistory([]);
-    } finally {
-      setIsLoadingHistory(false);
-    }
+    } catch (e) { console.warn('History load error:', e); setHistory([]); } finally { setIsLoadingHistory(false); }
   };
 
   useEffect(() => {
     if (!isOpen) return;
     setMapTheme(globalTheme);
-
     if (!data) return;
 
     const originalRow = getSafeOriginalRow(data);
-
     let currentAddress = '';
     let currentChannel = '';
 
     if (isUnidentifiedRow(data)) {
+      // ... (unidentified logic) ...
       const rawAddress = findAddressInRow(originalRow) || '';
       let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor', 'партнер']);
       if (!distributor) {
@@ -436,11 +396,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       }
       const parsed = parseRussianAddress(rawAddress, distributor);
       currentAddress = parsed.finalAddress || rawAddress;
-      
       const rowChannel = findValueInRow(originalRow, ['канал продаж', 'тип тт', 'сегмент']);
       const detected = detectChannelByName(findValueInRow(originalRow, ['клиент', 'name']) || '');
       currentChannel = (detected && detected !== 'Не определен') ? detected : (rowChannel || 'Не определен');
-
     } else {
       currentAddress = (data as MapPoint).address;
       currentChannel = (data as MapPoint).type || 'Не определен';
@@ -452,7 +410,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       setEditedAddress(currentAddress);
       setEditedChannel(currentChannel);
       setComment((data as MapPoint).comment || '');
-      isCommentTouched.current = false;
+      setDeleteReason(''); // Reset reason
 
       setManualCoords(null);
       setIsMapExpanded(false);
@@ -463,123 +421,98 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       const pt = data as MapPoint;
       setLastUpdatedStr(pt.lastUpdated ? new Date(pt.lastUpdated).toLocaleString('ru-RU') : null);
 
-      const rm = getRmName(data);
-      if (rm && currentAddress) {
-        const isRecent = pt.lastUpdated && Date.now() - pt.lastUpdated < 3000;
-        if (!isRecent) fetchHistory(rm, currentAddress);
+      // If Potential Client, use passed history (which might come from interest deltas)
+      if (isPotential) {
+          if (originalRow.changeHistory && Array.isArray(originalRow.changeHistory)) {
+              setHistory(originalRow.changeHistory);
+          } else {
+              setHistory([]);
+          }
       } else {
-        setHistory([]);
+          // Regular Active Client
+          const rm = getRmName(data);
+          if (rm && currentAddress) {
+             const isRecent = pt.lastUpdated && Date.now() - pt.lastUpdated < 3000;
+             if (!isRecent) fetchHistory(rm, currentAddress);
+          } else {
+             setHistory([]);
+          }
       }
 
       prevKeyRef.current = currentKey;
     } else {
-      const pt = data as MapPoint;
-      if (status === 'geocoding') {
-        const isStillGeocoding = pt.isGeocoding;
-        const hasCoords = pt.lat && pt.lon && pt.lat !== 0;
-
-        if (!isStillGeocoding && hasCoords) setStatus('success_geocoding');
-        if (!isStillGeocoding && !hasCoords && pt.geocodingError) {
-          setStatus('error_geocoding');
-          setError(pt.geocodingError);
+        // Status updates for ongoing geocoding
+        const pt = data as MapPoint;
+        if (status === 'geocoding') {
+            const isStillGeocoding = pt.isGeocoding;
+            const hasCoords = pt.lat && pt.lon && pt.lat !== 0;
+            if (!isStillGeocoding && hasCoords) setStatus('success_geocoding');
+            if (!isStillGeocoding && !hasCoords && pt.geocodingError) {
+              setStatus('error_geocoding');
+              setError(pt.geocodingError);
+            }
         }
-      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, data, globalTheme]);
 
-  const handleCommentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setComment(e.target.value);
-    isCommentTouched.current = true;
-  };
-
-  const handleCoordinatesChange = useCallback((lat: number, lon: number) => {
-    setManualCoords({ lat, lon });
-  }, []);
+  const handleCommentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => setComment(e.target.value);
+  const handleCoordinatesChange = useCallback((lat: number, lon: number) => setManualCoords({ lat, lon }), []);
 
   const handleCloudSync = async () => {
     if (!data) return;
     try {
-      setStatus('syncing');
-      setError(null);
-
+      setStatus('syncing'); setError(null);
       const originalRow = getSafeOriginalRow(data);
       const rm = getRmName(data);
       const address = (data as MapPoint).address || findAddressInRow(originalRow) || '';
-
-      if (!rm) {
-          throw new Error('Не удалось определить РМ. Синхронизация невозможна.');
-      }
-
+      if (!rm) throw new Error('Не удалось определить РМ. Синхронизация невозможна.');
       const res = await fetch(`/api/sync-google?rm=${encodeURIComponent(rm)}&address=${encodeURIComponent(address)}`);
       const json = await res.json();
-
       if (!res.ok) throw new Error(json?.error || 'Ошибка синхронизации');
-
       if (json?.updatedPoint) {
-        // MERGE RM explicitly because api/sync-google might not return it
         const name = (data as MapPoint).name || findValueInRow(originalRow, ['наименование', 'клиент']) || 'ТТ';
-        const mergedPoint: MapPoint = { 
-            ...json.updatedPoint, 
-            rm,
-            name,
-            // Ensure status is valid
-            status: (json.updatedPoint.lat && json.updatedPoint.lon) ? 'match' : 'potential'
-        };
-        
-        onDataUpdate(
-            (data as MapPoint).key || String((data as any).originalIndex), 
-            mergedPoint, 
-            (data as any).originalIndex, 
-            { skipHistory: true }
-        );
+        const mergedPoint: MapPoint = { ...json.updatedPoint, rm, name, status: (json.updatedPoint.lat && json.updatedPoint.lon) ? 'match' : 'potential' };
+        onDataUpdate((data as MapPoint).key || String((data as any).originalIndex), mergedPoint, (data as any).originalIndex, { skipHistory: true });
       }
-
       setStatus('idle');
-    } catch (e: any) {
-      setStatus('error_saving');
-      setError(e?.message || 'Ошибка синхронизации');
-    }
+    } catch (e: any) { setStatus('error_saving'); setError(e?.message || 'Ошибка синхронизации'); }
   };
 
   const handleSave = async () => {
     if (!data) return;
-
-    setError(null);
-    setStatus('saving');
+    setError(null); setStatus('saving');
 
     const originalRow = getSafeOriginalRow(data);
     const oldKey = (data as MapPoint).key || String((data as any).originalIndex);
     const rm = getRmName(data);
-    const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
     const originalIndex = (data as any).originalIndex;
 
-    if (!rm) {
-      setStatus('error_saving');
-      setError('Не удалось определить имя РМ. Проверьте исходные данные.');
-      return;
+    // For potential clients, we primarily just save comments (deltas)
+    // We do NOT support full address/coordinate changing for blue points in this iteration
+    if (isPotential) {
+        const baseNewPoint: MapPoint = { ...(data as MapPoint), comment, lastUpdated: Date.now() };
+        // Trigger update with specific type for logging
+        onDataUpdate(oldKey, baseNewPoint, originalIndex, { type: 'comment' });
+        setStatus('success');
+        setTimeout(() => onClose(), 350);
+        return;
     }
 
-    const isAddressChanged =
-      editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.toLowerCase();
+    if (!rm) { setStatus('error_saving'); setError('Не удалось определить имя РМ. Проверьте исходные данные.'); return; }
+
+    const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
+    const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.toLowerCase();
     const needsGeocoding = isAddressChanged && !manualCoords;
     const updateTimestamp = Date.now();
-
     const distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
     const parsed = parseRussianAddress(editedAddress, distributor);
-
-    // CRITICAL FIX: Generate stable key for new unidentified points to ensure tracking works
-    const stableKey = isUnidentifiedRow(data) 
-        ? `${normalizeAddress(editedAddress)}#${Date.now()}` 
-        : oldKey;
-    
+    const stableKey = isUnidentifiedRow(data) ? `${normalizeAddress(editedAddress)}#${Date.now()}` : oldKey;
     const clientName = findValueInRow(originalRow, ['наименование клиенты', 'контрагент', 'клиент', 'name']) || 'N/A';
-    
-    // Explicit channel selection overrides autodetection
     const finalType = editedChannel || 'Не определен';
 
     const baseNewPoint: MapPoint = {
-      key: stableKey, // Use stable key for new items
+      key: stableKey,
       lat: needsGeocoding ? undefined : manualCoords?.lat || (data as MapPoint).lat,
       lon: needsGeocoding ? undefined : manualCoords?.lon || (data as MapPoint).lon,
       status: 'match',
@@ -590,7 +523,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       rm: rm,
       brand: findValueInRow(originalRow, ['торговая марка']),
       packaging: findValueInRow(originalRow, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана',
-      type: finalType, // IMPORTANT: Use manually selected channel
+      type: finalType,
       contacts: findValueInRow(originalRow, ['контакты']),
       originalRow: originalRow,
       fact: (data as MapPoint).fact,
@@ -602,7 +535,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
 
     if (needsGeocoding) {
       setStatus('geocoding');
-      // Pass both oldKey (for removal) and the baseNewPoint (containing new stable key)
       onStartPolling(rm, editedAddress, oldKey, baseNewPoint, originalIndex, oldAddress);
     } else {
       onDataUpdate(oldKey, baseNewPoint, originalIndex);
@@ -613,6 +545,24 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
 
   const handleDelete = () => {
     if (!data) return;
+    
+    // For Potential Clients (Blue), reason is mandatory
+    if (isPotential) {
+        if (!deleteReason.trim()) {
+            setStatus('error_deleting');
+            setError('Обязательно укажите причину удаления!');
+            return;
+        }
+        
+        const oldKey = (data as MapPoint).key;
+        // Pass to parent handler which will route to saveInterestDelta
+        onDataUpdate(oldKey, data as MapPoint, undefined, { reason: deleteReason, type: 'delete' });
+        
+        onClose();
+        return;
+    }
+
+    // For Active Clients (Green), regular flow
     const originalRow = getSafeOriginalRow(data);
     const addressToDelete = (data as MapPoint).address || findAddressInRow(originalRow) || '';
     const rm = getRmName(data);
@@ -627,13 +577,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     onClose();
   };
 
-  // ... (rest of the file component render logic) ...
-  // close on ESC
+  // ... (ESC handler) ...
   useEffect(() => {
     if (!isOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen, onClose]);
@@ -644,65 +591,42 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
   const clientName = findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']);
   const currentLat = (data as MapPoint).lat;
   const currentLon = (data as MapPoint).lon;
-
   const displayLat = manualCoords ? manualCoords.lat : currentLat;
   const displayLon = manualCoords ? manualCoords.lon : currentLon;
-
-  const isMapSuccess =
-    typeof displayLat === 'number' &&
-    typeof displayLon === 'number' &&
-    displayLat !== 0 &&
-    displayLon !== 0 &&
-    status !== 'geocoding';
-
+  const isMapSuccess = typeof displayLat === 'number' && typeof displayLon === 'number' && displayLat !== 0 && displayLon !== 0 && status !== 'geocoding';
   const isProcessing = status === 'saving' || status === 'deleting' || status === 'syncing';
 
+  // Build details list...
   const detailsToShow = Object.entries(originalRow)
     .map(([k, v]) => {
       const key = String(k).trim();
       const keyLower = key.toLowerCase();
       let value = String(v).trim();
-      
-      // Fix: If we have valid coordinates in the UI state, override the "Not Found" message in the source table
-      if (typeof displayLat === 'number' && displayLat !== 0) {
-           if (['lat', 'latitude', 'широта', 'geo_lat'].includes(keyLower)) {
-               value = displayLat.toFixed(6);
-           }
-      }
-      if (typeof displayLon === 'number' && displayLon !== 0) {
-           if (['lon', 'lng', 'longitude', 'долгота', 'geo_lon'].includes(keyLower)) {
-               value = displayLon.toFixed(6);
-           }
-      }
-
+      if (typeof displayLat === 'number' && displayLat !== 0) { if (['lat', 'latitude', 'широта', 'geo_lat'].includes(keyLower)) { value = displayLat.toFixed(6); } }
+      if (typeof displayLon === 'number' && displayLon !== 0) { if (['lon', 'lng', 'longitude', 'долгота', 'geo_lon'].includes(keyLower)) { value = displayLon.toFixed(6); } }
       return { key, value };
     })
-    .filter((x) => x.value && x.value !== 'null' && x.key !== '__rowNum__');
+    .filter((x) => x.value && x.value !== 'null' && x.key !== '__rowNum__' && x.key !== 'changeHistory'); // Filter out history array
 
   let saveButtonText = 'Сохранить изменения';
-  const oldAddressStr = (data as MapPoint).address || '';
-  const isAddressChangedState = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddressStr.toLowerCase();
-  const isCoordsChanged = manualCoords !== null;
-  const isCommentChanged = comment.trim() !== ((data as MapPoint).comment || '').trim();
-  const isChannelChanged = editedChannel !== ((data as MapPoint).type || 'Не определен');
-
-  if (isAddressChangedState) saveButtonText = 'Сохранить новый адрес';
-  if (isCoordsChanged) saveButtonText = 'Сохранить новые координаты';
-  if (isAddressChangedState && isCoordsChanged) saveButtonText = 'Сохранить адрес и координаты';
-  if (isChannelChanged && !isAddressChangedState && !isCoordsChanged) saveButtonText = 'Сохранить канал';
-  if (isCommentChanged && !isAddressChangedState && !isCoordsChanged && !isChannelChanged) saveButtonText = 'Сохранить комментарий';
+  if (!isPotential) {
+      const oldAddressStr = (data as MapPoint).address || '';
+      const isAddressChangedState = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddressStr.toLowerCase();
+      const isCoordsChanged = manualCoords !== null;
+      const isChannelChanged = editedChannel !== ((data as MapPoint).type || 'Не определен');
+      if (isAddressChangedState) saveButtonText = 'Сохранить новый адрес';
+      if (isCoordsChanged) saveButtonText = 'Сохранить новые координаты';
+      if (isAddressChangedState && isCoordsChanged) saveButtonText = 'Сохранить адрес и координаты';
+      if (isChannelChanged && !isAddressChangedState && !isCoordsChanged) saveButtonText = 'Сохранить канал';
+  } else {
+      saveButtonText = 'Сохранить комментарий';
+  }
 
   return (
     <>
       <div className="fixed inset-0 z-[9999]">
-        <div
-          className="absolute inset-0 bg-white/55 backdrop-blur-md"
-          onClick={onClose}
-          aria-hidden="true"
-        />
-        <div className="absolute inset-0 pointer-events-none">
-          <Glow />
-        </div>
+        <div className="absolute inset-0 bg-white/55 backdrop-blur-md" onClick={onClose} aria-hidden="true" />
+        <div className="absolute inset-0 pointer-events-none"><Glow /></div>
 
         <div className="relative z-[10000] h-full w-full flex items-center justify-center p-3 md:p-6">
           <div className="relative w-full max-w-7xl h-[92vh]">
@@ -711,34 +635,18 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-600 to-sky-500 text-white font-black flex items-center justify-center shadow-[0_14px_40px_rgba(99,102,241,0.18)]">
-                        ✦
-                      </div>
+                      <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-600 to-sky-500 text-white font-black flex items-center justify-center shadow-[0_14px_40px_rgba(99,102,241,0.18)]">✦</div>
                       <div className="min-w-0">
-                        <div className="text-base md:text-lg font-black text-slate-900 truncate">
-                          Редактирование: {clientName || 'Неизвестный клиент'}
-                        </div>
-                        <div className="text-xs text-slate-500 truncate">
-                          Адрес • координаты • канал продаж • история
-                        </div>
+                        <div className="text-base md:text-lg font-black text-slate-900 truncate">Редактирование: {clientName || 'Неизвестный клиент'}</div>
+                        <div className="text-xs text-slate-500 truncate">Адрес • координаты • канал продаж • история</div>
                       </div>
                     </div>
                   </div>
-
                   <div className="flex items-center gap-2">
-                    <Chip tone={status === 'geocoding' ? 'blue' : status === 'success' || status === 'success_geocoding' ? 'lime' : status.startsWith('error') ? 'red' : 'neutral'}>
-                      {status === 'geocoding'
-                        ? 'GEOCODING'
-                        : status === 'success' || status === 'success_geocoding'
-                        ? 'SAVED'
-                        : status.startsWith('error')
-                        ? 'ERROR'
-                        : 'EDIT'}
+                    <Chip tone={isPotential ? 'blue' : status === 'geocoding' ? 'blue' : status === 'success' || status === 'success_geocoding' ? 'lime' : status.startsWith('error') ? 'red' : 'neutral'}>
+                      {isPotential ? 'ОКБ (Потенциал)' : status === 'geocoding' ? 'GEOCODING' : status === 'success' || status === 'success_geocoding' ? 'SAVED' : status.startsWith('error') ? 'ERROR' : 'EDIT'}
                     </Chip>
-
-                    <Btn variant="ghost" onClick={onClose} className="px-3 py-2">
-                      Закрыть
-                    </Btn>
+                    <Btn variant="ghost" onClick={onClose} className="px-3 py-2">Закрыть</Btn>
                   </div>
                 </div>
               </div>
@@ -746,14 +654,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
               <div className="relative p-6 h-[calc(92vh-160px)] overflow-y-auto custom-scrollbar">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="flex flex-col gap-6">
+                    {/* DETAILS CARD */}
                     <Card className="p-5 bg-white/70">
                       <div className="flex items-center justify-between mb-4">
-                        <div className="text-[11px] uppercase tracking-[0.18em] text-indigo-700 font-black">
-                          Исходные данные строки
-                        </div>
+                        <div className="text-[11px] uppercase tracking-[0.18em] text-indigo-700 font-black">Исходные данные строки</div>
                         <Chip tone="neutral">{detailsToShow.length} полей</Chip>
                       </div>
-
                       <div className="max-h-[34vh] overflow-y-auto custom-scrollbar rounded-2xl border border-slate-200 bg-white/70">
                         <table className="w-full text-sm">
                           <tbody className="divide-y divide-slate-200">
@@ -767,7 +673,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                         </table>
                       </div>
                     </Card>
-
+                    
+                    {/* HISTORY CARD */}
                     <Card className="p-5 bg-white/70">
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-600 font-black">
@@ -775,19 +682,16 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                         </div>
                         <Chip tone="neutral">Всего: {history.length}</Chip>
                       </div>
-
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 min-h-[170px] max-h-[34vh] overflow-y-auto custom-scrollbar">
                         {history.length > 0 ? (
                           <ul className="space-y-3">
                             {history.map((item, idx) => (
                               <li key={idx} className="p-3 bg-white rounded-2xl border border-slate-200 shadow-sm">
                                 <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-indigo-700">
-                                  <span className="w-2 h-2 rounded-full bg-indigo-500" />
+                                  <span className="w-2 h-2 rounded-full bg-indigo-50" />
                                   Событие #{history.length - idx}
                                 </div>
-                                <div className="mt-2 text-sm text-slate-800 whitespace-pre-wrap break-words leading-relaxed">
-                                  {item}
-                                </div>
+                                <div className="mt-2 text-sm text-slate-800 whitespace-pre-wrap break-words leading-relaxed">{item}</div>
                               </li>
                             ))}
                           </ul>
@@ -802,203 +706,110 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                   </div>
 
                   <div className="flex flex-col gap-6">
+                    {/* MAP CARD */}
                     <Card className="overflow-hidden">
                       <div className="h-72 md:h-80">
                         <SinglePointMap
-                          lat={displayLat}
-                          lon={displayLon}
-                          address={editedAddress}
-                          isSuccess={isMapSuccess}
-                          onCoordinatesChange={handleCoordinatesChange}
-                          theme={mapTheme}
+                          lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={isMapSuccess}
+                          onCoordinatesChange={handleCoordinatesChange} theme={mapTheme}
                           onToggleTheme={() => setMapTheme((p) => (p === 'dark' ? 'light' : 'dark'))}
-                          onExpand={() => setIsMapExpanded(true)}
-                          isExpanded={false}
+                          onExpand={() => setIsMapExpanded(true)} isExpanded={false}
                         />
                       </div>
                       <div className="px-5 py-4 border-t border-slate-200 bg-white/70 flex items-center justify-between">
-                        <div className="text-xs text-slate-600 flex items-center gap-2">
-                          <InfoIcon className="w-4 h-4 text-indigo-600" />
-                          Перетащите маркер для точной привязки
-                        </div>
+                        <div className="text-xs text-slate-600 flex items-center gap-2"><InfoIcon className="w-4 h-4 text-indigo-600" />Перетащите маркер для точной привязки</div>
                         <Chip tone={isMapSuccess ? 'lime' : 'neutral'}>{isMapSuccess ? 'COORDS OK' : 'NO COORDS'}</Chip>
                       </div>
                     </Card>
 
+                    {/* EDIT FORM CARD */}
                     <Card className="p-6 bg-white/70">
                       <div className="flex items-center justify-between mb-4">
-                        <div className="text-[11px] uppercase tracking-[0.18em] text-indigo-700 font-black flex items-center gap-2">
-                          <SaveIcon className="w-4 h-4" />
-                          Параметры объекта
-                        </div>
-
+                        <div className="text-[11px] uppercase tracking-[0.18em] text-indigo-700 font-black flex items-center gap-2"><SaveIcon className="w-4 h-4" />Параметры объекта</div>
                         {!showDeleteConfirm ? (
-                          <button
-                            onClick={() => setShowDeleteConfirm(true)}
-                            className="text-slate-500 hover:text-red-600 transition-colors p-2 hover:bg-red-50 rounded-2xl flex items-center gap-2"
-                            title="Удалить запись"
-                          >
-                            <TrashIcon className="w-4 h-4" />
-                            <span className="text-[10px] font-black uppercase tracking-[0.16em]">Удалить</span>
+                          <button onClick={() => setShowDeleteConfirm(true)} className="text-slate-500 hover:text-red-600 transition-colors p-2 hover:bg-red-50 rounded-2xl flex items-center gap-2" title="Удалить запись">
+                            <TrashIcon className="w-4 h-4" /><span className="text-[10px] font-black uppercase tracking-[0.16em]">Удалить</span>
                           </button>
                         ) : (
-                          <div className="flex items-center gap-2 bg-red-50 px-3 py-2 rounded-2xl border border-red-200">
+                          <div className="flex items-center gap-2 bg-red-50 px-3 py-2 rounded-2xl border border-red-200 flex-wrap">
                             <span className="text-[10px] font-black text-red-700 uppercase tracking-[0.16em]">Удалить?</span>
-                            <Btn variant="danger" onClick={handleDelete} className="px-3 py-2 text-[11px] rounded-xl">
-                              Да
-                            </Btn>
-                            <Btn variant="soft" onClick={() => setShowDeleteConfirm(false)} className="px-3 py-2 text-[11px] rounded-xl">
-                              Нет
-                            </Btn>
+                            {/* NEW: Input for Reason */}
+                            <input 
+                                type="text" 
+                                placeholder="Причина удаления..." 
+                                value={deleteReason} 
+                                onChange={(e) => setDeleteReason(e.target.value)} 
+                                className="text-xs px-2 py-1 rounded border border-red-200 focus:outline-none w-32"
+                            />
+                            <Btn variant="danger" onClick={handleDelete} disabled={isPotential && !deleteReason.trim()} className="px-3 py-2 text-[11px] rounded-xl">Да</Btn>
+                            <Btn variant="soft" onClick={() => setShowDeleteConfirm(false)} className="px-3 py-2 text-[11px] rounded-xl">Нет</Btn>
                           </div>
                         )}
                       </div>
 
                       <div className="space-y-4">
                         <div>
-                          <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">
-                            Адрес ТТ LimKorm
-                          </label>
+                          <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">Адрес ТТ LimKorm</label>
                           <textarea
-                            rows={2}
-                            value={editedAddress}
-                            onChange={(e) => setEditedAddress(e.target.value)}
-                            disabled={isProcessing || status === 'geocoding' || status === 'success'}
-                            className={[
-                              'w-full rounded-2xl border bg-white/85 px-4 py-3 text-sm font-bold text-slate-900 shadow-sm',
-                              'focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition resize-none',
-                              status === 'success'
-                                ? 'border-emerald-300'
-                                : error
-                                ? 'border-red-300'
-                                : 'border-slate-200 hover:border-slate-300',
-                            ].join(' ')}
+                            rows={2} value={editedAddress} onChange={(e) => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'geocoding' || status === 'success' || isPotential}
+                            className={`w-full rounded-2xl border bg-white/85 px-4 py-3 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition resize-none ${status === 'success' ? 'border-emerald-300' : error ? 'border-red-300' : 'border-slate-200 hover:border-slate-300'} ${isPotential ? 'opacity-70 cursor-not-allowed' : ''}`}
                           />
-                          {status === 'success' && (
-                            <div className="mt-2 text-xs text-emerald-700 font-bold flex items-center gap-2">
-                              <CheckIcon className="w-4 h-4" /> Сохранено
-                            </div>
-                          )}
+                          {status === 'success' && <div className="mt-2 text-xs text-emerald-700 font-bold flex items-center gap-2"><CheckIcon className="w-4 h-4" /> Сохранено</div>}
                         </div>
 
-                        {/* NEW: Channel Selector */}
-                        <div>
-                          <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2 flex items-center gap-2">
-                            <ChannelIcon small /> Канал продаж
-                          </label>
-                          <select
-                            value={editedChannel}
-                            onChange={(e) => setEditedChannel(e.target.value)}
-                            disabled={isProcessing || status === 'geocoding' || status === 'success'}
-                            className="w-full rounded-2xl border border-slate-200 bg-white/85 px-4 py-3 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition cursor-pointer appearance-none"
-                          >
-                             {SALES_CHANNELS.map(ch => (
-                                 <option key={ch} value={ch}>{ch}</option>
-                             ))}
-                          </select>
-                        </div>
+                        {!isPotential && (
+                            <div>
+                              <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2 flex items-center gap-2"><ChannelIcon small /> Канал продаж</label>
+                              <select value={editedChannel} onChange={(e) => setEditedChannel(e.target.value)} disabled={isProcessing || status === 'geocoding' || status === 'success'} className="w-full rounded-2xl border border-slate-200 bg-white/85 px-4 py-3 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition cursor-pointer appearance-none">
+                                 {SALES_CHANNELS.map(ch => (<option key={ch} value={ch}>{ch}</option>))}
+                              </select>
+                            </div>
+                        )}
 
                         <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">
-                              Широта (Lat)
-                            </label>
-                            <input
-                              readOnly
-                              value={displayLat ? displayLat.toFixed(6) : '—'}
-                              className="w-full rounded-2xl border border-slate-200 bg-white/85 px-4 py-3 text-sm font-black text-slate-700 text-center"
-                            />
+                            <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">Широта (Lat)</label>
+                            <input readOnly value={displayLat ? displayLat.toFixed(6) : '—'} className="w-full rounded-2xl border border-slate-200 bg-white/85 px-4 py-3 text-sm font-black text-slate-700 text-center" />
                           </div>
                           <div>
-                            <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">
-                              Долгота (Lon)
-                            </label>
-                            <input
-                              readOnly
-                              value={displayLon ? displayLon.toFixed(6) : '—'}
-                              className="w-full rounded-2xl border border-slate-200 bg-white/85 px-4 py-3 text-sm font-black text-slate-700 text-center"
-                            />
+                            <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">Долгота (Lon)</label>
+                            <input readOnly value={displayLon ? displayLon.toFixed(6) : '—'} className="w-full rounded-2xl border border-slate-200 bg-white/85 px-4 py-3 text-sm font-black text-slate-700 text-center" />
                           </div>
                         </div>
 
-                        <Btn onClick={handleCloudSync} disabled={isProcessing} className="w-full py-3 rounded-2xl" variant="soft">
-                          <span className="inline-flex items-center gap-2">
-                            <SyncIcon small /> Синхронизировать с Google (Проверка координат)
-                          </span>
-                        </Btn>
+                        {!isPotential && (
+                            <Btn onClick={handleCloudSync} disabled={isProcessing} className="w-full py-3 rounded-2xl" variant="soft">
+                              <span className="inline-flex items-center gap-2"><SyncIcon small /> Синхронизировать с Google (Проверка координат)</span>
+                            </Btn>
+                        )}
 
                         <div>
-                          <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">
-                            Заметка менеджера
-                          </label>
+                          <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">Заметка менеджера</label>
                           <textarea
-                            rows={2}
-                            value={comment}
-                            onChange={handleCommentChange}
-                            disabled={isProcessing || status === 'geocoding' || status === 'success'}
+                            rows={2} value={comment} onChange={handleCommentChange} disabled={isProcessing || status === 'geocoding' || status === 'success'}
                             placeholder="Добавьте важный комментарий…"
                             className="w-full rounded-2xl border border-slate-200 bg-white/85 px-4 py-3 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition resize-none"
                           />
                         </div>
 
-                        {lastUpdatedStr && (
-                          <div className="text-[11px] text-slate-500 text-right italic">Обновлено: {lastUpdatedStr}</div>
-                        )}
+                        {lastUpdatedStr && <div className="text-[11px] text-slate-500 text-right italic">Обновлено: {lastUpdatedStr}</div>}
 
                         {status === 'geocoding' && (
-                          <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-                            <div className="flex items-center justify-center gap-2 text-indigo-700 font-black">
-                              <LoaderIcon className="w-4 h-4" /> Ожидание координат (Polling)…
-                            </div>
-                            <div className="mt-2 text-xs text-slate-600 text-center">
-                              Запрос отправлен. Ждём ответ от геокодера.
-                            </div>
-                          </div>
+                          <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4"><div className="flex items-center justify-center gap-2 text-indigo-700 font-black"><LoaderIcon className="w-4 h-4" /> Ожидание координат (Polling)…</div><div className="mt-2 text-xs text-slate-600 text-center">Запрос отправлен. Ждём ответ от геокодера.</div></div>
                         )}
-
                         {status === 'success_geocoding' && (
-                          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-                            <div className="flex items-center justify-center gap-2 text-emerald-700 font-black">
-                              <CheckIcon className="w-5 h-5" /> Координаты обновлены!
-                            </div>
-                            <div className="mt-1 text-xs text-emerald-700/70 text-center">Точка появилась на карте</div>
-                          </div>
+                          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-center justify-center gap-2 text-emerald-700 font-black"><CheckIcon className="w-5 h-5" /> Координаты обновлены!</div><div className="mt-1 text-xs text-emerald-700/70 text-center">Точка появилась на карте</div></div>
                         )}
-
                         {(status === 'error_saving' || status === 'error_deleting' || status === 'error_geocoding') && (
-                          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 space-y-3">
-                            <div className="flex items-center gap-2 text-red-700 font-black text-sm">
-                              <ErrorIcon className="w-4 h-4" /> {error || 'Сбой соединения'}
-                            </div>
-                            {status !== 'error_deleting' && (
-                              <Btn onClick={handleSave} variant="soft" className="w-full py-3 rounded-2xl">
-                                <span className="inline-flex items-center gap-2">
-                                  <RetryIcon className="w-4 h-4" /> Повторить попытку
-                                </span>
-                              </Btn>
-                            )}
-                          </div>
+                          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 space-y-3"><div className="flex items-center gap-2 text-red-700 font-black text-sm"><ErrorIcon className="w-4 h-4" /> {error || 'Сбой соединения'}</div>{status !== 'error_deleting' && (<Btn onClick={handleSave} variant="soft" className="w-full py-3 rounded-2xl"><span className="inline-flex items-center gap-2"><RetryIcon className="w-4 h-4" /> Повторить попытку</span></Btn>)}</div>
                         )}
 
                         {status === 'saving' ? (
-                          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center text-indigo-700 font-black flex items-center justify-center gap-2">
-                            <LoaderIcon className="w-4 h-4 animate-spin" /> Сохранение…
-                          </div>
+                          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center text-indigo-700 font-black flex items-center justify-center gap-2"><LoaderIcon className="w-4 h-4 animate-spin" /> Сохранение…</div>
                         ) : status === 'syncing' ? (
-                          <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-center text-sky-800 font-black flex items-center justify-center gap-2">
-                            <LoaderIcon className="w-4 h-4 animate-spin" /> Проверка в Google…
-                          </div>
+                          <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-center text-sky-800 font-black flex items-center justify-center gap-2"><LoaderIcon className="w-4 h-4 animate-spin" /> Проверка в Google…</div>
                         ) : (
-                          <Btn
-                            onClick={handleSave}
-                            disabled={status === 'success'}
-                            variant="primary"
-                            className="w-full py-3.5 text-base rounded-2xl"
-                          >
-                            <span className="inline-flex items-center gap-2">
-                              <SaveIcon className="w-5 h-5" /> {status === 'success' ? 'Сохранено!' : saveButtonText}
-                            </span>
-                          </Btn>
+                          <Btn onClick={handleSave} disabled={status === 'success'} variant="primary" className="w-full py-3.5 text-base rounded-2xl"><span className="inline-flex items-center gap-2"><SaveIcon className="w-5 h-5" /> {status === 'success' ? 'Сохранено!' : saveButtonText}</span></Btn>
                         )}
                       </div>
                     </Card>
@@ -1007,20 +818,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
               </div>
 
               <div className="px-6 py-4 border-t border-slate-200/70 bg-white/70 flex items-center justify-between">
-                <Btn onClick={onBack} variant="soft" className="px-5 py-3">
-                  <span className="inline-flex items-center gap-2">
-                    <ArrowLeftIcon className="w-4 h-4" /> Назад
-                  </span>
-                </Btn>
-
-                <div className="flex items-center gap-2">
-                  <Btn onClick={onClose} variant="ghost" className="px-5 py-3">
-                    Закрыть
-                  </Btn>
-                  <Btn onClick={onClose} variant="primary" className="px-6 py-3">
-                    Готово
-                  </Btn>
-                </div>
+                <Btn onClick={onBack} variant="soft" className="px-5 py-3"><span className="inline-flex items-center gap-2"><ArrowLeftIcon className="w-4 h-4" /> Назад</span></Btn>
+                <div className="flex items-center gap-2"><Btn onClick={onClose} variant="ghost" className="px-5 py-3">Закрыть</Btn><Btn onClick={onClose} variant="primary" className="px-6 py-3">Готово</Btn></div>
               </div>
             </Card>
           </div>
@@ -1029,46 +828,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
 
       {isMapExpanded && (
         <div className="fixed inset-0 z-[10050] bg-white/80 backdrop-blur-md">
-          <div className="absolute inset-0 pointer-events-none">
-            <Glow />
-          </div>
-
+          <div className="absolute inset-0 pointer-events-none"><Glow /></div>
           <div className="relative h-full flex flex-col">
-            <div className="px-6 py-4 bg-white/80 border-b border-slate-200 flex items-center justify-between">
-              <div className="min-w-0">
-                <div className="text-lg font-black text-slate-900">Уточнение координат</div>
-                <div className="text-xs text-slate-500 truncate max-w-[70vw]">{editedAddress}</div>
-              </div>
-              <Btn onClick={() => setIsMapExpanded(false)} variant="soft" className="px-5 py-3">
-                Закрыть карту
-              </Btn>
-            </div>
-
-            <div className="flex-1 p-4">
-              <Card className="h-full overflow-hidden">
-                <SinglePointMap
-                  lat={displayLat}
-                  lon={displayLon}
-                  address={editedAddress}
-                  isSuccess={isMapSuccess}
-                  onCoordinatesChange={handleCoordinatesChange}
-                  theme={mapTheme}
-                  onToggleTheme={() => setMapTheme((p) => (p === 'dark' ? 'light' : 'dark'))}
-                  onCollapse={() => setIsMapExpanded(false)}
-                  isExpanded={true}
-                />
-              </Card>
-            </div>
-
-            <div className="px-6 py-4 bg-white/80 border-t border-slate-200 flex items-center justify-between">
-              <div className="text-xs text-slate-600 flex items-center gap-2">
-                <InfoIcon className="w-4 h-4 text-indigo-600" />
-                Перетащите маркер. Координаты обновятся автоматически.
-              </div>
-              <Btn onClick={() => setIsMapExpanded(false)} variant="primary" className="px-8 py-3">
-                Применить
-              </Btn>
-            </div>
+            <div className="px-6 py-4 bg-white/80 border-b border-slate-200 flex items-center justify-between"><div className="min-w-0"><div className="text-lg font-black text-slate-900">Уточнение координат</div><div className="text-xs text-slate-500 truncate max-w-[70vw]">{editedAddress}</div></div><Btn onClick={() => setIsMapExpanded(false)} variant="soft" className="px-5 py-3">Закрыть карту</Btn></div>
+            <div className="flex-1 p-4"><Card className="h-full overflow-hidden"><SinglePointMap lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={isMapSuccess} onCoordinatesChange={handleCoordinatesChange} theme={mapTheme} onToggleTheme={() => setMapTheme((p) => (p === 'dark' ? 'light' : 'dark'))} onCollapse={() => setIsMapExpanded(false)} isExpanded={true} /></Card></div>
+            <div className="px-6 py-4 bg-white/80 border-t border-slate-200 flex items-center justify-between"><div className="text-xs text-slate-600 flex items-center gap-2"><InfoIcon className="w-4 h-4 text-indigo-600" />Перетащите маркер. Координаты обновятся автоматически.</div><Btn onClick={() => setIsMapExpanded(false)} variant="primary" className="px-8 py-3">Применить</Btn></div>
           </div>
         </div>
       )}

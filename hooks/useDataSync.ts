@@ -1,6 +1,6 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { AggregatedDataRow, UnidentifiedRow, FileProcessingState, DeltaItem, CoordsCache, OkbStatus, OkbDataRow, WorkerMessage, MapPoint, WorkerResultPayload } from '../types';
+import { AggregatedDataRow, UnidentifiedRow, FileProcessingState, DeltaItem, CoordsCache, OkbStatus, OkbDataRow, WorkerMessage, MapPoint, WorkerResultPayload, InterestDelta } from '../types';
 import { saveAnalyticsState, loadAnalyticsState } from '../utils/db';
 import { enrichWithAbcCategories } from '../utils/analytics';
 import { normalizeAddress, findAddressInRow, normalizeAggregatedToPeriod } from '../utils/dataUtils';
@@ -10,6 +10,7 @@ const MAX_CHUNK_SIZE_BYTES = 850 * 1024;
 export const useDataSync = (addNotification: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void) => {
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
     const [unidentifiedRows, setUnidentifiedRows] = useState<UnidentifiedRow[]>([]);
+    const [interestDeltas, setInterestDeltas] = useState<InterestDelta[]>([]); // New state for Blue Points deltas
     const [isCloudSaving, setIsCloudSaving] = useState(false);
     const [processingState, setProcessingState] = useState({
         isProcessing: false, progress: 0, message: 'Система готова', fileName: null, backgroundMessage: null, startTime: null, totalRowsProcessed: 0
@@ -20,7 +21,7 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
     const lastSavedChunksRef = useRef<Map<number, string>>(new Map());
     const manualUpdateTimestamps = useRef<Map<string, number>>(new Map());
 
-    // ... saveDeltaToCloud ...
+    // ... saveDeltaToCloud (Existing) ...
     const saveDeltaToCloud = async (delta: DeltaItem) => {
         setIsCloudSaving(true);
         console.info(`☁️ [Cloud] Saving Delta (${delta.type}):`, delta.key);
@@ -30,6 +31,43 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
         } catch (e) { console.error("❌ [Cloud] Failed to save delta:", e); addNotification('Ошибка сохранения изменений в облако', 'warning'); } 
         finally { setIsCloudSaving(false); }
     };
+
+    // ... saveInterestDelta (New for Blue Points) ...
+    const saveInterestDelta = async (delta: InterestDelta) => {
+        setIsCloudSaving(true);
+        console.info(`☁️ [Cloud] Saving Interest Delta (${delta.type}):`, delta.key);
+        try {
+            await fetch('/api/get-full-cache?action=save-interest-delta', { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' }, 
+                body: JSON.stringify(delta) 
+            });
+            console.log("✅ [Cloud] Interest Delta saved successfully");
+            // Optimistically update local state
+            setInterestDeltas(prev => [...prev, delta]);
+        } catch (e) { 
+            console.error("❌ [Cloud] Failed to save interest delta:", e); 
+            addNotification('Ошибка сохранения изменений в облако (ОКБ)', 'warning'); 
+        } finally { 
+            setIsCloudSaving(false); 
+        }
+    };
+
+    // ... fetchInterestDeltas (New) ...
+    const fetchInterestDeltas = useCallback(async () => {
+        try {
+            const res = await fetch(`/api/get-full-cache?action=get-interest-deltas&t=${Date.now()}`);
+            if (res.ok) {
+                const data: InterestDelta[] = await res.json();
+                if (Array.isArray(data)) {
+                    console.info(`[Sync] Loaded ${data.length} interest deltas.`);
+                    setInterestDeltas(data);
+                }
+            }
+        } catch (e) {
+            console.error("Failed to fetch interest deltas:", e);
+        }
+    }, []);
 
     // ... applyDeltasToData ...
     const applyDeltasToData = useCallback((rows: AggregatedDataRow[], deltas: DeltaItem[]) => {
@@ -227,6 +265,9 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
         try {
             setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
             
+            // 1. Fetch Interest Deltas (Blue Points) First
+            await fetchInterestDeltas();
+
             console.log('1. [Sync] Requesting snapshot list...');
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
             if (!listRes.ok) throw new Error('Failed to fetch snapshot list');
@@ -325,14 +366,12 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                 } else {
                                     const firstRow = newRows[0];
 
-                                    // Snapshot: Object with 'clients' property that IS an array
                                     const isGroupSnapshot = 
                                         firstRow &&
                                         typeof firstRow === 'object' && 
                                         !Array.isArray(firstRow) && 
                                         Array.isArray((firstRow as any).clients);
 
-                                    // Point Snapshot: Array of objects that are NOT groups (no 'clients'), but have address/name
                                     const isPointSnapshot =
                                         firstRow &&
                                         !isGroupSnapshot &&
@@ -341,21 +380,16 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                         ('address' in firstRow) && 
                                         ('name' in firstRow);
 
-                                    // Raw Array: Array of values (Excel row)
                                     const isRawArray = Array.isArray(firstRow);
                                     
-                                    // Object Raw: Array of objects (JSON export)
                                     const isObjectRaw = !isGroupSnapshot && !isPointSnapshot && typeof firstRow === 'object' && !Array.isArray(firstRow);
 
-                                    // console.log(`Processing chunk ${item.file.name}: ${newRows.length} rows (${isGroupSnapshot ? 'GroupSnapshot' : isPointSnapshot ? 'PointSnapshot' : isRawArray ? 'Raw' : isObjectRaw ? 'ObjectRaw' : 'Unknown'})`);
-                                    
                                     if (isGroupSnapshot) {
                                         worker.postMessage({
                                             type: 'RESTORE_CHUNK',
                                             payload: { chunkData: newRows, progress: chunkProgress }
                                         });
                                     } else if (isPointSnapshot) {
-                                        // This handles the "flat list of points" format
                                         worker.postMessage({
                                             type: 'PROCESS_CHUNK',
                                             payload: {
@@ -375,7 +409,6 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                             }
                                         });
                                     } else if (isObjectRaw) {
-                                        // HANDLE ARRAY OF OBJECTS (JSON export of sales lines)
                                         worker.postMessage({
                                             type: 'PROCESS_CHUNK',
                                             payload: {
@@ -411,11 +444,6 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                 
                 let finalData = accumulatedRows;
 
-                // --- CRITICAL FIX: ORDER OF APPLICATION ---
-                // 1. First Apply CACHE (Base Truth from Google Sheets)
-                // 2. Then Apply DELTAS (Recent user overrides that might not be in cache yet)
-                // This prevents stale cache from overwriting fresh local edits.
-
                 try {
                     console.log('5. [Sync] Fetching coordinate cache...');
                     const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
@@ -440,12 +468,10 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                     }
                 } catch (e) { console.error("Failed to fetch/apply deltas:", e); }
 
-                // --- CRITICAL FIX: POST-DELTA NORMALIZATION ---
                 const startYM = startDate ? startDate.slice(0, 7) : null;
                 const endYM = endDate ? endDate.slice(0, 7) : null;
                 
                 if (startYM || endYM) {
-                    // CONDITIONAL CHECK: Do we have monthlyFact?
                     const hasMonthlyData = finalData.some(g => 
                         (g.monthlyFact && Object.keys(g.monthlyFact).length > 0) || 
                         g.clients.some(c => c.monthlyFact && Object.keys(c.monthlyFact).length > 0)
@@ -455,8 +481,6 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                         console.info(`6. [Sync] Normalizing data to period: ${startYM || 'start'} -> ${endYM || 'end'}`);
                         finalData = normalizeAggregatedToPeriod(finalData, startYM, endYM);
                         console.info(`   [Sync] Normalized count: ${finalData.length}`);
-                    } else {
-                        console.warn('[Sync] Snapshot lacks monthly details. Skipping period normalization to preserve data.');
                     }
                 }
 
@@ -467,7 +491,6 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
 
                 await saveAnalyticsState({
                     allData: finalData,
-                    // FIX: Prioritize worker payload, remove fallback to potentially empty safeMeta
                     unidentifiedRows: finalWorkerPayload?.unidentifiedRows ?? [], 
                     okbRegionCounts: finalWorkerPayload?.okbRegionCounts ?? {},
                     totalRowsProcessed: totalRowsProcessedRef.current,
@@ -487,17 +510,19 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
             return false;
         }
-    }, [addNotification, applyDeltasToData, applyCacheToData]);
+    }, [addNotification, applyDeltasToData, applyCacheToData, fetchInterestDeltas]);
 
     return {
         allData, setAllData,
         unidentifiedRows, setUnidentifiedRows,
         okbRegionCounts, setOkbRegionCounts,
+        interestDeltas, setInterestDeltas, // Exported state
         isCloudSaving, setIsCloudSaving, 
         processingState, setProcessingState,
         totalRowsProcessedRef,
         manualUpdateTimestamps,
         saveDeltaToCloud,
+        saveInterestDelta, // Exported function
         saveSnapshotToCloud,
         applyDeltasToData,
         applyCacheToData,

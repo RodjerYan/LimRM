@@ -72,6 +72,8 @@ const AppContent: React.FC = () => {
         selectedDetailsRow, setSelectedDetailsRow,
         isUnidentifiedModalOpen, setIsUnidentifiedModalOpen,
         editingClient, setEditingClient,
+        editingPotentialClient, setEditingPotentialClient, // NEW State for Blue Points
+        handlePotentialClientUpdate, // NEW Handler
         filtered,
         allActiveClients,
         mapPotentialClients,
@@ -267,7 +269,15 @@ const AppContent: React.FC = () => {
 
                                 {ampView === 'map' ? (
                                     <>
-                                        <InteractiveRegionMap data={filtered} activeClients={allActiveClients} potentialClients={mapPotentialClients} onEditClient={setEditingClient} selectedRegions={filters.region} flyToClientKey={null} />
+                                        <InteractiveRegionMap 
+                                            data={filtered} 
+                                            activeClients={allActiveClients} 
+                                            potentialClients={mapPotentialClients} 
+                                            onEditClient={setEditingClient} 
+                                            onEditPotentialClient={setEditingPotentialClient} // WIRED UP HERE
+                                            selectedRegions={filters.region} 
+                                            flyToClientKey={null} 
+                                        />
                                         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                                             <div className="lg:col-span-1">
                                                 <Filters options={filterOptions} currentFilters={filters} onFilterChange={setFilters} onReset={() => setFilters({rm:'', brand:[], packaging:[], region:[]})} disabled={allData.length === 0} />
@@ -327,6 +337,7 @@ const AppContent: React.FC = () => {
                     {isUnidentifiedModalOpen && <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={setEditingClient} />}
                 </Suspense>
                 
+                {/* Active Client Edit Modal */}
                 {editingClient && (
                     <AddressEditModal 
                         isOpen={!!editingClient} 
@@ -336,6 +347,20 @@ const AppContent: React.FC = () => {
                         onDataUpdate={handleDataUpdate}
                         onStartPolling={handleStartPolling} 
                         onDelete={handleDeleteClient}
+                        globalTheme="light" 
+                    />
+                )}
+
+                {/* Potential Client Edit Modal (Blue Points) */}
+                {editingPotentialClient && (
+                    <AddressEditModal 
+                        isOpen={!!editingPotentialClient} 
+                        onClose={() => setEditingPotentialClient(null)} 
+                        onBack={() => setEditingPotentialClient(null)} 
+                        data={editingPotentialClient} 
+                        onDataUpdate={handlePotentialClientUpdate} // Special handler
+                        onStartPolling={() => {}} // No geocoding polling for potential yet
+                        onDelete={() => {}} // Deletion handled via onDataUpdate with delete type
                         globalTheme="light" 
                     />
                 )}

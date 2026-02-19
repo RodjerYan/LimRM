@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
     OkbDataRow, MapPoint, UnidentifiedRow,
-    OkbStatus, UpdateJobStatus, AggregatedDataRow
+    OkbStatus, UpdateJobStatus, AggregatedDataRow, InterestDelta
 } from '../types';
 import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
 import { saveAnalyticsState, loadAnalyticsState } from '../utils/db';
@@ -20,7 +20,6 @@ const parseNum = (v: any) => {
     return parseFloat(s);
 };
 
-// Strict check: if row has ANY valid coordinates, it is NOT unidentified
 const hasValidCoordsRow = (row: any) => {
     const latRaw = findValueInRow(row, ['широта', 'lat', 'ldt', 'latitude', 'geo_lat', 'y']);
     const lonRaw = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'geo_lon', 'x']);
@@ -28,13 +27,10 @@ const hasValidCoordsRow = (row: any) => {
     const lat = parseNum(latRaw);
     const lon = parseNum(lonRaw);
     
-    // If we have valid numbers and they aren't 0, the row is geocoded.
     return !isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0;
 };
 
-// Helper for strict error filtering based on text markers
 const isStrictErrorStatus = (row: any): boolean => {
-    // If coords exist, it's valid regardless of status text
     if (hasValidCoordsRow(row)) return false;
 
     const latRaw = findValueInRow(row, ['широта', 'lat', 'latitude', 'geo_lat', 'y', 'ldt']);
@@ -46,6 +42,12 @@ const isStrictErrorStatus = (row: any): boolean => {
     };
     
     return check(latRaw) || check(lonRaw);
+};
+
+const getUniqueKeyForBluePoint = (row: OkbDataRow) => {
+    const addr = normalizeAddress(findAddressInRow(row));
+    const name = (row['наименование'] || row['клиент'] || row['name'] || '').toString().toLowerCase().replace(/[^a-zа-я0-9]/g, '');
+    return `${addr}#${name}`;
 };
 
 export const useAppLogic = () => {
@@ -70,6 +72,8 @@ export const useAppLogic = () => {
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<any | null>(null);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null);
+    // NEW: State for editing Potential Clients (Blue Points)
+    const [editingPotentialClient, setEditingPotentialClient] = useState<MapPoint | null>(null);
 
     const lastCacheSizeRef = useRef<number>(0);
     const lastDeltaTsRef = useRef<number>(0);
@@ -87,11 +91,13 @@ export const useAppLogic = () => {
         allData, setAllData,
         unidentifiedRows, setUnidentifiedRows,
         okbRegionCounts, setOkbRegionCounts,
+        interestDeltas, // Consuming interest deltas
         isCloudSaving, 
         processingState, setProcessingState,
         totalRowsProcessedRef,
         manualUpdateTimestamps,
         saveDeltaToCloud,
+        saveInterestDelta, // Function to save interest delta
         applyCacheToData,
         applyDeltasToData,
         handleDownloadSnapshot: originalDownloadSnapshot
@@ -105,31 +111,59 @@ export const useAppLogic = () => {
         if (user.role === 'admin') return allData;
         
         const userSurname = normalize(user.lastName);
-        
-        // Filter rows where RM matches User's Surname
         return allData.filter(row => {
             const rmName = normalize(row.rm);
             return rmName.includes(userSurname);
         });
     }, [allData, user]);
 
+    // --- FILTER OKB DATA BASED ON INTEREST DELTAS (Deleted Blue Points) ---
+    const filteredOkbData = useMemo(() => {
+        if (!okbData || okbData.length === 0) return [];
+        if (!interestDeltas || interestDeltas.length === 0) return okbData;
+
+        // Create a set of deleted keys
+        const deletedKeys = new Set<string>();
+        const commentsMap = new Map<string, string[]>();
+
+        interestDeltas.forEach(d => {
+            if (d.type === 'delete') {
+                deletedKeys.add(d.key);
+            } else if (d.type === 'comment' && d.comment) {
+                if (!commentsMap.has(d.key)) commentsMap.set(d.key, []);
+                commentsMap.get(d.key)!.push(`${d.user} (${new Date(d.timestamp).toLocaleDateString()}): ${d.comment}`);
+            }
+        });
+
+        // Filter and Enrich
+        return okbData.filter(row => {
+            const key = getUniqueKeyForBluePoint(row);
+            return !deletedKeys.has(key);
+        }).map(row => {
+            const key = getUniqueKeyForBluePoint(row);
+            if (commentsMap.has(key)) {
+                return { ...row, changeHistory: commentsMap.get(key) };
+            }
+            return row;
+        });
+
+    }, [okbData, interestDeltas]);
+
     // Wrapper to pass current date state
     const handleDownloadSnapshot = useCallback((serverMeta: any) => {
         return originalDownloadSnapshot(serverMeta, loadStartDate, loadEndDate);
     }, [originalDownloadSnapshot, loadStartDate, loadEndDate]);
 
-    // --- 3. ANALYTICS HOOK (Must use visibleData!) ---
-    const { filters, setFilters, filterStartDate, setFilterStartDate, filterEndDate, setFilterEndDate, filtered, allActiveClients, mapPotentialClients, filterOptions, summaryMetrics } = useAnalytics(visibleData, okbData, okbRegionCounts);
+    // --- 3. ANALYTICS HOOK (Must use visibleData and filteredOkbData!) ---
+    // Pass filteredOkbData instead of raw okbData to ensure deleted points don't show up in metrics/map
+    const { filters, setFilters, filterStartDate, setFilterStartDate, filterEndDate, setFilterEndDate, filtered, allActiveClients, mapPotentialClients, filterOptions, summaryMetrics } = useAnalytics(visibleData, filteredOkbData, okbRegionCounts);
 
-    // --- SYNC FILTER DATES WITH LOAD DATES ---
     useEffect(() => {
         setFilterStartDate(loadStartDate);
         setFilterEndDate(loadEndDate);
     }, [loadStartDate, loadEndDate, setFilterStartDate, setFilterEndDate]);
 
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
-        // We update `allData` (global state) so updates persist even if filtering changes.
-        // `visibleData` will recompute automatically.
         let newData = [...allData]; 
         let newUnidentified = [...unidentifiedRows];
         if (newPoint.address) { manualUpdateTimestamps.current.set(normalizeAddress(newPoint.address), Date.now()); }
@@ -189,7 +223,6 @@ export const useAppLogic = () => {
         setAllData(newData); 
         setUnidentifiedRows(newUnidentified);
         
-        // Use strict validation for coordinates before saving to cloud
         if (!newPoint.isGeocoding && newPoint.lat != null && newPoint.lon != null && newPoint.lat !== 0 && newPoint.lon !== 0) {
             saveDeltaToCloud({ type: 'update', key: oldKey, rm: newPoint.rm, payload: newPoint, timestamp: Date.now() });
         }
@@ -215,6 +248,53 @@ export const useAppLogic = () => {
             saveDeltaToCloud({ type: 'delete', key: deletedKey || normalizeAddress(address), rm: rmName, timestamp: Date.now() });
         }
     }, [allData, unidentifiedRows, setAllData, setUnidentifiedRows, saveDeltaToCloud]);
+
+    // NEW: Handle update for Potential (Blue) Client
+    const handlePotentialClientUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number, options?: { skipHistory?: boolean, reason?: string, type?: 'delete' | 'comment' }) => {
+        
+        if (!user) return; // Should be authenticated
+        
+        // 1. Identify Action Type
+        // If we are "deleting" (marked via option or logic), create delete delta
+        if (options?.type === 'delete') {
+            if (!options.reason) {
+                addNotification("Необходимо указать причину удаления", "error");
+                return;
+            }
+            
+            const delta: InterestDelta = {
+                key: oldKey, // The unique key generated for blue point
+                type: 'delete',
+                user: `${user.lastName} ${user.firstName}`,
+                timestamp: Date.now(),
+                reason: options.reason
+            };
+            
+            saveInterestDelta(delta);
+            addNotification("Точка удалена из базы потенциальных клиентов", "success");
+            setEditingPotentialClient(null); // Close modal
+            return;
+        }
+
+        // 2. Handle Commenting / Editing (Currently we treat edits to Blue points as comments logs mostly)
+        // If the comment changed, save it as a 'comment' delta
+        if (newPoint.comment) {
+             const delta: InterestDelta = {
+                key: oldKey,
+                type: 'comment',
+                user: `${user.lastName} ${user.firstName}`,
+                timestamp: Date.now(),
+                comment: newPoint.comment
+            };
+            saveInterestDelta(delta);
+            addNotification("Комментарий сохранен", "success");
+            
+            // Optimistically update the editing client state to show new history if needed
+            // But we don't strictly maintain a complex local state for blue points in memory except for the filteredOkbData list
+        }
+
+    }, [user, saveInterestDelta, addNotification]);
+
 
     // --- 2. GEOCODING HOOK ---
     const { pendingGeocoding, actionQueue, handleStartPolling, handleQueuedUpdate, handleQueuedDelete } = useGeocoding(addNotification, handleDataUpdate, handleDeleteClientLocal);
@@ -278,15 +358,13 @@ export const useAppLogic = () => {
 
     // --- FILTERED UNIDENTIFIED ROWS ---
     const combinedUnidentifiedRows = useMemo(() => {
-        // FILTER: Keep only rows that fail strict validation (meaning NO valid lat/lon/lng found)
         const parsingFailures = unidentifiedRows
-            .filter(r => !hasValidCoordsRow(r.rowData)) // Explicitly remove rows that HAVE valid coords
+            .filter(r => !hasValidCoordsRow(r.rowData)) 
             .filter(r => isStrictErrorStatus(r.rowData));
         
-        // Use visibleData here so users only see their own errors
         const geocodingFailures = visibleData.flatMap(group => group.clients) 
             .filter(c => (c.lat == null || c.lon == null) && !c.isGeocoding)
-            .filter(c => !hasValidCoordsRow(c.originalRow)) // Explicitly remove rows that HAVE valid coords
+            .filter(c => !hasValidCoordsRow(c.originalRow)) 
             .filter(c => isStrictErrorStatus(c.originalRow))
             .map(c => ({
                 rm: c.rm,
@@ -305,7 +383,6 @@ export const useAppLogic = () => {
 
     return {
         activeModule, setActiveModule,
-        // Return visibleData as allData so the UI only sees what is allowed
         allData: visibleData, 
         isCloudSaving,
         updateJobStatus,
@@ -313,7 +390,8 @@ export const useAppLogic = () => {
         filterEndDate, setFilterEndDate,
         notifications,
         dbStatus,
-        okbData, setOkbData,
+        okbData: filteredOkbData, // Exposed filtered OKB
+        setOkbData,
         okbStatus, setOkbStatus,
         okbRegionCounts,
         unidentifiedRows: filteredUnidentifiedRows,
@@ -322,6 +400,8 @@ export const useAppLogic = () => {
         selectedDetailsRow, setSelectedDetailsRow,
         isUnidentifiedModalOpen, setIsUnidentifiedModalOpen,
         editingClient, setEditingClient,
+        editingPotentialClient, setEditingPotentialClient, // Exposed
+        handlePotentialClientUpdate, // Exposed
         filtered,
         allActiveClients,
         mapPotentialClients,

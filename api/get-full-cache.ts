@@ -15,6 +15,7 @@ import {
 const FOLDER_ID = '1bNcjQp-BhPtgf5azbI5gkkx__eMthCfX'; // Snapshot Folder
 const DELTA_FOLDER_ID = '19SNRc4HNKNs35sP7GeYeFj2UPTtWru5P'; // Savepoint (Delta) Folder
 const TASKS_FOLDER_ID = '1LxM3kjiEanQnqj5y-7QE1tHkTFiUFHD2'; // New folder for Tasks (Deferred/Deleted)
+const INTEREST_FOLDER_ID = '1Ak8XBQMNNnHFlIg6NWb6DHuSjI8TSg2l'; // New folder for Blue Points Deltas
 
 const SCOPES = ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets'];
 
@@ -53,7 +54,7 @@ async function getDriveClient() {
     return google.drive({ version: 'v3', auth });
 }
 
-async function getSortedFiles(drive: any, folderId: string = FOLDER_ID, fileType: 'snapshot' | 'savepoints' | 'all' = 'all') {
+async function getSortedFiles(drive: any, folderId: string = FOLDER_ID, fileType: 'snapshot' | 'savepoints' | 'interest' | 'all' = 'all') {
     const q = `'${folderId}' in parents and trashed = false`;
     const res = await drive.files.list({ 
         q, 
@@ -67,6 +68,7 @@ async function getSortedFiles(drive: any, folderId: string = FOLDER_ID, fileType
         if (!f.name || f.mimeType === 'application/vnd.google-apps.folder') return false;
         const lowerName = f.name.toLowerCase();
         if (fileType === 'all') return lowerName.includes('snapshot') || lowerName.includes('savepoints');
+        if (fileType === 'interest') return lowerName.includes('points_of_interest');
         return lowerName.includes(fileType);
     });
     const sortKey = (f: any) => {
@@ -130,7 +132,7 @@ function verifyUser(req: Request) {
         const authHeader = req.headers.get('Authorization');
         if (!authHeader) return null;
         const token = authHeader.replace('Bearer ', '');
-        return jwt.verify(token, JWT_SECRET) as { email: string; role: string; lastName: string };
+        return jwt.verify(token, JWT_SECRET) as { email: string; role: string; lastName: string; firstName: string };
     } catch (e) {
         return null;
     }
@@ -154,12 +156,85 @@ export default async function handler(req: Request) {
 
     try {
         // We only need Drive client for snapshot/delta/tasks operations
-        const needsDrive = ['save-delta', 'clear-deltas', 'save-chunk', 'save-meta', 'cleanup-chunks', 'get-deltas', 'get-snapshot-meta', 'get-snapshot-list', 'get-file-content', 'get-settings', 'save-settings', 'get-tasks', 'save-task', 'restore-task'].includes(action || '');
+        const needsDrive = ['save-delta', 'save-interest-delta', 'get-interest-deltas', 'clear-deltas', 'save-chunk', 'save-meta', 'cleanup-chunks', 'get-deltas', 'get-snapshot-meta', 'get-snapshot-list', 'get-file-content', 'get-settings', 'save-settings', 'get-tasks', 'save-task', 'restore-task'].includes(action || '');
         const drive = needsDrive ? await getDriveClient() : null;
 
         if (req.method === 'POST') {
             const body = await req.json().catch(() => ({}));
             
+            // --- SAVE INTEREST DELTA (BLUE POINTS) ---
+            if (action === 'save-interest-delta' && drive) {
+                const deltaItem = body;
+                if (!deltaItem || Object.keys(deltaItem).length === 0) {
+                    return new Response(JSON.stringify({ error: 'Missing or empty delta payload' }), { status: 400 });
+                }
+
+                // Verify user for authorship
+                const user = verifyUser(req);
+                if (user) {
+                    deltaItem.user = `${user.lastName} ${user.firstName}`; // Enforce user name
+                }
+
+                // Logic to find the latest "Points_of_interest{N}.json"
+                const interestFiles = await getSortedFiles(drive, INTEREST_FOLDER_ID, 'interest');
+                let targetFile = null;
+                let fileContent: any[] = [];
+                let nextIndex = 1;
+
+                if (interestFiles.length > 0) {
+                    const lastFile = interestFiles[interestFiles.length - 1];
+                    const match = lastFile.name.match(/Points_of_interest(\d+)\.json/i);
+                    // Handle case where file is just "Points_of_interest.json" -> treat as 1
+                    const currentIndex = match ? parseInt(match[1], 10) : 1;
+                    nextIndex = currentIndex;
+                    const fileSize = lastFile.size;
+
+                    // If file is > 500KB, start a new one
+                    if (fileSize > 500 * 1024) {
+                        nextIndex = currentIndex + 1;
+                        targetFile = null;
+                    } else {
+                        try {
+                            const fileRes = await drive.files.get({ fileId: lastFile.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
+                            const contentStr = Buffer.from(fileRes.data as any).toString('utf-8');
+                            targetFile = lastFile;
+                            try { 
+                                const parsed = JSON.parse(contentStr);
+                                fileContent = Array.isArray(parsed) ? parsed : [];
+                            } catch (e) { fileContent = []; }
+                        } catch (e) {
+                            nextIndex = currentIndex + 1;
+                            targetFile = null; 
+                        }
+                    }
+                }
+
+                fileContent.push(deltaItem);
+                
+                const newContentStr = JSON.stringify(fileContent, null, 2);
+                const fileName = `Points_of_interest${nextIndex}.json`;
+
+                if (targetFile) {
+                    await drive.files.update({
+                        fileId: targetFile.id,
+                        media: { mimeType: 'application/json', body: newContentStr },
+                        supportsAllDrives: true
+                    });
+                    return new Response(JSON.stringify({ status: 'appended', file: fileName }));
+                } else {
+                    await drive.files.create({
+                        requestBody: {
+                            name: fileName,
+                            parents: [INTEREST_FOLDER_ID],
+                            mimeType: 'application/json'
+                        },
+                        media: { mimeType: 'application/json', body: newContentStr },
+                        supportsAllDrives: true
+                    });
+                    return new Response(JSON.stringify({ status: 'created', file: fileName }));
+                }
+            }
+
             // --- TASK MANAGEMENT POST ---
             if (action === 'save-task' && drive) {
                 const user = verifyUser(req);
@@ -404,6 +479,28 @@ export default async function handler(req: Request) {
         }
 
         if (req.method === 'GET') {
+            
+            // --- GET INTEREST DELTAS ---
+            if (action === 'get-interest-deltas' && drive) {
+                const interestFiles = await getSortedFiles(drive, INTEREST_FOLDER_ID, 'interest');
+                const filesToProcess = interestFiles.filter((f: any) => f.size > 0);
+                
+                const downloadFn = async (file: any) => {
+                    return drive.files.get({ fileId: file.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' })
+                        .then(res => {
+                            try {
+                                const content = JSON.parse(Buffer.from(res.data as any).toString('utf-8'));
+                                return Array.isArray(content) ? content : [];
+                            } catch (e) { return []; }
+                        })
+                        .catch(e => { return []; });
+                };
+
+                const results = await mapConcurrent(filesToProcess, 8, downloadFn);
+                const allDeltas = results.flat();
+                return new Response(JSON.stringify(allDeltas));
+            }
+
             // --- TASK MANAGEMENT GET ---
             if (action === 'get-tasks' && drive) {
                 const user = verifyUser(req);
