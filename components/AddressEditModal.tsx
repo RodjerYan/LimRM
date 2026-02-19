@@ -22,6 +22,7 @@ import {
   SearchIcon,
   SyncIcon,
   ChannelIcon,
+  SendIcon,
 } from './icons';
 
 // ... (Leaflet icons setup same) ...
@@ -350,7 +351,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
   const [editedAddress, setEditedAddress] = useState('');
   const [editedChannel, setEditedChannel] = useState('');
   const [comment, setComment] = useState('');
-  const [deleteReason, setDeleteReason] = useState(''); // New State for delete reason
+  const [deleteReason, setDeleteReason] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -360,10 +361,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
   const [manualCoords, setManualCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [mapTheme, setMapTheme] = useState<Theme>(globalTheme);
   const [isMapExpanded, setIsMapExpanded] = useState(false);
+  
+  // Messenger state
+  const [newComment, setNewComment] = useState('');
 
   const prevKeyRef = useRef<string | number | undefined>(undefined);
+  const chatEndRef = useRef<HTMLDivElement>(null);
   
-  // Check if it's a potential client (Blue Point)
   const isPotential = (data as MapPoint)?.status === 'potential';
 
   const fetchHistory = async (rm: string, address: string) => {
@@ -386,7 +390,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     let currentChannel = '';
 
     if (isUnidentifiedRow(data)) {
-      // ... (unidentified logic) ...
       const rawAddress = findAddressInRow(originalRow) || '';
       let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor', 'партнер']);
       if (!distributor) {
@@ -410,7 +413,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       setEditedAddress(currentAddress);
       setEditedChannel(currentChannel);
       setComment((data as MapPoint).comment || '');
-      setDeleteReason(''); // Reset reason
+      setDeleteReason('');
+      setNewComment('');
 
       setManualCoords(null);
       setIsMapExpanded(false);
@@ -421,7 +425,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       const pt = data as MapPoint;
       setLastUpdatedStr(pt.lastUpdated ? new Date(pt.lastUpdated).toLocaleString('ru-RU') : null);
 
-      // If Potential Client, use passed history (which might come from interest deltas)
       if (isPotential) {
           if (originalRow.changeHistory && Array.isArray(originalRow.changeHistory)) {
               setHistory(originalRow.changeHistory);
@@ -429,7 +432,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
               setHistory([]);
           }
       } else {
-          // Regular Active Client
           const rm = getRmName(data);
           if (rm && currentAddress) {
              const isRecent = pt.lastUpdated && Date.now() - pt.lastUpdated < 3000;
@@ -441,7 +443,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
 
       prevKeyRef.current = currentKey;
     } else {
-        // Status updates for ongoing geocoding
         const pt = data as MapPoint;
         if (status === 'geocoding') {
             const isStillGeocoding = pt.isGeocoding;
@@ -455,6 +456,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, data, globalTheme]);
+
+  useEffect(() => {
+      // Auto-scroll to bottom of chat
+      if (isPotential && chatEndRef.current) {
+          chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+      }
+  }, [history, isPotential]);
 
   const handleCommentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => setComment(e.target.value);
   const handleCoordinatesChange = useCallback((lat: number, lon: number) => setManualCoords({ lat, lon }), []);
@@ -479,6 +487,24 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     } catch (e: any) { setStatus('error_saving'); setError(e?.message || 'Ошибка синхронизации'); }
   };
 
+  const handleSendComment = async () => {
+      if (!newComment.trim() || !data) return;
+      
+      const oldKey = (data as MapPoint).key;
+      const baseNewPoint: MapPoint = { ...(data as MapPoint), comment: newComment, lastUpdated: Date.now() };
+      
+      // Call parent to save delta
+      onDataUpdate(oldKey, baseNewPoint, undefined, { type: 'comment' });
+      
+      // Optimistic update for UI
+      const timestamp = new Date().toLocaleDateString('ru-RU');
+      const time = new Date().toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'});
+      const optimisticEntry = `Вы (${timestamp} ${time}): ${newComment}`;
+      
+      setHistory(prev => [...prev, optimisticEntry]);
+      setNewComment('');
+  };
+
   const handleSave = async () => {
     if (!data) return;
     setError(null); setStatus('saving');
@@ -488,12 +514,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     const rm = getRmName(data);
     const originalIndex = (data as any).originalIndex;
 
-    // For potential clients, we primarily just save comments (deltas)
-    // We do NOT support full address/coordinate changing for blue points in this iteration
+    // For potential clients, we primarily just save comments via the messenger UI.
+    // The "Save" button here might be redundant or used to close.
     if (isPotential) {
-        const baseNewPoint: MapPoint = { ...(data as MapPoint), comment, lastUpdated: Date.now() };
-        // Trigger update with specific type for logging
-        onDataUpdate(oldKey, baseNewPoint, originalIndex, { type: 'comment' });
         setStatus('success');
         setTimeout(() => onClose(), 350);
         return;
@@ -546,23 +569,18 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
   const handleDelete = () => {
     if (!data) return;
     
-    // For Potential Clients (Blue), reason is mandatory
     if (isPotential) {
         if (!deleteReason.trim()) {
             setStatus('error_deleting');
             setError('Обязательно укажите причину удаления!');
             return;
         }
-        
         const oldKey = (data as MapPoint).key;
-        // Pass to parent handler which will route to saveInterestDelta
         onDataUpdate(oldKey, data as MapPoint, undefined, { reason: deleteReason, type: 'delete' });
-        
         onClose();
         return;
     }
 
-    // For Active Clients (Green), regular flow
     const originalRow = getSafeOriginalRow(data);
     const addressToDelete = (data as MapPoint).address || findAddressInRow(originalRow) || '';
     const rm = getRmName(data);
@@ -577,7 +595,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     onClose();
   };
 
-  // ... (ESC handler) ...
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -589,14 +606,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
 
   const originalRow = getSafeOriginalRow(data);
   const clientName = findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']);
-  const currentLat = (data as MapPoint).lat;
-  const currentLon = (data as MapPoint).lon;
-  const displayLat = manualCoords ? manualCoords.lat : currentLat;
-  const displayLon = manualCoords ? manualCoords.lon : currentLon;
+  const displayLat = manualCoords ? manualCoords.lat : (data as MapPoint).lat;
+  const displayLon = manualCoords ? manualCoords.lon : (data as MapPoint).lon;
   const isMapSuccess = typeof displayLat === 'number' && typeof displayLon === 'number' && displayLat !== 0 && displayLon !== 0 && status !== 'geocoding';
   const isProcessing = status === 'saving' || status === 'deleting' || status === 'syncing';
 
-  // Build details list...
+  // Details Logic
   const detailsToShow = Object.entries(originalRow)
     .map(([k, v]) => {
       const key = String(k).trim();
@@ -606,8 +621,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       if (typeof displayLon === 'number' && displayLon !== 0) { if (['lon', 'lng', 'longitude', 'долгота', 'geo_lon'].includes(keyLower)) { value = displayLon.toFixed(6); } }
       return { key, value };
     })
-    .filter((x) => x.value && x.value !== 'null' && x.key !== '__rowNum__' && x.key !== 'changeHistory'); // Filter out history array
+    .filter((x) => x.value && x.value !== 'null' && x.key !== '__rowNum__' && x.key !== 'changeHistory');
 
+  // Button text logic
   let saveButtonText = 'Сохранить изменения';
   if (!isPotential) {
       const oldAddressStr = (data as MapPoint).address || '';
@@ -619,7 +635,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       if (isAddressChangedState && isCoordsChanged) saveButtonText = 'Сохранить адрес и координаты';
       if (isChannelChanged && !isAddressChangedState && !isCoordsChanged) saveButtonText = 'Сохранить канал';
   } else {
-      saveButtonText = 'Сохранить комментарий';
+      saveButtonText = 'Закрыть';
   }
 
   return (
@@ -630,8 +646,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
 
         <div className="relative z-[10000] h-full w-full flex items-center justify-center p-3 md:p-6">
           <div className="relative w-full max-w-7xl h-[92vh]">
-            <Card className="relative h-full overflow-hidden">
-              <div className="relative px-6 pt-6 pb-4 border-b border-slate-200/70 bg-white/70">
+            <Card className="relative h-full overflow-hidden flex flex-col">
+              {/* HEADER */}
+              <div className="relative px-6 pt-6 pb-4 border-b border-slate-200/70 bg-white/70 flex-shrink-0">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <div className="flex items-center gap-3">
@@ -651,16 +668,17 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                 </div>
               </div>
 
-              <div className="relative p-6 h-[calc(92vh-160px)] overflow-y-auto custom-scrollbar">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <div className="flex flex-col gap-6">
+              {/* BODY */}
+              <div className="relative p-6 flex-grow overflow-y-auto custom-scrollbar">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
+                  <div className="flex flex-col gap-6 h-full">
                     {/* DETAILS CARD */}
-                    <Card className="p-5 bg-white/70">
-                      <div className="flex items-center justify-between mb-4">
+                    <Card className="p-5 bg-white/70 flex-shrink-0 max-h-[30%] overflow-hidden flex flex-col">
+                      <div className="flex items-center justify-between mb-4 flex-shrink-0">
                         <div className="text-[11px] uppercase tracking-[0.18em] text-indigo-700 font-black">Исходные данные строки</div>
                         <Chip tone="neutral">{detailsToShow.length} полей</Chip>
                       </div>
-                      <div className="max-h-[34vh] overflow-y-auto custom-scrollbar rounded-2xl border border-slate-200 bg-white/70">
+                      <div className="overflow-y-auto custom-scrollbar rounded-2xl border border-slate-200 bg-white/70">
                         <table className="w-full text-sm">
                           <tbody className="divide-y divide-slate-200">
                             {detailsToShow.map(({ key, value }, idx) => (
@@ -674,40 +692,68 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                       </div>
                     </Card>
                     
-                    {/* HISTORY CARD */}
-                    <Card className="p-5 bg-white/70">
-                      <div className="flex items-center justify-between mb-4">
+                    {/* HISTORY / COMMENTS CARD */}
+                    <Card className="p-5 bg-white/70 flex-grow flex flex-col overflow-hidden">
+                      <div className="flex items-center justify-between mb-4 flex-shrink-0">
                         <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-600 font-black">
-                          История изменений {isLoadingHistory && <LoaderIcon className="w-3 h-3" />}
+                          {isPotential ? "Комментарии" : "История изменений"} {isLoadingHistory && <LoaderIcon className="w-3 h-3" />}
                         </div>
                         <Chip tone="neutral">Всего: {history.length}</Chip>
                       </div>
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 min-h-[170px] max-h-[34vh] overflow-y-auto custom-scrollbar">
+                      
+                      {/* Comments List */}
+                      <div className="flex-grow overflow-y-auto custom-scrollbar rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-3 mb-3">
                         {history.length > 0 ? (
-                          <ul className="space-y-3">
-                            {history.map((item, idx) => (
-                              <li key={idx} className="p-3 bg-white rounded-2xl border border-slate-200 shadow-sm">
-                                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-indigo-700">
-                                  <span className="w-2 h-2 rounded-full bg-indigo-50" />
-                                  Событие #{history.length - idx}
-                                </div>
-                                <div className="mt-2 text-sm text-slate-800 whitespace-pre-wrap break-words leading-relaxed">{item}</div>
-                              </li>
-                            ))}
-                          </ul>
+                            history.map((item, idx) => {
+                                // Simple parser for "User (Date): Comment"
+                                const parts = item.split('):');
+                                const header = parts.length > 1 ? parts[0] + ')' : 'Система';
+                                const body = parts.length > 1 ? parts.slice(1).join('):') : item;
+
+                                return (
+                                  <div key={idx} className="p-3 bg-white rounded-2xl border border-slate-200 shadow-sm">
+                                    <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.05em] text-indigo-700 mb-1">
+                                      {header}
+                                    </div>
+                                    <div className="text-sm text-slate-800 whitespace-pre-wrap break-words leading-relaxed">{body}</div>
+                                  </div>
+                                );
+                            })
                         ) : (
                           <div className="h-full flex flex-col items-center justify-center text-slate-400 text-sm p-8">
                             <InfoIcon className="w-10 h-10 mb-2" />
-                            <span>История изменений пуста</span>
+                            <span>{isPotential ? "Комментариев нет" : "История изменений пуста"}</span>
                           </div>
                         )}
+                        <div ref={chatEndRef} />
                       </div>
+
+                      {/* Input Area for Blue Points */}
+                      {isPotential && (
+                          <div className="flex gap-2 pt-2 border-t border-slate-200 flex-shrink-0">
+                              <input 
+                                  type="text" 
+                                  value={newComment}
+                                  onChange={(e) => setNewComment(e.target.value)}
+                                  onKeyDown={(e) => e.key === 'Enter' && handleSendComment()}
+                                  placeholder="Напишите комментарий..."
+                                  className="flex-grow p-3 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all"
+                              />
+                              <button 
+                                  onClick={handleSendComment}
+                                  disabled={!newComment.trim()}
+                                  className="p-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+                              >
+                                  <SendIcon />
+                              </button>
+                          </div>
+                      )}
                     </Card>
                   </div>
 
                   <div className="flex flex-col gap-6">
                     {/* MAP CARD */}
-                    <Card className="overflow-hidden">
+                    <Card className="overflow-hidden flex-shrink-0">
                       <div className="h-72 md:h-80">
                         <SinglePointMap
                           lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={isMapSuccess}
@@ -723,8 +769,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                     </Card>
 
                     {/* EDIT FORM CARD */}
-                    <Card className="p-6 bg-white/70">
-                      <div className="flex items-center justify-between mb-4">
+                    <Card className="p-6 bg-white/70 flex-grow flex flex-col">
+                      <div className="flex items-center justify-between mb-4 flex-shrink-0">
                         <div className="text-[11px] uppercase tracking-[0.18em] text-indigo-700 font-black flex items-center gap-2"><SaveIcon className="w-4 h-4" />Параметры объекта</div>
                         {!showDeleteConfirm ? (
                           <button onClick={() => setShowDeleteConfirm(true)} className="text-slate-500 hover:text-red-600 transition-colors p-2 hover:bg-red-50 rounded-2xl flex items-center gap-2" title="Удалить запись">
@@ -747,15 +793,17 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                         )}
                       </div>
 
-                      <div className="space-y-4">
-                        <div>
-                          <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">Адрес ТТ LimKorm</label>
-                          <textarea
-                            rows={2} value={editedAddress} onChange={(e) => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'geocoding' || status === 'success' || isPotential}
-                            className={`w-full rounded-2xl border bg-white/85 px-4 py-3 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition resize-none ${status === 'success' ? 'border-emerald-300' : error ? 'border-red-300' : 'border-slate-200 hover:border-slate-300'} ${isPotential ? 'opacity-70 cursor-not-allowed' : ''}`}
-                          />
-                          {status === 'success' && <div className="mt-2 text-xs text-emerald-700 font-bold flex items-center gap-2"><CheckIcon className="w-4 h-4" /> Сохранено</div>}
-                        </div>
+                      <div className="space-y-4 flex-grow overflow-y-auto custom-scrollbar pr-1">
+                        {!isPotential && (
+                            <div>
+                              <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">Адрес ТТ LimKorm</label>
+                              <textarea
+                                rows={2} value={editedAddress} onChange={(e) => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'geocoding' || status === 'success'}
+                                className={`w-full rounded-2xl border bg-white/85 px-4 py-3 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition resize-none ${status === 'success' ? 'border-emerald-300' : error ? 'border-red-300' : 'border-slate-200 hover:border-slate-300'}`}
+                              />
+                              {status === 'success' && <div className="mt-2 text-xs text-emerald-700 font-bold flex items-center gap-2"><CheckIcon className="w-4 h-4" /> Сохранено</div>}
+                            </div>
+                        )}
 
                         {!isPotential && (
                             <div>
@@ -783,14 +831,16 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                             </Btn>
                         )}
 
-                        <div>
-                          <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">Заметка менеджера</label>
-                          <textarea
-                            rows={2} value={comment} onChange={handleCommentChange} disabled={isProcessing || status === 'geocoding' || status === 'success'}
-                            placeholder="Добавьте важный комментарий…"
-                            className="w-full rounded-2xl border border-slate-200 bg-white/85 px-4 py-3 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition resize-none"
-                          />
-                        </div>
+                        {!isPotential && (
+                            <div>
+                              <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2">Заметка менеджера</label>
+                              <textarea
+                                rows={2} value={comment} onChange={handleCommentChange} disabled={isProcessing || status === 'geocoding' || status === 'success'}
+                                placeholder="Добавьте важный комментарий…"
+                                className="w-full rounded-2xl border border-slate-200 bg-white/85 px-4 py-3 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition resize-none"
+                              />
+                            </div>
+                        )}
 
                         {lastUpdatedStr && <div className="text-[11px] text-slate-500 text-right italic">Обновлено: {lastUpdatedStr}</div>}
 
@@ -803,13 +853,15 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                         {(status === 'error_saving' || status === 'error_deleting' || status === 'error_geocoding') && (
                           <div className="rounded-2xl border border-red-200 bg-red-50 p-4 space-y-3"><div className="flex items-center gap-2 text-red-700 font-black text-sm"><ErrorIcon className="w-4 h-4" /> {error || 'Сбой соединения'}</div>{status !== 'error_deleting' && (<Btn onClick={handleSave} variant="soft" className="w-full py-3 rounded-2xl"><span className="inline-flex items-center gap-2"><RetryIcon className="w-4 h-4" /> Повторить попытку</span></Btn>)}</div>
                         )}
-
+                      </div>
+                      
+                      <div className="mt-4 flex-shrink-0">
                         {status === 'saving' ? (
                           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center text-indigo-700 font-black flex items-center justify-center gap-2"><LoaderIcon className="w-4 h-4 animate-spin" /> Сохранение…</div>
                         ) : status === 'syncing' ? (
                           <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-center text-sky-800 font-black flex items-center justify-center gap-2"><LoaderIcon className="w-4 h-4 animate-spin" /> Проверка в Google…</div>
                         ) : (
-                          <Btn onClick={handleSave} disabled={status === 'success'} variant="primary" className="w-full py-3.5 text-base rounded-2xl"><span className="inline-flex items-center gap-2"><SaveIcon className="w-5 h-5" /> {status === 'success' ? 'Сохранено!' : saveButtonText}</span></Btn>
+                          <Btn onClick={handleSave} disabled={status === 'success'} variant="primary" className="w-full py-3.5 text-base rounded-2xl"><span className="inline-flex items-center gap-2"><SaveIcon className="w-5 h-5" /> {status === 'success' ? 'Успешно!' : saveButtonText}</span></Btn>
                         )}
                       </div>
                     </Card>
@@ -817,9 +869,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                 </div>
               </div>
 
-              <div className="px-6 py-4 border-t border-slate-200/70 bg-white/70 flex items-center justify-between">
+              {/* FOOTER */}
+              <div className="px-6 py-4 border-t border-slate-200/70 bg-white/70 flex items-center justify-between flex-shrink-0">
                 <Btn onClick={onBack} variant="soft" className="px-5 py-3"><span className="inline-flex items-center gap-2"><ArrowLeftIcon className="w-4 h-4" /> Назад</span></Btn>
-                <div className="flex items-center gap-2"><Btn onClick={onClose} variant="ghost" className="px-5 py-3">Закрыть</Btn><Btn onClick={onClose} variant="primary" className="px-6 py-3">Готово</Btn></div>
+                <div className="flex items-center gap-2"><Btn onClick={onClose} variant="ghost" className="px-5 py-3">Закрыть</Btn></div>
               </div>
             </Card>
           </div>
