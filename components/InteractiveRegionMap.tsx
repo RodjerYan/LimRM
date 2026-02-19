@@ -894,5 +894,4 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         </div>
     );
 };
-
 export default React.memo(InteractiveRegionMap);
