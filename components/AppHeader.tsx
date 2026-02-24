@@ -103,15 +103,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                          )}
 
                         {activeModule === 'amp' && (
-                             <button 
-                                onClick={onStartDataUpdate}
-                                disabled={!!updateJobStatus && updateJobStatus.status !== 'completed' && updateJobStatus.status !== 'error'}
-                                className="hidden md:flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-900 transition-all disabled:opacity-50 disabled:cursor-wait shadow-sm hover:shadow-md active:scale-95"
-                                title="Запустить фоновый процесс обновления рыночных данных на сервере."
-                            >
-                                <CloudDownloadIcon className="w-4 h-4" />
-                                <span>Обновить рынок</span>
-                            </button>
+                             <div className="hidden md:block"></div>
                         )}
                     </div>
                 </div>
