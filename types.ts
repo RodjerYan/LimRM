@@ -86,17 +86,18 @@ export interface OkbDataRow {
     // Generated properties
     isDeleted?: boolean;
     comment?: string;
-    changeHistory?: string[]; // Array of strings "Action by User at Time"
+    changeHistory?: (string | { user: string; date: string; text: string; timestamp: number })[]; // Array of strings or objects
 }
 
 // NEW: Delta for Potential Points (Blue Points)
 export interface InterestDelta {
     key: string; // normalized address + # + name
-    type: 'delete' | 'comment';
+    type: 'delete' | 'comment' | 'delete_comment';
     user: string;
     timestamp: number;
     reason?: string; // Mandatory for delete
     comment?: string;
+    originalTimestamp?: number; // For delete_comment to identify which comment to delete
 }
 
 export interface UnidentifiedRow {

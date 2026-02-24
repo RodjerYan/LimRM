@@ -123,15 +123,32 @@ export const useAppLogic = () => {
 
         // Create a set of deleted keys & comments map
         const deletedKeys = new Set<string>();
-        const commentsMap = new Map<string, string[]>();
+        const commentsMap = new Map<string, any[]>();
+        const deletedComments = new Set<number>();
 
         if (interestDeltas && interestDeltas.length > 0) {
+            // First pass: identify deleted comments
+            interestDeltas.forEach(d => {
+                if (d.type === 'delete_comment' && d.originalTimestamp) {
+                    deletedComments.add(d.originalTimestamp);
+                }
+            });
+
+            // Second pass: process updates
             interestDeltas.forEach(d => {
                 if (d.type === 'delete') {
                     deletedKeys.add(d.key);
                 } else if (d.type === 'comment' && d.comment) {
+                    // Skip if this comment was deleted
+                    if (deletedComments.has(d.timestamp)) return;
+
                     if (!commentsMap.has(d.key)) commentsMap.set(d.key, []);
-                    commentsMap.get(d.key)!.push(`${d.user} (${new Date(d.timestamp).toLocaleDateString()}): ${d.comment}`);
+                    commentsMap.get(d.key)!.push({
+                        user: d.user,
+                        date: new Date(d.timestamp).toLocaleDateString(),
+                        text: d.comment,
+                        timestamp: d.timestamp
+                    });
                 }
             });
         }
@@ -256,7 +273,7 @@ export const useAppLogic = () => {
     }, [allData, unidentifiedRows, setAllData, setUnidentifiedRows, saveDeltaToCloud]);
 
     // NEW: Handle update for Potential (Blue) Client
-    const handlePotentialClientUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number, options?: { skipHistory?: boolean, reason?: string, type?: 'delete' | 'comment' }) => {
+    const handlePotentialClientUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number, options?: { skipHistory?: boolean, reason?: string, type?: 'delete' | 'comment' | 'delete_comment', originalTimestamp?: number }) => {
         
         if (!user) return; // Should be authenticated
         
@@ -279,6 +296,23 @@ export const useAppLogic = () => {
             saveInterestDelta(delta);
             addNotification("Точка удалена из базы потенциальных клиентов", "success");
             setEditingPotentialClient(null); // Close modal
+            return;
+        }
+
+        if (options?.type === 'delete_comment') {
+            if (!options.originalTimestamp) {
+                console.error("Missing originalTimestamp for delete_comment");
+                return;
+            }
+            const delta: InterestDelta = {
+                key: oldKey,
+                type: 'delete_comment',
+                user: `${user.lastName} ${user.firstName}`,
+                timestamp: Date.now(),
+                originalTimestamp: options.originalTimestamp
+            };
+            saveInterestDelta(delta);
+            addNotification("Комментарий удален", "success");
             return;
         }
 

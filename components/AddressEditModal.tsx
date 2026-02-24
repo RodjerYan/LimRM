@@ -6,6 +6,7 @@ import 'leaflet/dist/leaflet.css';
 import { MapPoint, UnidentifiedRow } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress, detectChannelByName } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
+import { useAuth } from './auth/AuthContext';
 import {
   LoaderIcon,
   SaveIcon,
@@ -69,7 +70,7 @@ interface AddressEditModalProps {
   onClose: () => void;
   onBack: () => void;
   data: EditableData | null;
-  onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number, options?: { skipHistory?: boolean, reason?: string, type?: 'delete' | 'comment' }) => void;
+  onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number, options?: { skipHistory?: boolean, reason?: string, type?: 'delete' | 'comment' | 'delete_comment', originalTimestamp?: number }) => void;
   onStartPolling: (
     rmName: string,
     address: string,
@@ -348,6 +349,7 @@ const SinglePointMap: React.FC<{
 const AddressEditModal: React.FC<AddressEditModalProps> = ({
   isOpen, onClose, onBack, data, onDataUpdate, onStartPolling, onDelete, globalTheme = 'light',
 }) => {
+  const { user } = useAuth();
   const [editedAddress, setEditedAddress] = useState('');
   const [editedChannel, setEditedChannel] = useState('');
   const [comment, setComment] = useState('');
@@ -356,7 +358,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [lastUpdatedStr, setLastUpdatedStr] = useState<string | null>(null);
-  const [history, setHistory] = useState<string[]>([]);
+  const [history, setHistory] = useState<(string | { user: string; date: string; text: string; timestamp: number })[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [manualCoords, setManualCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [mapTheme, setMapTheme] = useState<Theme>(globalTheme);
@@ -497,12 +499,28 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       onDataUpdate(oldKey, baseNewPoint, undefined, { type: 'comment' });
       
       // Optimistic update for UI
-      const timestamp = new Date().toLocaleDateString('ru-RU');
-      const time = new Date().toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'});
-      const optimisticEntry = `Вы (${timestamp} ${time}): ${newComment}`;
+      const timestamp = Date.now();
+      const dateStr = new Date(timestamp).toLocaleDateString('ru-RU');
+      
+      const optimisticEntry = {
+          user: `${user?.lastName} ${user?.firstName}`,
+          date: dateStr,
+          text: newComment,
+          timestamp: timestamp
+      };
       
       setHistory(prev => [...prev, optimisticEntry]);
       setNewComment('');
+  };
+
+  const handleDeleteComment = (timestamp: number) => {
+      if (!data) return;
+      const oldKey = (data as MapPoint).key;
+      // Pass originalTimestamp to identify the comment to delete
+      onDataUpdate(oldKey, data as MapPoint, undefined, { type: 'delete_comment', originalTimestamp: timestamp });
+      
+      // Optimistic removal
+      setHistory(prev => prev.filter(item => typeof item === 'object' ? item.timestamp !== timestamp : true));
   };
 
   const handleSave = async () => {
@@ -705,15 +723,43 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                       <div className="flex-grow overflow-y-auto custom-scrollbar rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-3 mb-3">
                         {history.length > 0 ? (
                             history.map((item, idx) => {
-                                // Simple parser for "User (Date): Comment"
-                                const parts = item.split('):');
-                                const header = parts.length > 1 ? parts[0] + ')' : 'Система';
-                                const body = parts.length > 1 ? parts.slice(1).join('):') : item;
+                                let header = '';
+                                let body = '';
+                                let timestamp = 0;
+                                let author = '';
+                                let isObject = false;
+
+                                if (typeof item === 'string') {
+                                    // Simple parser for "User (Date): Comment"
+                                    const parts = item.split('):');
+                                    header = parts.length > 1 ? parts[0] + ')' : 'Система';
+                                    body = parts.length > 1 ? parts.slice(1).join('):') : item;
+                                } else {
+                                    isObject = true;
+                                    header = `${item.user} (${item.date})`;
+                                    body = item.text;
+                                    timestamp = item.timestamp;
+                                    author = item.user;
+                                }
+
+                                const currentUserStr = `${user?.lastName} ${user?.firstName}`;
+                                const canDelete = isObject && (user?.role === 'admin' || author === currentUserStr);
 
                                 return (
-                                  <div key={idx} className="p-3 bg-white rounded-2xl border border-slate-200 shadow-sm">
-                                    <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.05em] text-indigo-700 mb-1">
-                                      {header}
+                                  <div key={idx} className="group relative p-3 bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
+                                    <div className="flex items-center justify-between mb-1">
+                                        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.05em] text-indigo-700">
+                                            {header}
+                                        </div>
+                                        {canDelete && (
+                                            <button 
+                                                onClick={() => handleDeleteComment(timestamp)}
+                                                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-slate-400 hover:text-red-600 rounded-full hover:bg-red-50"
+                                                title="Удалить комментарий"
+                                            >
+                                                <TrashIcon className="w-3 h-3" />
+                                            </button>
+                                        )}
                                     </div>
                                     <div className="text-sm text-slate-800 whitespace-pre-wrap break-words leading-relaxed">{body}</div>
                                   </div>
