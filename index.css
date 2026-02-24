@@ -207,3 +207,9 @@ html {
     backface-visibility: hidden;
     transform: translate3d(0,0,0);
 }
+
+/* React Datepicker Portal Z-Index Fix */
+.react-datepicker-popper {
+  z-index: 999999 !important;
+}
+

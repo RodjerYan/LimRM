@@ -56,6 +56,7 @@ const SingleDatePicker: React.FC<SingleDatePickerProps> = ({
         isClearable={false}
         showPopperArrow={false}
         minDate={minDate}
+        portalId="datepicker-portal"
         calendarClassName="!border-slate-200 !shadow-xl !rounded-2xl !font-sans !p-2"
         dayClassName={(date) => "!rounded-lg hover:!bg-indigo-50"}
       />

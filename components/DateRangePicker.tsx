@@ -72,6 +72,7 @@ const DateRangePicker: React.FC<DateRangePickerProps> = ({
         className="bg-transparent text-sm text-slate-700 outline-none w-[190px] cursor-pointer font-medium"
         isClearable={true}
         showPopperArrow={false}
+        portalId="datepicker-portal"
         calendarClassName="!border-slate-200 !shadow-xl !rounded-2xl !font-sans !p-2"
         dayClassName={(date) => "!rounded-lg hover:!bg-indigo-50"}
       />
