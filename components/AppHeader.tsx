@@ -113,18 +113,6 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                                 <span>Обновить рынок</span>
                             </button>
                         )}
-                        
-                        <div className="h-8 w-px bg-slate-200 hidden md:block"></div>
-
-                        <div className="flex items-center gap-3">
-                            <div className="flex flex-col items-end">
-                                <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Пользователи</span>
-                                <span className="text-slate-900 font-black text-base">{totalUsers}</span>
-                            </div>
-                            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-600 to-sky-500 flex items-center justify-center font-black text-white shadow-[0_10px_25px_rgba(99,102,241,0.25)]">
-                                L
-                            </div>
-                        </div>
                     </div>
                 </div>
             </header>
