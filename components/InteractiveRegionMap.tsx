@@ -784,17 +784,20 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const groupedClientsMap = new Map<string, MapPoint[]>();
         
         activeClients.forEach(client => {
-            const normAddr = normalizeAddress(client.address);
-            let groupKey = normAddr;
-            if (!groupKey) {
-                const lat = client.lat;
-                const lon = client.lon;
-                if (lat && lon) {
-                    groupKey = `${lat.toFixed(4)},${lon.toFixed(4)}`;
-                } else {
-                    return; 
-                }
+            let groupKey = '';
+            const lat = client.lat;
+            const lon = client.lon;
+            
+            if (lat && lon) {
+                // Group by coordinates (precision 5 decimal places ~1m)
+                groupKey = `${lat.toFixed(5)},${lon.toFixed(5)}`;
+            } else {
+                // Fallback to address normalization if no coordinates (though these won't be plotted anyway)
+                groupKey = normalizeAddress(client.address);
             }
+
+            if (!groupKey) return;
+
             if (!groupedClientsMap.has(groupKey)) {
                 groupedClientsMap.set(groupKey, []);
             }
