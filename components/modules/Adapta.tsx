@@ -86,9 +86,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [channelSearchTerm, setChannelSearchTerm] = useState('');
   
-  // ETL State
-  const [isEtlRunning, setIsEtlRunning] = useState(false);
-  
   // Determine Effective Period
   const effectiveStart = props.startDate;
   const effectiveEnd = props.endDate;
@@ -357,22 +354,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     return displayActiveCount.toLocaleString('ru-RU');
   }, [props.processingState.isProcessing, props.processingState.totalRowsProcessed, displayActiveCount]);
 
-  const handleRunEtl = async () => {
-      if (isEtlRunning) return;
-      setIsEtlRunning(true);
-      try {
-          const res = await fetch('/api/run-etl');
-          if (!res.ok) throw new Error('Network error');
-          const data = await res.json();
-          alert(`ETL Процесс: ${data.message}\nОбновлено регионов: ${Object.keys(data.data || {}).length}`);
-      } catch (e) {
-          console.error(e);
-          alert('Ошибка запуска ETL процесса. Проверьте консоль сервера.');
-      } finally {
-          setIsEtlRunning(false);
-      }
-  };
-
   return (
     <div className="space-y-6">
       {/* Header with New TopBar */}
@@ -540,18 +521,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                     onLoadEndDateChange={props.onLoadEndDateChange}
                 />
               </div>
-            </Motion>
-            
-            {/* ETL Trigger */}
-            <Motion delayMs={250}>
-                <button 
-                    onClick={handleRunEtl}
-                    disabled={isEtlRunning}
-                    className="w-full p-4 rounded-3xl border border-slate-200 bg-white/70 hover:bg-white text-slate-600 hover:text-indigo-700 transition-all shadow-sm active:scale-95 flex items-center justify-center gap-3 font-bold text-sm"
-                >
-                    {isEtlRunning ? <LoaderIcon className="animate-spin" /> : <CloudDownloadIcon />}
-                    {isEtlRunning ? 'Парсинг Росстат...' : 'Обновить статистику (ETL)'}
-                </button>
             </Motion>
           </div>
 

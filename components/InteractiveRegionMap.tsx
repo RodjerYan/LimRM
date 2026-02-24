@@ -10,6 +10,9 @@ import type { FeatureCollection } from 'geojson';
 import { MANUAL_BOUNDARIES } from '../data/manual_boundaries';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 
+import { PETS_DISTRIBUTION } from '../data/petsDistribution';
+import { CIS_PETS_DISTRIBUTION } from '../data/cisPetsDistribution';
+
 type Theme = 'dark' | 'light';
 type OverlayMode = 'sales' | 'pets' | 'competitors' | 'age' | 'abc';
 
@@ -93,8 +96,94 @@ const fixChukotkaGeoJSON = (feature: any) => {
     return feature;
 };
 
+const getPetDataForRegion = (regionName: string) => {
+    // 1. Check Russia
+    const ruData = PETS_DISTRIBUTION.find(r => r.region === regionName);
+    if (ruData) return { ...ruData, isCis: false, comment: '' };
+
+    // 2. Check CIS
+    const cisData = CIS_PETS_DISTRIBUTION.find(c => c.country === regionName);
+    if (cisData) return { region: cisData.country, catsPercent: cisData.catsPercent, dogsPercent: cisData.dogsPercent, isCis: true, comment: cisData.comment };
+
+    return null;
+};
+
 const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
-    // ... (Legend code remains same) ...
+    if (mode === 'sales') {
+        return (
+            <div className="p-3 bg-white/95 backdrop-blur-md rounded-lg border border-gray-200 text-gray-900 max-w-[200px] shadow-lg">
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-500">Продажи (кг)</h4>
+                <div className="flex items-center mb-1">
+                    <span className="w-3 h-3 mr-2 bg-indigo-600 opacity-80"></span>
+                    <span className="text-xs">Высокие</span>
+                </div>
+                <div className="flex items-center">
+                    <span className="w-3 h-3 mr-2 bg-gray-200 opacity-50"></span>
+                    <span className="text-xs">Низкие / Нет данных</span>
+                </div>
+            </div>
+        );
+    }
+    if (mode === 'pets') {
+        return (
+            <div className="p-3 bg-white/95 backdrop-blur-md rounded-lg border border-gray-200 text-gray-900 max-w-[220px] shadow-lg">
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-500">Питомцы (Домохозяйства)</h4>
+                <div className="flex items-center mb-1.5">
+                    <span className="w-3 h-3 mr-2 bg-violet-500 opacity-80 rounded-sm"></span>
+                    <span className="text-xs">Кошки &gt; 55%</span>
+                </div>
+                <div className="flex items-center mb-1.5">
+                    <span className="w-3 h-3 mr-2 bg-orange-500 opacity-80 rounded-sm"></span>
+                    <span className="text-xs">Собаки &gt; 55%</span>
+                </div>
+                <div className="flex items-center mb-3">
+                    <span className="w-3 h-3 mr-2 bg-slate-500 opacity-50 rounded-sm"></span>
+                    <span className="text-xs">Смешанный тип (~50/50)</span>
+                </div>
+                <div className="text-[10px] text-gray-400 leading-tight border-t border-gray-100 pt-2">
+                    Данные основаны на агрегированной аналитической модели и отчетах компаний Purina и Nestlé.
+                </div>
+            </div>
+        );
+    }
+    if (mode === 'competitors') {
+        return (
+            <div className="p-3 bg-white/95 backdrop-blur-md rounded-lg border border-gray-200 text-gray-900 max-w-[200px] shadow-lg">
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-500">Конкуренты</h4>
+                <div className="flex items-center mb-1">
+                    <span className="w-3 h-3 mr-2 bg-red-500 opacity-60"></span>
+                    <span className="text-xs">Высокая плотность</span>
+                </div>
+                <div className="flex items-center mb-1">
+                    <span className="w-3 h-3 mr-2 bg-orange-500 opacity-50"></span>
+                    <span className="text-xs">Средняя</span>
+                </div>
+                <div className="flex items-center">
+                    <span className="w-3 h-3 mr-2 bg-blue-500 opacity-30"></span>
+                    <span className="text-xs">Низкая</span>
+                </div>
+            </div>
+        );
+    }
+    if (mode === 'age') {
+        return (
+            <div className="p-3 bg-white/95 backdrop-blur-md rounded-lg border border-gray-200 text-gray-900 max-w-[200px] shadow-lg">
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-500">Возраст владельцев</h4>
+                <div className="flex items-center mb-1">
+                    <span className="w-3 h-3 mr-2 bg-emerald-500 opacity-60"></span>
+                    <span className="text-xs">&lt; 35 лет</span>
+                </div>
+                <div className="flex items-center mb-1">
+                    <span className="w-3 h-3 mr-2 bg-amber-500 opacity-50"></span>
+                    <span className="text-xs">35 - 45 лет</span>
+                </div>
+                <div className="flex items-center">
+                    <span className="w-3 h-3 mr-2 bg-violet-500 opacity-50"></span>
+                    <span className="text-xs">&gt; 45 лет</span>
+                </div>
+            </div>
+        );
+    }
     if (mode === 'abc') {
         return (
             <div className="p-3 bg-white/95 backdrop-blur-md rounded-lg border border-gray-200 text-gray-900 max-w-[200px] shadow-lg">
@@ -336,16 +425,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         if (overlayMode === 'sales' || overlayMode === 'abc') { return { ...baseBorder, fillColor: isSelected ? '#4f46e5' : '#f3f4f6', fillOpacity: isSelected ? 0.3 : 0.1, interactive: true }; }
         if (overlayMode === 'pets') {
-            const catShare = marketData.catShare; 
-            let fillColor = '#64748b'; // Balance (Slate)
+            const petData = getPetDataForRegion(regionName);
+            let fillColor = '#64748b'; // Neutral (Slate)
             let fillOpacity = 0.3;
             
-            if (catShare > 55) { 
-                fillColor = '#8b5cf6'; // Cats (Violet)
-                fillOpacity = 0.5 + ((catShare - 55) / 100); 
-            } else if (catShare < 45) { 
-                fillColor = '#f97316'; // Dogs (Orange)
-                fillOpacity = 0.5 + ((45 - catShare) / 100); 
+            if (petData) {
+                if (petData.catsPercent > 55) {
+                    fillColor = '#8b5cf6'; // Cats (Violet)
+                    fillOpacity = 0.5 + ((petData.catsPercent - 55) / 100);
+                } else if (petData.dogsPercent > 55) {
+                    fillColor = '#f97316'; // Dogs (Orange)
+                    fillOpacity = 0.5 + ((petData.dogsPercent - 55) / 100);
+                }
             }
             
             return { ...baseBorder, color: isSelected ? '#000' : '#6b7280', fillColor: fillColor, fillOpacity: isSelected ? Math.min(fillOpacity + 0.2, 0.9) : fillOpacity, interactive: true };
@@ -833,6 +924,56 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }).addTo(mapInstance.current);
         } else if (geoJsonLayer.current) {
             geoJsonLayer.current.setStyle(getStyleForRegion);
+            
+            // Update popups based on overlay mode
+            geoJsonLayer.current.eachLayer((layer: any) => {
+                const feature = layer.feature;
+                if (feature && feature.properties && feature.properties.name) {
+                    const name = feature.properties.name;
+                    
+                    if (overlayMode === 'pets') {
+                        const petData = getPetDataForRegion(name);
+                        if (petData) {
+                            const content = `
+                                <div style="min-width: 200px; padding: 4px;">
+                                    <h3 style="font-weight: 800; font-size: 14px; margin-bottom: 8px; color: #111827;">${name}</h3>
+                                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                                        <span style="font-size: 12px; color: #4b5563;">🐱 Кошки</span>
+                                        <span style="font-weight: 700; color: #8b5cf6;">${petData.catsPercent}%</span>
+                                    </div>
+                                    <div style="width: 100%; height: 4px; background: #f3f4f6; border-radius: 2px; margin-bottom: 8px; overflow: hidden;">
+                                        <div style="width: ${petData.catsPercent}%; height: 100%; background: #8b5cf6;"></div>
+                                    </div>
+                                    
+                                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                                        <span style="font-size: 12px; color: #4b5563;">🐶 Собаки</span>
+                                        <span style="font-weight: 700; color: #f97316;">${petData.dogsPercent}%</span>
+                                    </div>
+                                    <div style="width: 100%; height: 4px; background: #f3f4f6; border-radius: 2px; margin-bottom: 12px; overflow: hidden;">
+                                        <div style="width: ${petData.dogsPercent}%; height: 100%; background: #f97316;"></div>
+                                    </div>
+                                    
+                                    ${petData.isCis && petData.comment ? `
+                                        <div style="background: #f9fafb; padding: 8px; border-radius: 6px; border: 1px solid #e5e7eb; margin-bottom: 8px;">
+                                            <div style="font-size: 10px; font-weight: 700; color: #6b7280; margin-bottom: 2px; text-transform: uppercase;">Причины</div>
+                                            <div style="font-size: 11px; color: #374151; line-height: 1.4;">${petData.comment}</div>
+                                        </div>
+                                    ` : ''}
+                                    
+                                    <div style="font-size: 9px; color: #9ca3af; text-align: center; border-top: 1px solid #f3f4f6; pt-2; margin-top: 8px;">
+                                        Источник: аналитическая модель + отчеты Purina и Nestlé
+                                    </div>
+                                </div>
+                            `;
+                            layer.bindPopup(content, { closeButton: false, className: 'region-popup' });
+                        } else {
+                            layer.unbindPopup();
+                        }
+                    } else {
+                        layer.unbindPopup();
+                    }
+                }
+            });
         }
     }, [geoJsonData, selectedRegions, localTheme, overlayMode, tryOpenMarkerPopupAt]);
 

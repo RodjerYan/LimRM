@@ -43,13 +43,9 @@ import startDataUpdate from '../api/start-data-update.ts';
 // @ts-ignore
 import checkUpdateStatus from '../api/check-update-status.ts';
 // @ts-ignore
-import checkRosstat from '../api/check-rosstat-update.ts';
-// @ts-ignore
 import geminiProxy from '../api/gemini-proxy.ts';
 // @ts-ignore
 import keepAlive from '../api/keep-alive.ts';
-// @ts-ignore
-import runEtl from '../api/run-etl.ts';
 
 // Import Auth Routes
 // @ts-ignore
@@ -177,11 +173,9 @@ app.all('/api/snapshot', adapt(getFullCache)); // Legacy/Alias
 // NEW ROUTES
 app.all('/api/get-history', adapt(getHistory));
 app.all('/api/sync-google', adapt(syncGoogle));
-app.all('/api/run-etl', adapt(runEtl)); // ETL Route
 
 app.all('/api/start-data-update', adapt(startDataUpdate));
 app.all('/api/check-update-status', adapt(checkUpdateStatus));
-app.all('/api/check-rosstat-update', adapt(checkRosstat));
 app.post('/api/gemini-proxy', adaptGemini(geminiProxy));
 app.all('/api/keep-alive', adapt(keepAlive)); // Keep-Alive route
 

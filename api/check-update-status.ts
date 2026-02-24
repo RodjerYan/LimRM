@@ -2,7 +2,7 @@ const TOTAL_DURATION = 15000;
 
 const steps = [
     { progress: 0, message: 'Задача поставлена в очередь...' },
-    { progress: 15, message: 'Подключение к источникам Росстата...' },
+    { progress: 15, message: 'Подключение к внешним источникам...' },
     { progress: 30, message: 'Загрузка данных по демографии...' },
     { progress: 50, message: 'Анализ рыночных индексов...' },
     { progress: 75, message: 'Агрегация данных по регионам...' },
