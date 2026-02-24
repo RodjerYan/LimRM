@@ -10,7 +10,7 @@ interface ProfileModalProps {
 }
 
 const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
-    const { user, token, refreshProfile } = useAuth();
+    const { user, token, refreshProfile, login } = useAuth();
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
@@ -60,13 +60,20 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
                 body: JSON.stringify({
                     firstName: formData.firstName,
                     lastName: formData.lastName,
+                    email: formData.email,
                     phone: formData.phone,
                     password: formData.password || undefined
                 })
             });
 
             if (res.ok) {
-                await refreshProfile();
+                const data = await res.json();
+                if (data.token) {
+                    // Email changed, update token
+                    login(data.token, data.user);
+                } else {
+                    await refreshProfile();
+                }
                 setSuccess(true);
                 setTimeout(() => {
                     setSuccess(false);
@@ -142,12 +149,13 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
                 </div>
 
                 <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider ml-1">Email (не редактируется)</label>
+                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider ml-1">Email</label>
                     <input
                         type="email"
                         value={formData.email}
-                        disabled
-                        className="w-full px-4 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-sm text-slate-500 cursor-not-allowed outline-none"
+                        onChange={e => setFormData({ ...formData, email: e.target.value })}
+                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition"
+                        placeholder="example@mail.com"
                     />
                 </div>
 

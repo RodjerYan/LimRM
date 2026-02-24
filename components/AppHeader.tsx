@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React from 'react';
 import { LoaderIcon, CloudDownloadIcon, InfoIcon } from './icons';
 import { FileProcessingState, UpdateJobStatus } from '../types';
 import { useAuth } from './auth/AuthContext';
@@ -14,7 +14,9 @@ interface AppHeaderProps {
     onStartDataUpdate: () => void;
     activeClientsCount: number;
     queueLength?: number;
-    onOpenAdmin?: () => void; // Optional if passed, but better to handle internally or via props
+    onOpenAdmin?: () => void;
+    isProfileOpen: boolean;
+    setIsProfileOpen: (open: boolean) => void;
 }
 
 export const AppHeader: React.FC<AppHeaderProps> = ({ 
@@ -26,10 +28,11 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
     onStartDataUpdate, 
     activeClientsCount,
     queueLength = 0,
-    onOpenAdmin
+    onOpenAdmin,
+    isProfileOpen,
+    setIsProfileOpen
 }) => {
     const { user, logout, totalUsers } = useAuth();
-    const [isProfileOpen, setIsProfileOpen] = useState(false);
 
     return (
         <div className="sticky top-0 z-30 px-4 md:px-6 lg:px-8 py-4">

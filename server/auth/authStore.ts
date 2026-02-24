@@ -1,6 +1,7 @@
 
 import { getDrive } from "./driveClient";
 import { Buffer } from "buffer";
+import { hashPassword } from "./password";
 
 // ID корневой папки (Shared Folder)
 const USER_PROVIDED_ROOT_ID = "1gP6ybuKUPm1hu4IrosqtJwPfRROqo5bl";
@@ -197,17 +198,23 @@ export async function getActiveUser(email: string) {
     return { profile, secrets };
 }
 
-export async function updateUser(email: string, updates: { firstName?: string; lastName?: string; phone?: string; password?: string }) {
+export async function updateUser(email: string, updates: { firstName?: string; lastName?: string; phone?: string; password?: string; email?: string }) {
     const db = await readDb();
     const userIndex = db.users.findIndex(u => u.email.toLowerCase() === email.toLowerCase());
     
     if (userIndex === -1) throw new Error("USER_NOT_FOUND");
     
+    if (updates.email && updates.email.toLowerCase() !== email.toLowerCase()) {
+        const emailExists = db.users.some(u => u.email.toLowerCase() === updates.email!.toLowerCase());
+        if (emailExists) throw new Error("EMAIL_ALREADY_EXISTS");
+    }
+
     const user = db.users[userIndex];
     
     if (updates.firstName) user.firstName = updates.firstName;
     if (updates.lastName) user.lastName = updates.lastName;
     if (updates.phone) user.phone = updates.phone;
+    if (updates.email) user.email = updates.email;
     
     if (updates.password) {
         const { salt, hash } = hashPassword(updates.password);

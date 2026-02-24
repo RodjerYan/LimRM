@@ -26,19 +26,32 @@ function normName(s: any) { return String(s || "").trim(); }
 
 // --- UPDATE PROFILE ---
 r.post("/update-profile", requireAuth, async (req, res) => {
-  const email = req.user!.email;
-  const { firstName, lastName, phone, password } = req.body;
+  const oldEmail = req.user!.email;
+  const { firstName, lastName, phone, password, email: newEmail } = req.body;
 
   try {
-    const updatedUser = await updateUser(email, {
+    const updatedUser = await updateUser(oldEmail, {
       firstName: firstName ? normName(firstName) : undefined,
       lastName: lastName ? normName(lastName) : undefined,
       phone: phone ? normName(phone) : undefined,
-      password: password || undefined
+      password: password || undefined,
+      email: newEmail ? normEmail(newEmail) : undefined
     });
 
-    // Log to Points_of_interest deltas if requested
-    // We can do this by making a fetch to our own API
+    const finalEmail = updatedUser.email;
+
+    // Issue a new token if email changed
+    let newToken: string | undefined;
+    if (finalEmail.toLowerCase() !== oldEmail.toLowerCase()) {
+        newToken = signToken({
+            email: updatedUser.email,
+            role: updatedUser.role,
+            lastName: updatedUser.lastName,
+            firstName: updatedUser.firstName,
+        });
+    }
+
+    // Log to Points_of_interest deltas
     const protocol = req.protocol || 'http';
     const host = req.get('host');
     const deltaUrl = `${protocol}://${host}/api/get-full-cache?action=save-interest-delta`;
@@ -52,18 +65,21 @@ r.post("/update-profile", requireAuth, async (req, res) => {
             },
             body: JSON.stringify({
                 type: 'profile_update',
-                key: `user#${email}`,
+                key: `user#${finalEmail}`,
                 timestamp: Date.now(),
-                details: `Profile updated for ${email}`
+                details: `Profile updated for ${finalEmail}${finalEmail !== oldEmail ? ` (was ${oldEmail})` : ''}`
             })
         });
     } catch (e) {
         console.error("[AUTH] Failed to log profile update to deltas:", e);
     }
 
-    res.json({ ok: true, user: updatedUser });
+    res.json({ ok: true, user: updatedUser, token: newToken });
   } catch (e: any) {
     console.error("[AUTH/update-profile] ERROR:", e);
+    if (e.message === "EMAIL_ALREADY_EXISTS") {
+        return res.status(409).json({ error: "Этот email уже занят другим пользователем" });
+    }
     res.status(500).json({ error: "Ошибка обновления профиля" });
   }
 });

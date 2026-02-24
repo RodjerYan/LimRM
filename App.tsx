@@ -42,6 +42,7 @@ const AppContent: React.FC = () => {
 
     const { user, isLoading: authLoading } = useAuth();
     const [showAdminModal, setShowAdminModal] = useState(false);
+    const [isProfileOpen, setIsProfileOpen] = useState(false);
     
     // Auth Flow State
     const [authCancelled, setAuthCancelled] = useState(false);
@@ -204,10 +205,12 @@ const AppContent: React.FC = () => {
                         activeClientsCount={allActiveClients.length}
                         queueLength={queueLength}
                         onOpenAdmin={() => setShowAdminModal(true)} 
+                        isProfileOpen={isProfileOpen}
+                        setIsProfileOpen={setIsProfileOpen}
                     />
 
                     {/* Admin Access Button Floating (Optional fallback if header button fails) */}
-                    {user.role === 'admin' && (
+                    {user.role === 'admin' && !isProfileOpen && (
                         <div className="absolute top-20 right-8 z-40">
                              <button onClick={() => setShowAdminModal(true)} className="px-3 py-1 bg-purple-600 text-white text-xs font-bold rounded-lg shadow hover:bg-purple-500">
                                  Администрирование пользователей
