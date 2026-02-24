@@ -1,8 +1,9 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { LoaderIcon, CloudDownloadIcon, InfoIcon } from './icons';
 import { FileProcessingState, UpdateJobStatus } from '../types';
 import { useAuth } from './auth/AuthContext';
+import ProfileModal from './auth/ProfileModal';
 
 interface AppHeaderProps {
     dbStatus: 'empty' | 'ready' | 'loading';
@@ -28,6 +29,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
     onOpenAdmin
 }) => {
     const { user, logout, totalUsers } = useAuth();
+    const [isProfileOpen, setIsProfileOpen] = useState(false);
 
     return (
         <div className="sticky top-0 z-30 px-4 md:px-6 lg:px-8 py-4">
@@ -86,8 +88,11 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                          {/* User Info Block */}
                          {user && (
                             <div className="flex items-center gap-3 border-r border-slate-200 pr-4 mr-1">
-                                <div className="text-right hidden sm:block">
-                                    <div className="text-xs font-bold text-slate-900">{user.lastName} {user.firstName}</div>
+                                <div 
+                                    className="text-right hidden sm:block cursor-pointer hover:text-indigo-600 transition-colors group"
+                                    onClick={() => setIsProfileOpen(true)}
+                                >
+                                    <div className="text-xs font-bold text-slate-900 group-hover:text-indigo-600">{user.lastName} {user.firstName}</div>
                                     <div className="text-[10px] text-slate-500 uppercase">{user.role}</div>
                                 </div>
                                 <button onClick={logout} className="text-xs text-red-500 font-bold hover:underline">Выйти</button>
@@ -120,6 +125,11 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                     </div>
                 </div>
             </header>
+
+            <ProfileModal 
+                isOpen={isProfileOpen} 
+                onClose={() => setIsProfileOpen(false)} 
+            />
         </div>
     );
 };

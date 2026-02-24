@@ -197,6 +197,28 @@ export async function getActiveUser(email: string) {
     return { profile, secrets };
 }
 
+export async function updateUser(email: string, updates: { firstName?: string; lastName?: string; phone?: string; password?: string }) {
+    const db = await readDb();
+    const userIndex = db.users.findIndex(u => u.email.toLowerCase() === email.toLowerCase());
+    
+    if (userIndex === -1) throw new Error("USER_NOT_FOUND");
+    
+    const user = db.users[userIndex];
+    
+    if (updates.firstName) user.firstName = updates.firstName;
+    if (updates.lastName) user.lastName = updates.lastName;
+    if (updates.phone) user.phone = updates.phone;
+    
+    if (updates.password) {
+        const { salt, hash } = hashPassword(updates.password);
+        user.passwordSalt = salt;
+        user.passwordHash = hash;
+    }
+    
+    await saveDb(db);
+    return user;
+}
+
 export async function deleteUser(email: string) {
     const db = await readDb();
     const initialLen = db.users.length;

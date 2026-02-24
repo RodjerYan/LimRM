@@ -7,6 +7,7 @@ import { signToken } from "./jwt";
 import {
   createUser,
   getActiveUser,
+  updateUser,
   listUsers,
   setRole,
   deleteUser,
@@ -22,6 +23,50 @@ const ADMIN_EMAIL = "rodjeryan@gmail.com";
 
 function normEmail(s: any) { return String(s || "").trim().toLowerCase(); }
 function normName(s: any) { return String(s || "").trim(); }
+
+// --- UPDATE PROFILE ---
+r.post("/update-profile", requireAuth, async (req, res) => {
+  const email = req.user!.email;
+  const { firstName, lastName, phone, password } = req.body;
+
+  try {
+    const updatedUser = await updateUser(email, {
+      firstName: firstName ? normName(firstName) : undefined,
+      lastName: lastName ? normName(lastName) : undefined,
+      phone: phone ? normName(phone) : undefined,
+      password: password || undefined
+    });
+
+    // Log to Points_of_interest deltas if requested
+    // We can do this by making a fetch to our own API
+    const protocol = req.protocol || 'http';
+    const host = req.get('host');
+    const deltaUrl = `${protocol}://${host}/api/get-full-cache?action=save-interest-delta`;
+    
+    try {
+        await fetch(deltaUrl, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': req.headers.authorization || ''
+            },
+            body: JSON.stringify({
+                type: 'profile_update',
+                key: `user#${email}`,
+                timestamp: Date.now(),
+                details: `Profile updated for ${email}`
+            })
+        });
+    } catch (e) {
+        console.error("[AUTH] Failed to log profile update to deltas:", e);
+    }
+
+    res.json({ ok: true, user: updatedUser });
+  } catch (e: any) {
+    console.error("[AUTH/update-profile] ERROR:", e);
+    res.status(500).json({ error: "Ошибка обновления профиля" });
+  }
+});
 
 // --- CAPTCHA ---
 r.get("/captcha", async (req, res) => {
