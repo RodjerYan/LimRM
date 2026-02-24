@@ -14,6 +14,7 @@ import { useTaskManager } from '../hooks/useTaskManager'; // NEW
 
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient, SuggestedAction, ChurnMetric } from '../types';
 import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon, ChartBarIcon, TargetIcon, UsersIcon, CalendarIcon, CheckIcon, TrashIcon } from './icons';
+import DateRangePicker from './DateRangePicker';
 import { findValueInRow, findAddressInRow, normalizeRmNameForMatching, normalizeAddress, recoverRegion } from '../utils/dataUtils';
 import { PlanningEngine } from '../services/planning/engine';
 import { streamPackagingInsights } from '../services/aiService';
@@ -919,21 +920,13 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                     
                     <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
                         <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Начало периода</label>
-                            <input 
-                                type="date" 
-                                value={tempPlanStart} 
-                                onChange={(e) => setTempPlanStart(e.target.value)}
-                                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Конец периода</label>
-                            <input 
-                                type="date" 
-                                value={tempPlanEnd} 
-                                onChange={(e) => setTempPlanEnd(e.target.value)}
-                                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Период планирования</label>
+                            <DateRangePicker
+                                startDate={tempPlanStart}
+                                endDate={tempPlanEnd}
+                                onStartDateChange={setTempPlanStart}
+                                onEndDateChange={setTempPlanEnd}
+                                className="!w-full !h-10"
                             />
                         </div>
                     </div>

@@ -3,6 +3,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import Modal from './Modal';
 import { ProcessedTask } from '../types';
 import { TrashIcon, CalendarIcon, RefreshIcon, CheckIcon, LoaderIcon } from './icons';
+import SingleDatePicker from './SingleDatePicker';
 
 interface TaskActionModalProps {
     isOpen: boolean;
@@ -98,11 +99,11 @@ const TaskActionModal: React.FC<TaskActionModalProps> = ({
                                 Карточка будет скрыта до указанной даты.
                             </p>
                             <label className="block text-xs font-bold text-indigo-800 mb-1">Напомнить:</label>
-                            <input 
-                                type="date" 
-                                value={snoozeDate} 
-                                onChange={(e) => setSnoozeDate(e.target.value)}
-                                className="w-full p-2 border border-indigo-200 rounded-lg text-sm bg-white"
+                            <SingleDatePicker
+                                date={snoozeDate}
+                                onChange={setSnoozeDate}
+                                minDate={new Date()}
+                                className="!border-indigo-200 !bg-white !rounded-lg"
                             />
                         </div>
                     )}

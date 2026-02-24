@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { CalendarIcon, FilterIcon, RefreshIcon } from './icons';
+import DateRangePicker from './DateRangePicker';
 
 interface FiltersBarProps {
   startDate: string;
@@ -41,18 +42,12 @@ const FiltersBar: React.FC<FiltersBarProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => onStartDateChange(e.target.value)}
-              className="rounded-2xl border border-slate-200 bg-white/90 px-4 py-2.5 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition"
-            />
-            <span className="text-slate-400 font-black">—</span>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => onEndDateChange(e.target.value)}
-              className="rounded-2xl border border-slate-200 bg-white/90 px-4 py-2.5 text-sm font-bold text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition"
+            <DateRangePicker
+              startDate={startDate}
+              endDate={endDate}
+              onStartDateChange={onStartDateChange}
+              onEndDateChange={onEndDateChange}
+              className="!h-10 !rounded-2xl !bg-white/90 !border-slate-200 !shadow-sm focus-within:!ring-4 focus-within:!ring-indigo-500/10 focus-within:!border-indigo-300"
             />
           </div>
 

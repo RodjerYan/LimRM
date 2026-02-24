@@ -1,6 +1,7 @@
 
 import React from "react";
 import { CheckIcon, CalendarIcon, CloudDownloadIcon } from "./icons";
+import DateRangePicker from "./DateRangePicker";
 
 interface TopBarProps {
   title: string;
@@ -55,20 +56,12 @@ const TopBar: React.FC<TopBarProps> = ({
           )}
 
           {/* PERIOD */}
-          <div className="flex-shrink-0 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 h-9 transition-colors hover:bg-slate-100 hover:border-slate-300">
-            <CalendarIcon />
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => onStartDateChange(e.target.value)}
-              className="bg-transparent text-sm text-slate-800 outline-none w-[110px] cursor-pointer"
-            />
-            <span className="text-slate-400">—</span>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => onEndDateChange(e.target.value)}
-              className="bg-transparent text-sm text-slate-800 outline-none w-[110px] cursor-pointer"
+          <div className="flex-shrink-0">
+            <DateRangePicker
+              startDate={startDate}
+              endDate={endDate}
+              onStartDateChange={onStartDateChange}
+              onEndDateChange={onEndDateChange}
             />
           </div>
 
