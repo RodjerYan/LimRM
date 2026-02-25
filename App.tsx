@@ -22,6 +22,7 @@ import { RoleProvider } from './components/auth/RoleProvider';
 import { AuthProvider, useAuth } from './components/auth/AuthContext';
 import { AuthModal } from './components/auth/AuthModal';
 import { AdminUsersModal } from './components/auth/AdminUsersModal';
+import ProfileModal from './components/auth/ProfileModal';
 import NotFoundPage from './components/NotFoundPage';
 
 // Enhanced UX imports
@@ -375,6 +376,7 @@ const AppContent: React.FC = () => {
                 />
 
                 <AdminUsersModal isOpen={showAdminModal} onClose={() => setShowAdminModal(false)} />
+                <ProfileModal isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
             </div>
         </div>
     );

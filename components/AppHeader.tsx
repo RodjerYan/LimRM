@@ -3,7 +3,6 @@ import React from 'react';
 import { LoaderIcon, CloudDownloadIcon, InfoIcon } from './icons';
 import { FileProcessingState, UpdateJobStatus } from '../types';
 import { useAuth } from './auth/AuthContext';
-import ProfileModal from './auth/ProfileModal';
 
 interface AppHeaderProps {
     dbStatus: 'empty' | 'ready' | 'loading';
@@ -108,11 +107,6 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                     </div>
                 </div>
             </header>
-
-            <ProfileModal 
-                isOpen={isProfileOpen} 
-                onClose={() => setIsProfileOpen(false)} 
-            />
         </div>
     );
 };
