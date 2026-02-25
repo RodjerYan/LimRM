@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon } from './icons';
+import { DataIcon, AnalyticsIcon, ProphetIcon, BrainIcon, TargetIcon } from './icons';
 import { useAuth } from './auth/AuthContext';
 
 interface NavigationProps {
@@ -17,7 +17,6 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
     { id: 'amp', label: 'AMP (Аналитика)', icon: <AnalyticsIcon small /> },
     { id: 'dashboard', label: 'Дашборд План/Факт', icon: <TargetIcon small /> },
     { id: 'prophet', label: 'PROPHET (Прогноз)', icon: <ProphetIcon small /> },
-    { id: 'agile', label: 'AGILE LEARNING', icon: <LabIcon small /> },
   ];
 
   if (isAdmin) {
