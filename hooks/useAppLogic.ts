@@ -113,7 +113,26 @@ export const useAppLogic = () => {
         const userSurname = normalize(user.lastName);
         return allData.filter(row => {
             const rmName = normalize(row.rm);
-            return rmName.includes(userSurname);
+            // Check if user is RM
+            if (rmName.includes(userSurname)) return true;
+
+            // Check if user is DM (Divisional Manager)
+            // We check multiple potential field names for "Divisional Manager"
+            const rowAny = row as any;
+            const dmFields = ['dm', 'divisionalManager', 'divisional_manager', 'дм', 'дивизиональный менеджер', 'дивизиональный'];
+            
+            for (const field of dmFields) {
+                if (rowAny[field] && normalize(rowAny[field]).includes(userSurname)) {
+                    return true;
+                }
+            }
+            
+            // Also check if the 'rm' field itself might contain the DM's name in some cases, 
+            // but usually RM and DM are separate. 
+            // If the row has a 'manager' field that is not RM, check that too.
+            if (rowAny.manager && normalize(rowAny.manager).includes(userSurname)) return true;
+
+            return false;
         });
     }, [allData, user]);
 
