@@ -108,25 +108,57 @@ const getPetDataForRegion = (regionName: string) => {
     return null;
 };
 
-const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
-    if (mode === 'sales') {
+const MapLegend: React.FC<{ 
+    mode: OverlayMode; 
+    filters?: { potential: boolean; active: boolean; risk: boolean; lost: boolean; };
+    onToggle?: (key: 'potential' | 'active' | 'risk' | 'lost') => void;
+}> = React.memo(({ mode, filters, onToggle }) => {
+    if (mode === 'sales' && filters && onToggle) {
         return (
-            <div className="p-3 bg-white/95 backdrop-blur-md rounded-lg border border-gray-200 text-gray-900 max-w-[220px] shadow-lg">
-                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-500">Статус Клиентов</h4>
-                <div className="flex items-center mb-1.5">
-                    <span className="w-3 h-3 mr-2 bg-blue-500 rounded-full shadow-sm"></span>
-                    <span className="text-xs">Потенциальные клиенты</span>
+            <div className="p-3 bg-white/95 backdrop-blur-md rounded-lg border border-gray-200 text-gray-900 max-w-[220px] shadow-lg select-none">
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-500">Фильтр точек</h4>
+                
+                <div 
+                    className="flex items-center mb-1.5 cursor-pointer hover:bg-gray-50 p-1 rounded transition-colors"
+                    onClick={() => onToggle('potential')}
+                >
+                    <div className={`w-4 h-4 mr-2 rounded border flex items-center justify-center transition-colors ${filters.potential ? 'bg-blue-500 border-blue-600' : 'bg-white border-gray-300'}`}>
+                        {filters.potential && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                    </div>
+                    <span className="w-2 h-2 mr-2 bg-blue-500 rounded-full shadow-sm"></span>
+                    <span className="text-xs">Потенциальные</span>
                 </div>
-                <div className="flex items-center mb-1.5">
-                    <span className="w-3 h-3 mr-2 bg-emerald-500 rounded-full shadow-sm"></span>
+
+                <div 
+                    className="flex items-center mb-1.5 cursor-pointer hover:bg-gray-50 p-1 rounded transition-colors"
+                    onClick={() => onToggle('active')}
+                >
+                    <div className={`w-4 h-4 mr-2 rounded border flex items-center justify-center transition-colors ${filters.active ? 'bg-emerald-500 border-emerald-600' : 'bg-white border-gray-300'}`}>
+                        {filters.active && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                    </div>
+                    <span className="w-2 h-2 mr-2 bg-emerald-500 rounded-full shadow-sm"></span>
                     <span className="text-xs">Продажи &lt; 6 мес</span>
                 </div>
-                <div className="flex items-center mb-1.5">
-                    <span className="w-3 h-3 mr-2 bg-amber-500 rounded-full shadow-sm"></span>
+
+                <div 
+                    className="flex items-center mb-1.5 cursor-pointer hover:bg-gray-50 p-1 rounded transition-colors"
+                    onClick={() => onToggle('risk')}
+                >
+                    <div className={`w-4 h-4 mr-2 rounded border flex items-center justify-center transition-colors ${filters.risk ? 'bg-amber-500 border-amber-600' : 'bg-white border-gray-300'}`}>
+                        {filters.risk && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                    </div>
+                    <span className="w-2 h-2 mr-2 bg-amber-500 rounded-full shadow-sm"></span>
                     <span className="text-xs">Продажи 6-12 мес</span>
                 </div>
-                <div className="flex items-center">
-                    <span className="w-3 h-3 mr-2 bg-red-500 rounded-full shadow-sm"></span>
+
+                <div 
+                    className="flex items-center cursor-pointer hover:bg-gray-50 p-1 rounded transition-colors"
+                    onClick={() => onToggle('lost')}
+                >
+                    <div className={`w-4 h-4 mr-2 rounded border flex items-center justify-center transition-colors ${filters.lost ? 'bg-red-500 border-red-600' : 'bg-white border-gray-300'}`}>
+                        {filters.lost && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                    </div>
+                    <span className="w-2 h-2 mr-2 bg-red-500 rounded-full shadow-sm"></span>
                     <span className="text-xs">Потерянные (&gt; 12 мес)</span>
                 </div>
             </div>
@@ -289,6 +321,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [localTheme, setLocalTheme] = useState<Theme>(theme ?? 'light');
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [overlayMode, setOverlayMode] = useState<OverlayMode>('sales');
+    const [salesFilters, setSalesFilters] = useState({
+        potential: true,
+        active: true, // < 6 months
+        risk: true,   // 6-12 months
+        lost: true    // > 12 months
+    });
 
     // ... (getLastSaleDateForGroup same) ...
     const getLastSaleDateForGroup = useCallback((clients: MapPoint[]): Date | null => {
@@ -630,9 +668,22 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     }, []); 
 
     // ... (rest of effects same) ...
+    const legendRootRef = useRef<any>(null);
+
     useEffect(() => {
-        if (legendContainerRef.current) { const root = (ReactDOM as any).createRoot(legendContainerRef.current); root.render(<MapLegend mode={overlayMode} />); }
-    }, [overlayMode]);
+        if (legendContainerRef.current) { 
+            if (!legendRootRef.current) {
+                legendRootRef.current = (ReactDOM as any).createRoot(legendContainerRef.current);
+            }
+            legendRootRef.current.render(
+                <MapLegend 
+                    mode={overlayMode} 
+                    filters={salesFilters}
+                    onToggle={(key) => setSalesFilters(prev => ({ ...prev, [key]: !prev[key] }))}
+                />
+            ); 
+        }
+    }, [overlayMode, salesFilters]);
 
     useEffect(() => {
         const map = mapInstance.current;
@@ -743,6 +794,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         if (overlayMode !== 'abc') {
             potentialClients.forEach(tt => {
+                // Check filter for potential clients (Blue)
+                if (overlayMode === 'sales' && !salesFilters.potential) return;
+
                 let lat = tt.lat;
                 let lon = tt.lon;
 
@@ -860,25 +914,33 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     }
                 } else {
                     const lastSaleDate = getLastSaleDateForGroup(groupClients);
+                    let isVisible = true;
+
                     if (lastSaleDate) {
                         const now = new Date();
                         const diffTime = Math.abs(now.getTime() - lastSaleDate.getTime());
                         const diffMonths = diffTime / (1000 * 60 * 60 * 24 * 30.44); 
 
                         if (diffMonths > 12) {
+                            if (overlayMode === 'sales' && !salesFilters.lost) isVisible = false;
                             markerColor = '#ef4444'; 
                             markerBorder = '#b91c1c';
                         } else if (diffMonths > 6) {
+                            if (overlayMode === 'sales' && !salesFilters.risk) isVisible = false;
                             markerColor = '#f59e0b'; 
                             markerBorder = '#b45309';
                         } else {
+                            if (overlayMode === 'sales' && !salesFilters.active) isVisible = false;
                             markerColor = '#10b981'; 
                             markerBorder = '#047857';
                         }
                     } else {
+                        if (overlayMode === 'sales' && !salesFilters.active) isVisible = false;
                         markerColor = '#10b981'; 
                         markerBorder = '#047857';
                     }
+
+                    if (!isVisible) return;
                 }
 
                 const marker = L.circleMarker([lat, lon], {
@@ -907,7 +969,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
         
         if (pointsForBounds.length > 0 && !flyToClientKey) { map.fitBounds(L.latLngBounds(pointsForBounds).pad(0.1)); }
-    }, [potentialClients, activeClients, overlayMode, getLastSaleDateForGroup]);
+    }, [potentialClients, activeClients, overlayMode, getLastSaleDateForGroup, salesFilters]);
 
     // ... (rest same) ...
     useEffect(() => {
