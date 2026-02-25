@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
     OkbDataRow, MapPoint, UnidentifiedRow,
@@ -104,66 +103,86 @@ export const useAppLogic = () => {
     } = useDataSync(addNotification);
 
     // --- DATA VISIBILITY FILTERING ---
+    // IMPORTANT:
+    // - RM should see only rows that belong to their RM name (group.rm)
+    // - DM should see rows that belong to their DM name (often stored per-client, not on the aggregated group)
+    // - In many snapshots the DM column is coded as "BR" (per your screenshot), so we treat BR as a DM source too
     const normalize = (v: any) => String(v ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 
-    // Robust normalization for names (handles 'ё', special chars, extra spaces)
+    // More robust name normalization: handles "Ё/Е", punctuation, double spaces, etc.
     const normalizeName = (v: any) =>
-        String(v ?? '')
+        String(v ?? "")
             .toLowerCase()
-            .replace(/ё/g, 'е')
-            .replace(/[^a-zа-я0-9\s]/g, ' ')
-            .replace(/\s+/g, ' ')
+            .replace(/ё/g, "е")
+            .replace(/[^a-zа-я0-9\s]/g, " ")
+            .replace(/\s+/g, " ")
             .trim();
 
-    const dmDebugPrintedRef = useRef(false);
+    const extractDmFromClient = (client: any): string => {
+        if (!client) return "";
+
+        // 1) Prefer normalized fields if your worker already mapped them
+        const direct =
+            client.dm ??
+            client.divisionalManager ??
+            client.divisional_manager ??
+            client["ДМ"] ??
+            client["DM"] ??
+            client.BR; // <-- in your dataset BR can be DM
+        if (direct) return String(direct);
+
+        // 2) Fallback: try to pull DM from the original row, if preserved
+        const orig = client.originalRow ?? client.originalRowData ?? client.rowData ?? client.rawRow;
+        if (orig) {
+            // NOTE: include 'BR' here because in your files BR is the DM column code
+            const dmVal = findValueInRow(orig, [
+                "BR",
+                "ДМ",
+                "DM",
+                "дм",
+                "дивизиональный менеджер",
+                "директор дивизиона",
+                "divisional manager",
+                "divisional_manager",
+            ]);
+            if (dmVal) return String(dmVal);
+        }
+
+        return "";
+    };
 
     const visibleData = useMemo(() => {
         if (!user) return [];
         if (user.role === 'admin') return allData;
-        
+
         const userSurname = normalizeName(user.lastName);
 
-        // Keywords to search for "DM" in the original row
-        // Removed 'BR' to avoid false positives with Brand
-        const dmKeywords = [
-            'ДМ',
-            'DM',
-            'дивизиональный менеджер',
-            'директор дивизиона'
-        ];
-
-        console.log('USER DEBUG:', user.role, user.lastName, user.firstName, 'Normalized:', userSurname);
-
-        return allData.filter(group => {
-            // 1) RM - as it was
+        return allData.filter((group: any) => {
+            // 1) RM visibility (existing behavior)
             const rmName = normalizeName(group.rm);
-            if (rmName.includes(userSurname)) return true;
+            if (rmName && rmName.includes(userSurname)) return true;
 
-            // 2) DM - search NOT in group, but in original client rows
-            if (Array.isArray(group.clients) && group.clients.length) {
-                // Check if any client in the group belongs to this DM
-                return group.clients.some((c) => {
-                    const orig = (c as any)?.originalRow;
-                    if (!orig) return false;
+            // 2) DM visibility
+            // DM is often not stored at the aggregated group level; it sits on each client row.
+            // We therefore check:
+            //   - group.dm / group.BR / group.manager (if present)
+            //   - any client.dm / client.BR / originalRow[BR/DM/...]
+            const groupDm =
+                group.dm ??
+                group.divisionalManager ??
+                group.divisional_manager ??
+                group["ДМ"] ??
+                group["DM"] ??
+                group.BR ??
+                group.manager;
 
-                    // Debugging logs (strictly once per session)
-                    if (!dmDebugPrintedRef.current) {
-                         dmDebugPrintedRef.current = true;
-                         console.log('DM DEBUG keys:', Object.keys(orig).slice(0, 80));
-                         console.log('DM DEBUG orig["ДМ"]:', (orig as any)['ДМ']);
-                         console.log('DM DEBUG orig["BR"]:', (orig as any)['BR']); // Checking BR just in case user mentioned it
-                         console.log('DM DEBUG orig sample:', orig);
-                    }
+            if (groupDm && normalizeName(groupDm).includes(userSurname)) return true;
 
-                    const dmVal = findValueInRow(orig, dmKeywords);
-                    
-                    if (dmVal && normalizeName(dmVal).includes(userSurname)) return true;
-
-                    // Just in case - sometimes DM is put in "manager/supervisor" fields if RM is in "representative"
-                    const managerVal = findValueInRow(orig, ['менеджер', 'руководитель', 'supervisor', 'manager']);
-                    if (managerVal && normalizeName(managerVal).includes(userSurname)) return true;
-
-                    return false;
+            const clients = Array.isArray(group.clients) ? group.clients : [];
+            if (clients.length) {
+                return clients.some((c: any) => {
+                    const dm = extractDmFromClient(c);
+                    return dm && normalizeName(dm).includes(userSurname);
                 });
             }
 
@@ -370,8 +389,7 @@ export const useAppLogic = () => {
             return;
         }
 
-        // 2. Handle Commenting / Editing (Currently we treat edits to Blue points as comments logs mostly)
-        // If the comment changed, save it as a 'comment' delta
+        // 2. Handle Commenting / Editing
         if (newPoint.comment) {
              const delta: InterestDelta = {
                 key: oldKey,
@@ -382,13 +400,9 @@ export const useAppLogic = () => {
             };
             saveInterestDelta(delta);
             addNotification("Комментарий сохранен", "success");
-            
-            // Optimistically update the editing client state to show new history if needed
-            // But we don't strictly maintain a complex local state for blue points in memory except for the filteredOkbData list
         }
 
     }, [user, saveInterestDelta, addNotification]);
-
 
     // --- 2. GEOCODING HOOK ---
     const { pendingGeocoding, actionQueue, handleStartPolling, handleQueuedUpdate, handleQueuedDelete } = useGeocoding(addNotification, handleDataUpdate, handleDeleteClientLocal);
