@@ -106,49 +106,62 @@ export const useAppLogic = () => {
     // --- DATA VISIBILITY FILTERING ---
     const normalize = (v: any) => String(v ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 
+    // Robust normalization for names (handles 'ё', special chars, extra spaces)
+    const normalizeName = (v: any) =>
+        String(v ?? '')
+            .toLowerCase()
+            .replace(/ё/g, 'е')
+            .replace(/[^a-zа-я0-9\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+    const dmDebugPrintedRef = useRef(false);
+
     const visibleData = useMemo(() => {
         if (!user) return [];
         if (user.role === 'admin') return allData;
         
-        const userSurname = normalize(user.lastName);
+        const userSurname = normalizeName(user.lastName);
 
         // Keywords to search for "DM" in the original row
+        // Removed 'BR' to avoid false positives with Brand
         const dmKeywords = [
-            'дм',
-            'дм фио',
+            'ДМ',
+            'DM',
             'дивизиональный менеджер',
-            'дивизиональный менеджер фио',
-            'дивизиональный',
-            'директор дивизиона',
-            'dm',
-            'divisional manager',
-            'divisional_manager',
-            'divisionalmanager',
+            'директор дивизиона'
         ];
+
+        console.log('USER DEBUG:', user.role, user.lastName, user.firstName, 'Normalized:', userSurname);
 
         return allData.filter(group => {
             // 1) RM - as it was
-            const rmName = normalize(group.rm);
+            const rmName = normalizeName(group.rm);
             if (rmName.includes(userSurname)) return true;
 
             // 2) DM - search NOT in group, but in original client rows
             if (Array.isArray(group.clients) && group.clients.length) {
                 // Check if any client in the group belongs to this DM
-                // We use .some() because if one client in the aggregation belongs to the DM, 
-                // the whole group (which is usually grouped by RM/Region/Brand) is relevant.
-                // However, usually all clients in a group (same RM) would have the same DM.
-                return group.clients.some(c => {
+                return group.clients.some((c) => {
                     const orig = (c as any)?.originalRow;
                     if (!orig) return false;
 
+                    // Debugging logs (strictly once per session)
+                    if (!dmDebugPrintedRef.current) {
+                         dmDebugPrintedRef.current = true;
+                         console.log('DM DEBUG keys:', Object.keys(orig).slice(0, 80));
+                         console.log('DM DEBUG orig["ДМ"]:', (orig as any)['ДМ']);
+                         console.log('DM DEBUG orig["BR"]:', (orig as any)['BR']); // Checking BR just in case user mentioned it
+                         console.log('DM DEBUG orig sample:', orig);
+                    }
+
                     const dmVal = findValueInRow(orig, dmKeywords);
-                    if (dmVal && normalize(dmVal).includes(userSurname)) return true;
+                    
+                    if (dmVal && normalizeName(dmVal).includes(userSurname)) return true;
 
                     // Just in case - sometimes DM is put in "manager/supervisor" fields if RM is in "representative"
-                    // But be careful not to overlap with RM if RM is also in "manager".
-                    // Since we already checked group.rm vs userSurname, this is a secondary check.
                     const managerVal = findValueInRow(orig, ['менеджер', 'руководитель', 'supervisor', 'manager']);
-                    if (managerVal && normalize(managerVal).includes(userSurname)) return true;
+                    if (managerVal && normalizeName(managerVal).includes(userSurname)) return true;
 
                     return false;
                 });
