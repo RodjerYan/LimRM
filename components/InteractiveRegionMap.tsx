@@ -778,7 +778,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     useEffect(() => {
         const map = mapInstance.current;
-        if (!map || !layerControl.current) return;
+        if (!map) return;
         
         const potentialRenderer = L.canvas({ pane: 'markersPane' });
         const activeRenderer = L.canvas({ pane: 'activeMarkersPane' }); 
