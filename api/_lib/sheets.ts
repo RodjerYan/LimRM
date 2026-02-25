@@ -334,6 +334,36 @@ export async function updateAddressInCache(
              updates.push({ range: `'${actualSheetTitle}'!B${rowNumber}:C${rowNumber}`, values: [[lat, lon]] });
              updates.push({ range: `'${actualSheetTitle}'!F${rowNumber}`, values: [['confirmed']] });
         }
+
+        // --- HISTORY LOGGING FOR IN-PLACE UPDATES ---
+        if (!skipHistory) {
+            let logParts: string[] = [];
+            
+            // Check if coords changed
+            if (lat !== undefined && lon !== undefined) {
+                const oldLat = parseFloat(String(row[1] || '0').replace(',', '.'));
+                const oldLon = parseFloat(String(row[2] || '0').replace(',', '.'));
+                if (Math.abs(oldLat - lat) > 0.000001 || Math.abs(oldLon - lon) > 0.000001) {
+                    logParts.push(`Координаты: ${lat}, ${lon}`);
+                }
+            }
+
+            // Check if comment changed
+            if (comment !== undefined) {
+                const oldComment = String(row[4] || '').trim();
+                const newComment = String(comment).trim();
+                if (oldComment !== newComment) {
+                    logParts.push(`Комментарий: ${newComment}`);
+                }
+            }
+
+            if (logParts.length > 0) {
+                const historyEntry = `${logParts.join('; ')} [${timestamp}]`;
+                const currentHistory = String(row[3] || '');
+                const newHistory = currentHistory ? `${currentHistory}\n${historyEntry}` : historyEntry;
+                updates.push({ range: `'${actualSheetTitle}'!D${rowNumber}`, values: [[newHistory]] });
+            }
+        }
         
         if (updates.length > 0) {
             await callWithRetry(() => sheets.spreadsheets.values.batchUpdate({ 

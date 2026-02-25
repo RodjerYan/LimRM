@@ -222,8 +222,29 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     return set;
   }, [props.uploadedData, getClientFact, props.selectedRm, getSafeKey]);
 
+  // 3. Period Universe (Filtered by Date, IGNORING RM)
+  const periodUniverseKeys = useMemo(() => {
+    const set = new Set<string>();
+    if (props.uploadedData) {
+      props.uploadedData.forEach((row) => {
+        // NO RM Filter Check
+        row.clients.forEach((c) => {
+          const { inPeriod, undated } = getClientFact(c);
+          const effectiveFact = inPeriod + undated;
+          
+          if (effectiveFact > MIN_FACT) {
+              const k = getSafeKey(c);
+              if (k) set.add(k);
+          }
+        });
+      });
+    }
+    return set;
+  }, [props.uploadedData, getClientFact, getSafeKey]);
+
   const totalUniqueCount = totalClientKeys.size;
   const effectiveUniqueCount = effectiveUniverseKeys.size;
+  const periodUniqueCount = periodUniverseKeys.size;
   const displayActiveCount = props.uploadedData ? totalUniqueCount : props.activeClientsCount;
 
   const healthScore = useMemo(() => {
@@ -561,14 +582,14 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                       <StatTile
-                        label={props.processingState.isProcessing ? "Обработано строк" : "Клиентов (Всего)"}
-                        value={rowsToDisplay}
+                        label={props.processingState.isProcessing ? "Обработано строк" : "Клиентов (в периоде)"}
+                        value={props.processingState.isProcessing ? rowsToDisplay : periodUniqueCount.toLocaleString('ru-RU')}
                         accent="neutral"
                         footnote={
                           props.processingState.isProcessing
                             ? 'Чтение снимка…'
                             : (effectiveStart || effectiveEnd 
-                                    ? `В выборке: ${effectiveUniqueCount.toLocaleString()}` 
+                                    ? (props.selectedRm ? `В выборке (РМ): ${effectiveUniqueCount.toLocaleString()}` : `В выборке: ${effectiveUniqueCount.toLocaleString()}`)
                                     : 'За все время')
                         }
                       />
