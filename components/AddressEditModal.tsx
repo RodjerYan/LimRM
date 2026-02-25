@@ -368,6 +368,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
   const [newComment, setNewComment] = useState('');
 
   const prevKeyRef = useRef<string | number | undefined>(undefined);
+  const prevLastUpdatedRef = useRef<number | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   
   const isPotential = (data as MapPoint)?.status === 'potential';
@@ -438,7 +439,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
           if (rm && currentAddress) {
              const isRecent = pt.lastUpdated && Date.now() - pt.lastUpdated < 3000;
              // Fetch if not recent OR if history is empty (to ensure we have it)
-             if (!isRecent || history.length === 0) fetchHistory(rm, currentAddress);
+             // We also want to refetch if lastUpdated changed (meaning we just saved), 
+             // but we need to be careful not to loop. 
+             // Since lastUpdated changes only on user action, it's safe to trigger fetch.
+             fetchHistory(rm, currentAddress);
           } else {
              if (!rm) console.warn("Cannot fetch history: RM name missing");
              setHistory([]);
@@ -447,8 +451,22 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
 
       prevKeyRef.current = currentKey;
     } else {
+        // Same key, but data might have updated (e.g. lastUpdated changed after save)
         const pt = data as MapPoint;
+        
+        // Refetch history if lastUpdated changed significantly (implying a save)
+        // We use a ref to track the last timestamp we fetched for
+        if (!isPotential) {
+             const rm = getRmName(data);
+             if (rm && currentAddress && pt.lastUpdated && pt.lastUpdated !== prevLastUpdatedRef.current) {
+                 // Add a small delay to allow backend write to propagate
+                 setTimeout(() => fetchHistory(rm, currentAddress), 500);
+                 prevLastUpdatedRef.current = pt.lastUpdated;
+             }
+        }
+
         if (status === 'geocoding') {
+            // ... existing geocoding logic ...
             const isStillGeocoding = pt.isGeocoding;
             const hasCoords = pt.lat && pt.lon && pt.lat !== 0;
             if (!isStillGeocoding && hasCoords) setStatus('success_geocoding');
