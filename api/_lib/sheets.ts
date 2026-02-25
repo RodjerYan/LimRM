@@ -301,7 +301,8 @@ export async function updateAddressInCache(
     comment?: string,
     lat?: number,
     lon?: number,
-    skipHistory?: boolean
+    skipHistory?: boolean,
+    userName?: string
 ): Promise<{ success: boolean }> {
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
@@ -312,6 +313,7 @@ export async function updateAddressInCache(
     let rowIndex = rows.findIndex((r: any) => normalizeForComparison(r[0]) === oldNorm);
     if (rowIndex === -1) rowIndex = rows.findIndex((r: any) => isAddressInHistory(String(r[3] || ''), oldNorm));
     const timestamp = new Date().toLocaleString('ru-RU');
+    const author = userName || 'Система';
     
     const newLat = lat !== undefined ? lat : '';
     const newLon = lon !== undefined ? lon : '';
@@ -322,7 +324,7 @@ export async function updateAddressInCache(
             spreadsheetId: CACHE_SPREADSHEET_ID, 
             range: `'${actualSheetTitle}'!A1`, 
             valueInputOption: 'USER_ENTERED', 
-            requestBody: { values: [[newAddress, newLat, newLon, `${oldAddress} [${timestamp}]`, comment || "", coordStatus, 'FALSE']] } 
+            requestBody: { values: [[newAddress, newLat, newLon, `${author}: ${oldAddress} [${timestamp}]`, comment || "", coordStatus, 'FALSE']] } 
         }), 'appendNewUpdate');
         return { success: true };
     }
@@ -360,7 +362,7 @@ export async function updateAddressInCache(
             }
 
             if (logParts.length > 0) {
-                const historyEntry = `${logParts.join('; ')} [${timestamp}]`;
+                const historyEntry = `${author}: ${logParts.join('; ')} [${timestamp}]`;
                 const currentHistory = String(row[3] || '');
                 const newHistory = currentHistory ? `${currentHistory}\n${historyEntry}` : historyEntry;
                 updates.push({ range: `'${actualSheetTitle}'!D${rowNumber}`, values: [[newHistory]] });
@@ -376,7 +378,7 @@ export async function updateAddressInCache(
         return { success: true };
     }
     
-    const historyEntry = `${String(row[0] || oldAddress)} [${timestamp}]`;
+    const historyEntry = `${author}: ${String(row[0] || oldAddress)} [${timestamp}]`;
     const newHistory = (row[3] && !skipHistory) ? `${row[3]}\n${historyEntry}` : (skipHistory ? (row[3] || '') : historyEntry);
     
     await callWithRetry(() => sheets.spreadsheets.values.update({ 

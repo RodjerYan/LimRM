@@ -470,7 +470,19 @@ export default async function handler(req: Request) {
             
             if (action === 'update-address') { 
                 if (!body.rmName) return new Response(JSON.stringify({ error: 'RM Name is missing' }), { status: 400 });
-                const result = await updateAddressInCache(body.rmName, body.oldAddress, body.newAddress, body.comment, body.lat, body.lon, body.skipHistory); 
+                const user = verifyUser(req);
+                const userName = user ? `${user.lastName} ${user.firstName}` : 'Система';
+                
+                const result = await updateAddressInCache(
+                    body.rmName, 
+                    body.oldAddress, 
+                    body.newAddress, 
+                    body.comment, 
+                    body.lat, 
+                    body.lon, 
+                    body.skipHistory,
+                    userName
+                ); 
                 return new Response(JSON.stringify(result)); 
             }
             

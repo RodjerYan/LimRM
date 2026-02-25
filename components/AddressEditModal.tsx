@@ -793,6 +793,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                                     if (displayUser === currentUserFull) isAuthor = true;
                                 }
 
+                                const isComment = displayText.startsWith('Комментарий:');
+
                                 return (
                                   <div key={idx} className="group relative p-4 bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-all">
                                     <div className="flex justify-between items-start mb-2">
@@ -803,7 +805,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                                           <span className="text-[10px] font-bold text-slate-400">
                                             {displayDate}
                                           </span>
-                                          {(isAdmin || isAuthor) && (
+                                          {(isComment && (isAdmin || isAuthor)) && (
                                               <button 
                                                   onClick={() => handleDeleteComment(idx, item)}
                                                   className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 rounded text-slate-400 hover:text-red-500 transition-all"
