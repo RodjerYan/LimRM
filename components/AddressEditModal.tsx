@@ -437,8 +437,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
           const rm = getRmName(data);
           if (rm && currentAddress) {
              const isRecent = pt.lastUpdated && Date.now() - pt.lastUpdated < 3000;
-             if (!isRecent) fetchHistory(rm, currentAddress);
+             // Fetch if not recent OR if history is empty (to ensure we have it)
+             if (!isRecent || history.length === 0) fetchHistory(rm, currentAddress);
           } else {
+             if (!rm) console.warn("Cannot fetch history: RM name missing");
              setHistory([]);
           }
       }
@@ -502,8 +504,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       const timestamp = Date.now();
       const dateStr = new Date(timestamp).toLocaleDateString('ru-RU');
       
+      const userName = user ? `${user.lastName || ''} ${user.firstName || ''}`.trim() || user.email || 'Пользователь' : 'Пользователь';
+
       const optimisticEntry = {
-          user: `${user?.lastName} ${user?.firstName}`,
+          user: userName,
           date: dateStr,
           text: newComment,
           timestamp: timestamp
