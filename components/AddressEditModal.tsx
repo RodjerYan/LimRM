@@ -353,7 +353,7 @@ const SinglePointMap: React.FC<{
 const AddressEditModal: React.FC<AddressEditModalProps> = ({
   isOpen, onClose, onBack, data, onDataUpdate, onStartPolling, onDelete, globalTheme = 'light',
 }) => {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [editedAddress, setEditedAddress] = useState('');
   const [editedChannel, setEditedChannel] = useState('');
   const [comment, setComment] = useState('');
@@ -519,13 +519,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       const oldKey = (data as MapPoint).key;
       const baseNewPoint: MapPoint = { ...(data as MapPoint), comment: newComment, lastUpdated: Date.now() };
       
-      // Call parent to save delta
-      onDataUpdate(oldKey, baseNewPoint, undefined, { type: 'comment' });
-      
-      // Optimistic update for UI
       const timestamp = Date.now();
       const dateStr = new Date(timestamp).toLocaleDateString('ru-RU');
-      
       const userName = user ? `${user.lastName || ''} ${user.firstName || ''}`.trim() || user.email || 'Пользователь' : 'Пользователь';
 
       const optimisticEntry = {
@@ -537,16 +532,89 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       
       setHistory(prev => [...prev, optimisticEntry]);
       setNewComment('');
+
+      // Call backend to save comment to Sheet (Persistent)
+      try {
+          const originalRow = getSafeOriginalRow(data);
+          const rm = getRmName(data);
+          const address = (data as MapPoint).address || findAddressInRow(originalRow) || '';
+          
+          if (rm && address) {
+              await fetch('/api/get-full-cache?action=update-address', {
+                  method: 'POST',
+                  headers: { 
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${token}`
+                  },
+                  body: JSON.stringify({
+                      rmName: rm,
+                      oldAddress: address,
+                      newAddress: address, // No change in address
+                      comment: newComment,
+                      skipHistory: false
+                  })
+              });
+          }
+      } catch (e) {
+          console.error("Failed to save comment to backend:", e);
+      }
+
+      // Call parent to save delta (Local/Sync)
+      onDataUpdate(oldKey, baseNewPoint, undefined, { type: 'comment' });
   };
 
-  const handleDeleteComment = (timestamp: number) => {
+  const handleDeleteComment = async (idx: number, item: string | { user: string, date: string, text: string, timestamp: number }) => {
       if (!data) return;
       const oldKey = (data as MapPoint).key;
-      // Pass originalTimestamp to identify the comment to delete
-      onDataUpdate(oldKey, data as MapPoint, undefined, { type: 'delete_comment', originalTimestamp: timestamp });
       
+      // Construct entryText for deletion
+      let entryText = '';
+      if (typeof item === 'string') {
+          entryText = item;
+      } else {
+          const prefix = item.text.startsWith('Комментарий:') ? '' : 'Комментарий: ';
+          entryText = `${item.user}: ${prefix}${item.text} [${item.date}]`;
+      }
+
       // Optimistic removal
-      setHistory(prev => prev.filter(item => typeof item === 'object' ? item.timestamp !== timestamp : true));
+      setHistory(prev => prev.filter((_, i) => i !== idx));
+
+      // Call backend to delete from Sheet
+      try {
+          const originalRow = getSafeOriginalRow(data);
+          const rm = getRmName(data);
+          const address = (data as MapPoint).address || findAddressInRow(originalRow) || '';
+          
+          if (rm && address && entryText) {
+              await fetch('/api/get-full-cache?action=delete-history-entry', {
+                  method: 'POST',
+                  headers: { 
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${token}`
+                  },
+                  body: JSON.stringify({
+                      rmName: rm,
+                      address: address,
+                      entryText: entryText
+                  })
+              });
+          }
+      } catch (e) {
+          console.error("Failed to delete comment from backend:", e);
+      }
+
+      // Call parent to save delta (delete_comment)
+      const timestamp = typeof item === 'object' ? item.timestamp : 0;
+      
+      // If the deleted comment is the current comment on the point, clear it
+      const currentComment = (data as MapPoint).comment || '';
+      const isCurrent = typeof item === 'string' ? item.includes(currentComment) : item.text === currentComment;
+      const pointToUpdate = { ...(data as MapPoint) };
+      if (isCurrent && currentComment) {
+          pointToUpdate.comment = '';
+      }
+
+      onDataUpdate(oldKey, pointToUpdate, undefined, { type: 'delete_comment', originalTimestamp: timestamp });
   };
 
   const handleSave = async () => {

@@ -409,6 +409,34 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
     }
 }
 
+export async function deleteHistoryEntryFromCache(rmName: string, address: string, entryText: string): Promise<void> {
+    const sheets = await getGoogleSheetsClient();
+    const actualSheetTitle = await ensureSheetExists(sheets, rmName);
+    const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A:D` }), 'getAddrForHistoryDelete') as any;
+    const rows = response.data.values || [];
+    const addressNorm = normalizeForComparison(address);
+    const rowIndex = rows.findIndex((r: any) => normalizeForComparison(r[0]) === addressNorm);
+    
+    if (rowIndex !== -1) {
+        const rowNumber = rowIndex + 1;
+        const currentHistory = String(rows[rowIndex][3] || '');
+        if (!currentHistory) return;
+
+        const entries = currentHistory.split(/\r?\n/);
+        const newEntries = entries.filter(e => e.trim() !== entryText.trim());
+        
+        if (newEntries.length !== entries.length) {
+            const newHistory = newEntries.join('\n');
+            await callWithRetry(() => sheets.spreadsheets.values.update({ 
+                spreadsheetId: CACHE_SPREADSHEET_ID, 
+                range: `'${actualSheetTitle}'!D${rowNumber}`, 
+                valueInputOption: 'USER_ENTERED',
+                requestBody: { values: [[newHistory]] }
+            }), 'updateHistoryAfterDelete');
+        }
+    }
+}
+
 export async function getAddressFromCache(rmName: string, address: string): Promise<any | null> {
     const cleanRmName = rmName.trim();
     const sheets = await getGoogleSheetsClient();

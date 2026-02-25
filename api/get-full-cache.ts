@@ -468,6 +468,14 @@ export default async function handler(req: Request) {
 
             if (action === 'add-to-cache') { const { rmName, rows } = body; await appendToCache(rmName, rows.map((r: any) => [r.address, r.lat||'', r.lon||''])); return new Response(JSON.stringify({success:true})); }
             
+            if (action === 'delete-history-entry') {
+                if (!body.rmName || !body.address || !body.entryText) {
+                    return new Response(JSON.stringify({ error: 'Missing parameters' }), { status: 400 });
+                }
+                await deleteHistoryEntryFromCache(body.rmName, body.address, body.entryText);
+                return new Response(JSON.stringify({ success: true }));
+            }
+
             if (action === 'update-address') { 
                 if (!body.rmName) return new Response(JSON.stringify({ error: 'RM Name is missing' }), { status: 400 });
                 const user = verifyUser(req);
