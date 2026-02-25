@@ -545,12 +545,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             map.getPane('activeMarkersPane')!.style.pointerEvents = 'none';
 
             L.control.zoom({ position: 'topleft' }).addTo(map);
-            layerControl.current = L.control.layers({}, {}, { position: 'bottomleft' }).addTo(map);
+            // layerControl.current = L.control.layers({}, {}, { position: 'bottomleft' }).addTo(map);
 
             potentialClientMarkersLayer.current = L.layerGroup().addTo(map);
             activeClientMarkersLayer.current = L.layerGroup().addTo(map);
-            layerControl.current.addOverlay(potentialClientMarkersLayer.current, '<span class="text-blue-500 font-bold">●</span> Потенциал (ОКБ)');
-            layerControl.current.addOverlay(activeClientMarkersLayer.current, '<span class="text-emerald-500 font-bold">●</span> Активные ТТ');
+            // layerControl.current.addOverlay(potentialClientMarkersLayer.current, '<span class="text-blue-500 font-bold">●</span> Потенциал (ОКБ)');
+            // layerControl.current.addOverlay(activeClientMarkersLayer.current, '<span class="text-emerald-500 font-bold">●</span> Активные ТТ');
 
             const legend = new (L.Control.extend({
                 onAdd: function() { const div = L.DomUtil.create('div', 'info legend'); legendContainerRef.current = div; return div; },
