@@ -103,9 +103,13 @@ const getSafeOriginalRow = (data: EditableData | null): any => {
 
 const getRmName = (data: EditableData | null): string => {
   if (!data) return '';
-  if ('rm' in data && (data as any).rm) return String((data as any).rm);
-  const row = getSafeOriginalRow(data);
-  return findValueInRow(row, ['рм', 'региональный менеджер', 'менеджер', 'manager', 'ответственный']) || '';
+  let val = '';
+  if ('rm' in data && (data as any).rm) val = String((data as any).rm);
+  else {
+    const row = getSafeOriginalRow(data);
+    val = findValueInRow(row, ['рм', 'региональный менеджер', 'менеджер', 'manager', 'ответственный']) || '';
+  }
+  return val.trim();
 };
 
 // ... (Glow, Card, Chip, Btn components same) ...
@@ -602,7 +606,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     } else {
       onDataUpdate(oldKey, baseNewPoint, originalIndex);
       setStatus('success');
-      setTimeout(() => onClose(), 350);
+      
+      // Only close if address/coords changed. If just comment/channel, keep open.
+      if (isAddressChanged || (manualCoords && (manualCoords.lat !== (data as MapPoint).lat || manualCoords.lon !== (data as MapPoint).lon))) {
+          setTimeout(() => onClose(), 350);
+      } else {
+          // Reset status to idle after a delay so user can edit again
+          setTimeout(() => setStatus('idle'), 2000);
+      }
     }
   };
 
@@ -745,45 +756,67 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                       <div className="flex-grow overflow-y-auto custom-scrollbar rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-3 mb-3">
                         {history.length > 0 ? (
                             history.map((item, idx) => {
-                                let header = '';
-                                let body = '';
+                                const isAdmin = user?.role === 'admin';
+                                const currentUserFull = `${user?.lastName || ''} ${user?.firstName || ''}`.trim();
+                                
+                                let displayUser = 'СИСТЕМА';
+                                let displayText = '';
+                                let displayDate = '';
                                 let timestamp = 0;
-                                let author = '';
-                                let isObject = false;
+                                let isAuthor = false;
 
                                 if (typeof item === 'string') {
-                                    // Simple parser for "User (Date): Comment"
-                                    const parts = item.split('):');
-                                    header = parts.length > 1 ? parts[0] + ')' : 'Система';
-                                    body = parts.length > 1 ? parts.slice(1).join('):') : item;
+                                    // Try to extract user if format is "User: Text [Date]"
+                                    const userMatch = item.match(/^([^:]+):/);
+                                    if (userMatch && userMatch[1] !== 'Координаты' && userMatch[1] !== 'Комментарий') {
+                                        displayUser = userMatch[1].trim();
+                                        displayText = item.substring(userMatch[0].length).trim();
+                                    } else {
+                                        displayText = item;
+                                    }
+                                    
+                                    // Extract date
+                                    const dateMatch = displayText.match(/\[(.*?)\]$/);
+                                    if (dateMatch) {
+                                        displayDate = dateMatch[1];
+                                        displayText = displayText.replace(/\[.*?\]$/, '').trim();
+                                    }
+                                    
+                                    // Check authorship for string format (less reliable, but best effort)
+                                    if (displayUser === currentUserFull) isAuthor = true;
+
                                 } else {
-                                    isObject = true;
-                                    header = `${item.user} (${item.date})`;
-                                    body = item.text;
+                                    displayUser = item.user || 'СИСТЕМА';
+                                    displayText = item.text;
+                                    displayDate = item.date;
                                     timestamp = item.timestamp;
-                                    author = item.user;
+                                    if (displayUser === currentUserFull) isAuthor = true;
                                 }
 
-                                const currentUserStr = `${user?.lastName} ${user?.firstName}`;
-                                const canDelete = isObject && (user?.role === 'admin' || author === currentUserStr);
-
                                 return (
-                                  <div key={idx} className="group relative p-3 bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
-                                    <div className="flex items-center justify-between mb-1">
-                                        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.05em] text-indigo-700">
-                                            {header}
-                                        </div>
-                                        {canDelete && (
-                                            <button 
-                                                onClick={() => handleDeleteComment(timestamp)}
-                                                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-slate-400 hover:text-red-600 rounded-full hover:bg-red-50"
-                                                title="Удалить комментарий"
-                                            >
-                                                <TrashIcon className="w-3 h-3" />
-                                            </button>
-                                        )}
+                                  <div key={idx} className="group relative p-4 bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-all">
+                                    <div className="flex justify-between items-start mb-2">
+                                      <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">
+                                        {displayUser}
+                                      </span>
+                                      <div className="flex items-center gap-2">
+                                          <span className="text-[10px] font-bold text-slate-400">
+                                            {displayDate}
+                                          </span>
+                                          {(isAdmin || isAuthor) && (
+                                              <button 
+                                                  onClick={() => handleDeleteComment(idx, item)}
+                                                  className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 rounded text-slate-400 hover:text-red-500 transition-all"
+                                                  title="Удалить комментарий"
+                                              >
+                                                  <TrashIcon className="w-3 h-3" />
+                                              </button>
+                                          )}
+                                      </div>
                                     </div>
-                                    <div className="text-sm text-slate-800 whitespace-pre-wrap break-words leading-relaxed">{body}</div>
+                                    <div className="text-xs font-medium text-slate-700 leading-relaxed whitespace-pre-wrap">
+                                      {displayText}
+                                    </div>
                                   </div>
                                 );
                             })

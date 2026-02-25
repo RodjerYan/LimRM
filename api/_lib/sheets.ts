@@ -255,12 +255,13 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
 }
 
 async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Promise<string> {
+    const cleanRmName = rmName.trim();
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'ensureSheetExists') as any;
-    const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === rmName.toLowerCase());
+    const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === cleanRmName.toLowerCase());
     if (existingSheet) return existingSheet.properties!.title!;
-    await callWithRetry(() => sheets.spreadsheets.batchUpdate({ spreadsheetId: CACHE_SPREADSHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title: rmName } } }] } }), 'addSheet');
-    await callWithRetry(() => sheets.spreadsheets.values.append({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${rmName}'!A1`, valueInputOption: 'RAW', requestBody: { values: [['Адрес ТТ', 'lat', 'lon', 'История Изменений', 'Комментарии', 'Статус Координат', 'Удален']] } }), 'initSheetHeader');
-    return rmName; 
+    await callWithRetry(() => sheets.spreadsheets.batchUpdate({ spreadsheetId: CACHE_SPREADSHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title: cleanRmName } } }] } }), 'addSheet');
+    await callWithRetry(() => sheets.spreadsheets.values.append({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${cleanRmName}'!A1`, valueInputOption: 'RAW', requestBody: { values: [['Адрес ТТ', 'lat', 'lon', 'История Изменений', 'Комментарии', 'Статус Координат', 'Удален']] } }), 'initSheetHeader');
+    return cleanRmName; 
 }
 
 export async function appendToCache(rmName: string, rowsToAppend: (string | number | undefined)[][]): Promise<void> {
@@ -407,9 +408,10 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
 }
 
 export async function getAddressFromCache(rmName: string, address: string): Promise<any | null> {
+    const cleanRmName = rmName.trim();
     const sheets = await getGoogleSheetsClient();
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getSpreadsheet') as any;
-    const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === rmName.toLowerCase());
+    const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === cleanRmName.toLowerCase());
     if (!existingSheet) return null;
     
     const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${existingSheet.properties.title}'!A:G` }), 'getAddrData') as any;
