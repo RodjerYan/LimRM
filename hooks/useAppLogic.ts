@@ -111,26 +111,48 @@ export const useAppLogic = () => {
         if (user.role === 'admin') return allData;
         
         const userSurname = normalize(user.lastName);
-        return allData.filter(row => {
-            const rmName = normalize(row.rm);
-            // Check if user is RM
+
+        // Keywords to search for "DM" in the original row
+        const dmKeywords = [
+            'дм',
+            'дм фио',
+            'дивизиональный менеджер',
+            'дивизиональный менеджер фио',
+            'дивизиональный',
+            'директор дивизиона',
+            'dm',
+            'divisional manager',
+            'divisional_manager',
+            'divisionalmanager',
+        ];
+
+        return allData.filter(group => {
+            // 1) RM - as it was
+            const rmName = normalize(group.rm);
             if (rmName.includes(userSurname)) return true;
 
-            // Check if user is DM (Divisional Manager)
-            // We check multiple potential field names for "Divisional Manager"
-            const rowAny = row as any;
-            const dmFields = ['dm', 'divisionalManager', 'divisional_manager', 'дм', 'дивизиональный менеджер', 'дивизиональный'];
-            
-            for (const field of dmFields) {
-                if (rowAny[field] && normalize(rowAny[field]).includes(userSurname)) {
-                    return true;
-                }
+            // 2) DM - search NOT in group, but in original client rows
+            if (Array.isArray(group.clients) && group.clients.length) {
+                // Check if any client in the group belongs to this DM
+                // We use .some() because if one client in the aggregation belongs to the DM, 
+                // the whole group (which is usually grouped by RM/Region/Brand) is relevant.
+                // However, usually all clients in a group (same RM) would have the same DM.
+                return group.clients.some(c => {
+                    const orig = (c as any)?.originalRow;
+                    if (!orig) return false;
+
+                    const dmVal = findValueInRow(orig, dmKeywords);
+                    if (dmVal && normalize(dmVal).includes(userSurname)) return true;
+
+                    // Just in case - sometimes DM is put in "manager/supervisor" fields if RM is in "representative"
+                    // But be careful not to overlap with RM if RM is also in "manager".
+                    // Since we already checked group.rm vs userSurname, this is a secondary check.
+                    const managerVal = findValueInRow(orig, ['менеджер', 'руководитель', 'supervisor', 'manager']);
+                    if (managerVal && normalize(managerVal).includes(userSurname)) return true;
+
+                    return false;
+                });
             }
-            
-            // Also check if the 'rm' field itself might contain the DM's name in some cases, 
-            // but usually RM and DM are separate. 
-            // If the row has a 'manager' field that is not RM, check that too.
-            if (rowAny.manager && normalize(rowAny.manager).includes(userSurname)) return true;
 
             return false;
         });
