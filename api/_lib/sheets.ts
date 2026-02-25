@@ -352,6 +352,7 @@ export async function updateAddressInCache(
             if (comment !== undefined) {
                 const oldComment = String(row[4] || '').trim();
                 const newComment = String(comment).trim();
+                // Always log if comment is provided and different, OR if it's a new comment on an empty field
                 if (oldComment !== newComment) {
                     logParts.push(`Комментарий: ${newComment}`);
                 }
