@@ -324,18 +324,19 @@ export async function updateAddressInCache(
         // Previously we logged the *address* as if it was the change text, which made the UI
         // show the address instead of "Комментарий: ...".
         let historyText = '';
+        const commentTrim = (comment !== undefined && comment !== null) ? String(comment).trim() : '';
         if (!skipHistory) {
             const parts: string[] = [];
             if (oldNorm && newNorm && oldNorm !== newNorm) parts.push(`Адрес: ${oldAddress} → ${newAddress}`);
             if (lat !== undefined && lon !== undefined) parts.push(`Координаты: ${lat}, ${lon}`);
-            if (comment !== undefined) parts.push(`Комментарий: ${String(comment).trim()}`);
+            if (commentTrim) parts.push(`Комментарий: ${commentTrim}`);
             historyText = `${author}: ${(parts.length ? parts.join(' | ') : newAddress)} [${timestamp}]`;
         }
         await callWithRetry(() => sheets.spreadsheets.values.append({ 
             spreadsheetId: CACHE_SPREADSHEET_ID, 
             range: `'${actualSheetTitle}'!A1`, 
             valueInputOption: 'USER_ENTERED', 
-            requestBody: { values: [[newAddress, newLat, newLon, historyText, comment || "", coordStatus, 'FALSE']] } 
+            requestBody: { values: [[newAddress, newLat, newLon, historyText, commentTrim, coordStatus, 'FALSE']] } 
         }), 'appendNewUpdate');
         return { success: true };
     }
@@ -343,7 +344,10 @@ export async function updateAddressInCache(
     const row = rows[rowIndex]; const rowNumber = rowIndex + 1;
     if (normalizeForComparison(String(row[0] || '')) === newNorm) {
         const updates: any[] = [];
-        if (comment !== undefined) updates.push({ range: `'${actualSheetTitle}'!E${rowNumber}`, values: [[comment]] });
+        if (comment !== undefined) {
+            const commentTrim = (comment !== null) ? String(comment).trim() : '';
+            updates.push({ range: `'${actualSheetTitle}'!E${rowNumber}`, values: [[commentTrim]] });
+        }
         if (lat !== undefined && lon !== undefined) {
              updates.push({ range: `'${actualSheetTitle}'!B${rowNumber}:C${rowNumber}`, values: [[lat, lon]] });
              updates.push({ range: `'${actualSheetTitle}'!F${rowNumber}`, values: [['confirmed']] });
@@ -366,9 +370,16 @@ export async function updateAddressInCache(
             if (comment !== undefined) {
                 const oldComment = String(row[4] || '').trim();
                 const newComment = String(comment).trim();
-                // Always log if comment is provided and different, OR if it's a new comment on an empty field
-                if (oldComment !== newComment) {
-                    logParts.push(`Комментарий: ${newComment}`);
+                
+                // ✅ если чистим комментарий (newComment пустой) — НЕ пишем в историю,
+                // чтобы не было "Комментарий:  [дата]"
+                if (newComment === '') {
+                    // ничего в logParts
+                } else {
+                    // логируем только если реально есть текст
+                    if (oldComment !== newComment) {
+                        logParts.push(`Комментарий: ${newComment}`);
+                    }
                 }
             }
 
@@ -423,10 +434,10 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
 export async function deleteHistoryEntryFromCache(
     rmName: string, 
     address: string, 
-    entryText?: string, 
-    timestamp?: number, 
-    commentText?: string
-): Promise<void> {
+    entryText?: string | null, 
+    timestamp?: number | null, 
+    commentText?: string | null
+): Promise<any> {
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
     const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A:D` }), 'getAddrForHistoryDelete') as any;
@@ -434,72 +445,81 @@ export async function deleteHistoryEntryFromCache(
     const addressNorm = normalizeForComparison(address);
     const rowIndex = rows.findIndex((r: any) => normalizeForComparison(r[0]) === addressNorm);
     
-    if (rowIndex !== -1) {
-        const rowNumber = rowIndex + 1;
-        const currentHistory = String(rows[rowIndex][3] || '');
-        if (!currentHistory) return;
-
-        const entries = currentHistory.split(/\r?\n/);
-        const newEntries = entries.filter(e => {
-            const trimmedEntry = e.trim();
-            if (!trimmedEntry) return false;
-
-            // 1. Exact match (for string-based history items)
-            if (entryText && trimmedEntry === entryText.trim()) return false;
-
-            // 2. Timestamp/Text match (for object-based history items)
-            if (timestamp && commentText) {
-                // Check if entry contains the comment text
-                if (trimmedEntry.includes(commentText)) {
-                    // Try to parse date from entry: "User: Text [Date]"
-                    const dateMatch = trimmedEntry.match(/\[([^\]]+)\]$/);
-                    if (dateMatch) {
-                        const dateStr = dateMatch[1];
-                        // Parse "DD.MM.YYYY, HH:mm:ss" or just "DD.MM.YYYY"
-                        // If just date, we can't match timestamp accurately, so rely on text match + date match (day)
-                        
-                        // Let's try to parse full date time first
-                        const parts = dateStr.split(', ');
-                        if (parts.length === 2) {
-                            const [dPart, tPart] = parts;
-                            const [day, month, year] = dPart.split('.').map(Number);
-                            const [hours, minutes, seconds] = tPart.split(':').map(Number);
-                            
-                            if (!isNaN(day) && !isNaN(month) && !isNaN(year) && !isNaN(hours) && !isNaN(minutes)) {
-                                const entryDate = new Date(year, month - 1, day, hours, minutes, seconds || 0);
-                                const entryTs = entryDate.getTime();
-                                
-                                // Allow 2 minute tolerance for execution delay / clock skew
-                                if (Math.abs(entryTs - timestamp) < 120000) {
-                                    return false; // Delete match
-                                }
-                            }
-                        } else {
-                            // Only date part? Check if date matches timestamp's date
-                            const [day, month, year] = dateStr.split('.').map(Number);
-                            const tsDate = new Date(timestamp);
-                            if (tsDate.getDate() === day && (tsDate.getMonth() + 1) === month && tsDate.getFullYear() === year) {
-                                // Same day, same text -> delete
-                                return false;
-                            }
-                        }
-                    }
-                }
-            }
-            
-            return true;
-        });
-        
-        if (newEntries.length !== entries.length) {
-            const newHistory = newEntries.join('\n');
-            await callWithRetry(() => sheets.spreadsheets.values.update({ 
-                spreadsheetId: CACHE_SPREADSHEET_ID, 
-                range: `'${actualSheetTitle}'!D${rowNumber}`, 
-                valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [[newHistory]] }
-            }), 'updateHistoryAfterDelete');
-        }
+    if (rowIndex === -1) {
+        throw new Error('Row not found for address');
     }
+
+    const rowNumber = rowIndex + 1;
+    const currentHistory = String(rows[rowIndex][3] || '');
+
+    // Если пусто — удалять нечего
+    if (!currentHistory.trim()) {
+        return { success: true, removed: false, reason: 'empty_history' };
+    }
+
+    // Парсим историю по строкам
+    const lines = currentHistory
+        .split('\n')
+        .map(s => s.trim())
+        .filter(Boolean);
+
+    const hasEntryText = typeof entryText === 'string' && entryText.trim().length > 0;
+    const hasTimestamp = timestamp !== undefined && timestamp !== null;
+    const hasCommentText = typeof commentText === 'string' && commentText.trim().length > 0;
+
+    // Условие совпадения строки истории
+    const matchLine = (line: string) => {
+        if (hasEntryText) {
+            return line === entryText!.trim();
+        }
+
+        if (hasTimestamp && hasCommentText) {
+            const ct = commentText!.trim();
+            const tsRu = new Date(Number(timestamp)).toLocaleString('ru-RU'); // "26.02.2026, 07:27:20"
+
+            // ✅ точное правило: строка должна содержать commentText и [tsRu]
+            // плюс слово "Комментарий:" (чтобы не снести "Адрес:" или "Координаты:")
+            return (
+                line.includes(ct) &&
+                line.includes(`[${tsRu}]`) &&
+                line.toLowerCase().includes('комментар')
+            );
+        }
+
+        return false;
+    };
+
+    const before = lines.length;
+    const filtered = lines.filter(l => !matchLine(l));
+    const removed = filtered.length !== before;
+
+    // Если ничего не удалили — возвращаем корректный ответ
+    if (!removed) {
+        return { success: true, removed: false, reason: 'not_found' };
+    }
+
+    // Собираем новое содержимое (или пусто)
+    const nextValue = filtered.length ? filtered.join('\n') : '';
+
+    // Пишем обратно В ЭТУ ЖЕ ЯЧЕЙКУ. НИКАКИХ доп. append/логов/системных строк.
+    await callWithRetry(() => sheets.spreadsheets.values.update({ 
+        spreadsheetId: CACHE_SPREADSHEET_ID, 
+        range: `'${actualSheetTitle}'!D${rowNumber}`, 
+        valueInputOption: 'RAW',
+        requestBody: { values: [[nextValue]] }
+    }), 'updateHistoryAfterDelete');
+
+    // если удаляли именно комментарий (timestamp+commentText), можно очистить текущий comment в E
+    if (!hasEntryText && hasTimestamp && hasCommentText) {
+        await callWithRetry(() => sheets.spreadsheets.values.update({
+            spreadsheetId: CACHE_SPREADSHEET_ID,
+            range: `'${actualSheetTitle}'!E${rowNumber}`,
+            valueInputOption: 'RAW',
+            requestBody: { values: [['']] }
+        }), 'clearCommentCellAfterDelete');
+    }
+
+    return { success: true, removed: true, left: filtered.length };
 }
 
 export async function getAddressFromCache(rmName: string, address: string): Promise<any | null> {
