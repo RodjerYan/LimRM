@@ -307,64 +307,78 @@ export default async function handler(req: Request) {
             // ---------------------------
 
             if (action === 'save-delta' && drive) {
-                const deltaItem = body;
-                if (!deltaItem || Object.keys(deltaItem).length === 0) {
-                    return new Response(JSON.stringify({ error: 'Missing or empty delta payload' }), { status: 400 });
-                }
+                try {
+                    const deltaItem = body;
+                    if (!deltaItem || Object.keys(deltaItem).length === 0) {
+                        return new Response(JSON.stringify({ error: 'Missing or empty delta payload' }), { status: 400 });
+                    }
 
-                const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID, 'savepoints');
-                let targetFile = null;
-                let fileContent = { deltas: [] as any[] };
-                let nextIndex = 1;
+                    const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID, 'savepoints');
+                    let targetFile = null;
+                    let fileContent: { deltas: any[] } = { deltas: [] };
+                    let nextIndex = 1;
 
-                if (savepointsFiles.length > 0) {
-                    const lastFile = savepointsFiles[savepointsFiles.length - 1];
-                    const match = lastFile.name.match(/savepoints(\d+)\.json/i);
-                    const currentIndex = match ? parseInt(match[1], 10) : 1;
-                    nextIndex = currentIndex;
-                    const fileSize = lastFile.size;
-                    
-                    if (fileSize > 250 * 1024) { // Limit delta file size to 250KB to avoid huge reads
-                        nextIndex = currentIndex + 1;
-                        targetFile = null;
-                    } else {
-                        try {
-                            const fileRes = await drive.files.get({ fileId: lastFile.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
-                            const contentStr = Buffer.from(fileRes.data as any).toString('utf-8');
-                            targetFile = lastFile;
-                            try { fileContent = JSON.parse(contentStr); } catch (e) { }
-                        } catch (e) {
-                            // If failed to read, start new file
+                    if (savepointsFiles.length > 0) {
+                        const lastFile = savepointsFiles[savepointsFiles.length - 1];
+                        const match = lastFile.name.match(/savepoints(\d+)\.json/i);
+                        const currentIndex = match ? parseInt(match[1], 10) : 1;
+                        nextIndex = currentIndex;
+                        const fileSize = lastFile.size;
+                        
+                        if (fileSize > 250 * 1024) { // Limit delta file size to 250KB to avoid huge reads
                             nextIndex = currentIndex + 1;
-                            targetFile = null; 
+                            targetFile = null;
+                        } else {
+                            try {
+                                const fileRes = await drive.files.get({ fileId: lastFile.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
+                                const contentStr = Buffer.from(fileRes.data as any).toString('utf-8');
+                                targetFile = lastFile;
+                                try { 
+                                    const parsed = JSON.parse(contentStr); 
+                                    if (parsed && Array.isArray(parsed.deltas)) {
+                                        fileContent = parsed;
+                                    } else if (Array.isArray(parsed)) {
+                                         // Handle legacy array format if any
+                                         fileContent = { deltas: parsed };
+                                    }
+                                } catch (e) { }
+                            } catch (e) {
+                                // If failed to read, start new file
+                                nextIndex = currentIndex + 1;
+                                targetFile = null; 
+                            }
                         }
                     }
-                }
 
-                if (!fileContent.deltas) fileContent.deltas = [];
-                fileContent.deltas.push(deltaItem);
-                
-                const newContentStr = JSON.stringify(fileContent);
-                const fileName = `savepoints${nextIndex}.json`;
+                    if (!fileContent.deltas) fileContent.deltas = [];
+                    fileContent.deltas.push(deltaItem);
+                    
+                    const newContentStr = JSON.stringify(fileContent);
+                    const fileName = `savepoints${nextIndex}.json`;
 
-                if (targetFile) {
-                    await drive.files.update({
-                        fileId: targetFile.id,
-                        media: { mimeType: 'application/json', body: newContentStr },
-                        supportsAllDrives: true
-                    });
-                    return new Response(JSON.stringify({ status: 'appended', file: fileName }));
-                } else {
-                    await drive.files.create({
-                        requestBody: {
-                            name: fileName,
-                            parents: [DELTA_FOLDER_ID],
-                            mimeType: 'application/json'
-                        },
-                        media: { mimeType: 'application/json', body: newContentStr },
-                        supportsAllDrives: true
-                    });
-                    return new Response(JSON.stringify({ status: 'created', file: fileName }));
+                    if (targetFile) {
+                        await drive.files.update({
+                            fileId: targetFile.id,
+                            media: { mimeType: 'application/json', body: newContentStr },
+                            supportsAllDrives: true
+                        });
+                        return new Response(JSON.stringify({ status: 'appended', file: fileName }));
+                    } else {
+                        await drive.files.create({
+                            requestBody: {
+                                name: fileName,
+                                parents: [DELTA_FOLDER_ID],
+                                mimeType: 'application/json'
+                            },
+                            media: { mimeType: 'application/json', body: newContentStr },
+                            supportsAllDrives: true
+                        });
+                        return new Response(JSON.stringify({ status: 'created', file: fileName }));
+                    }
+                } catch (e: any) {
+                    console.error("Error in save-delta:", e);
+                    const status = e.code || e.status || 500;
+                    return new Response(JSON.stringify({ error: e.message, details: e.stack }), { status: Number(status) || 500 });
                 }
             }
 
