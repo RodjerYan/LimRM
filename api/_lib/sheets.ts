@@ -409,7 +409,13 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
     }
 }
 
-export async function deleteHistoryEntryFromCache(rmName: string, address: string, entryText: string): Promise<void> {
+export async function deleteHistoryEntryFromCache(
+    rmName: string, 
+    address: string, 
+    entryText?: string, 
+    timestamp?: number, 
+    commentText?: string
+): Promise<void> {
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
     const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A:D` }), 'getAddrForHistoryDelete') as any;
@@ -423,7 +429,55 @@ export async function deleteHistoryEntryFromCache(rmName: string, address: strin
         if (!currentHistory) return;
 
         const entries = currentHistory.split(/\r?\n/);
-        const newEntries = entries.filter(e => e.trim() !== entryText.trim());
+        const newEntries = entries.filter(e => {
+            const trimmedEntry = e.trim();
+            if (!trimmedEntry) return false;
+
+            // 1. Exact match (for string-based history items)
+            if (entryText && trimmedEntry === entryText.trim()) return false;
+
+            // 2. Timestamp/Text match (for object-based history items)
+            if (timestamp && commentText) {
+                // Check if entry contains the comment text
+                if (trimmedEntry.includes(commentText)) {
+                    // Try to parse date from entry: "User: Text [Date]"
+                    const dateMatch = trimmedEntry.match(/\[([^\]]+)\]$/);
+                    if (dateMatch) {
+                        const dateStr = dateMatch[1];
+                        // Parse "DD.MM.YYYY, HH:mm:ss" or just "DD.MM.YYYY"
+                        // If just date, we can't match timestamp accurately, so rely on text match + date match (day)
+                        
+                        // Let's try to parse full date time first
+                        const parts = dateStr.split(', ');
+                        if (parts.length === 2) {
+                            const [dPart, tPart] = parts;
+                            const [day, month, year] = dPart.split('.').map(Number);
+                            const [hours, minutes, seconds] = tPart.split(':').map(Number);
+                            
+                            if (!isNaN(day) && !isNaN(month) && !isNaN(year) && !isNaN(hours) && !isNaN(minutes)) {
+                                const entryDate = new Date(year, month - 1, day, hours, minutes, seconds || 0);
+                                const entryTs = entryDate.getTime();
+                                
+                                // Allow 2 minute tolerance for execution delay / clock skew
+                                if (Math.abs(entryTs - timestamp) < 120000) {
+                                    return false; // Delete match
+                                }
+                            }
+                        } else {
+                            // Only date part? Check if date matches timestamp's date
+                            const [day, month, year] = dateStr.split('.').map(Number);
+                            const tsDate = new Date(timestamp);
+                            if (tsDate.getDate() === day && (tsDate.getMonth() + 1) === month && tsDate.getFullYear() === year) {
+                                // Same day, same text -> delete
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            return true;
+        });
         
         if (newEntries.length !== entries.length) {
             const newHistory = newEntries.join('\n');

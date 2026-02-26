@@ -469,10 +469,15 @@ export default async function handler(req: Request) {
             if (action === 'add-to-cache') { const { rmName, rows } = body; await appendToCache(rmName, rows.map((r: any) => [r.address, r.lat||'', r.lon||''])); return new Response(JSON.stringify({success:true})); }
             
             if (action === 'delete-history-entry') {
-                if (!body.rmName || !body.address || !body.entryText) {
+                if (!body.rmName || !body.address) {
                     return new Response(JSON.stringify({ error: 'Missing parameters' }), { status: 400 });
                 }
-                await deleteHistoryEntryFromCache(body.rmName, body.address, body.entryText);
+                // We need either entryText OR (timestamp AND commentText)
+                if (!body.entryText && (!body.timestamp || !body.commentText)) {
+                     return new Response(JSON.stringify({ error: 'Missing entryText or timestamp/commentText' }), { status: 400 });
+                }
+                
+                await deleteHistoryEntryFromCache(body.rmName, body.address, body.entryText, body.timestamp, body.commentText);
                 return new Response(JSON.stringify({ success: true }));
             }
 

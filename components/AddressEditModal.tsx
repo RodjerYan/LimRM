@@ -300,7 +300,7 @@ const SinglePointMap: React.FC<{
       } catch (err: any) {
         if (err?.name !== 'AbortError') console.error(err);
       } finally {
-        if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) setIsSearching(false);
+        setIsSearching(false);
       }
     }, 600);
   };
@@ -520,7 +520,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       const baseNewPoint: MapPoint = { ...(data as MapPoint), comment: newComment, lastUpdated: Date.now() };
       
       const timestamp = Date.now();
-      const dateStr = new Date(timestamp).toLocaleDateString('ru-RU');
+      const dateStr = new Date(timestamp).toLocaleString('ru-RU'); // Date + Time
       const userName = user ? `${user.lastName || ''} ${user.firstName || ''}`.trim() || user.email || 'Пользователь' : 'Пользователь';
 
       const optimisticEntry = {
@@ -533,6 +533,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       setHistory(prev => [...prev, optimisticEntry]);
       setNewComment('');
 
+      let backendOk = true;
+
       // Call backend to save comment to Sheet (Persistent)
       try {
           const originalRow = getSafeOriginalRow(data);
@@ -540,7 +542,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
           const address = (data as MapPoint).address || findAddressInRow(originalRow) || '';
           
           if (rm && address) {
-              await fetch('/api/get-full-cache?action=update-address', {
+              const res = await fetch('/api/get-full-cache?action=update-address', {
                   method: 'POST',
                   headers: { 
                       'Content-Type': 'application/json',
@@ -554,9 +556,24 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                       skipHistory: false
                   })
               });
+              if (!res.ok) backendOk = false;
+          } else {
+              backendOk = false;
           }
       } catch (e) {
           console.error("Failed to save comment to backend:", e);
+          backendOk = false;
+      }
+
+      if (!backendOk) {
+          // rollback optimistic entry
+          setHistory(prev => prev.filter((h) => {
+              if (typeof h === 'object') return h.timestamp !== timestamp;
+              return true;
+          }));
+          setStatus('error_saving');
+          setError('Не удалось сохранить комментарий в базе (Google).');
+          return;
       }
 
       // Call parent to save delta (Local/Sync)
@@ -567,17 +584,31 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       if (!data) return;
       const oldKey = (data as MapPoint).key;
       
-      // Construct entryText for deletion
+      // Construct entryText for deletion (legacy support)
       let entryText = '';
+      let timestamp: number | undefined;
+      let commentText: string | undefined;
+
       if (typeof item === 'string') {
           entryText = item;
       } else {
+          // For object items (optimistic), we use timestamp + text matching
+          timestamp = item.timestamp;
+          commentText = item.text;
+          
+          // Also construct entryText as fallback if needed, but backend prefers timestamp/text for objects
           const prefix = item.text.startsWith('Комментарий:') ? '' : 'Комментарий: ';
           entryText = `${item.user}: ${prefix}${item.text} [${item.date}]`;
       }
 
-      // Optimistic removal
-      setHistory(prev => prev.filter((_, i) => i !== idx));
+      // Optimistic removal + backup for rollback
+      setHistory(prev => {
+          const copy = [...prev];
+          copy.splice(idx, 1);
+          return copy;
+      });
+
+      let backendOk = true;
 
       // Call backend to delete from Sheet
       try {
@@ -585,8 +616,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
           const rm = getRmName(data);
           const address = (data as MapPoint).address || findAddressInRow(originalRow) || '';
           
-          if (rm && address && entryText) {
-              await fetch('/api/get-full-cache?action=delete-history-entry', {
+          if (rm && address) {
+              const res = await fetch('/api/get-full-cache?action=delete-history-entry', {
                   method: 'POST',
                   headers: { 
                       'Content-Type': 'application/json',
@@ -595,16 +626,34 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                   body: JSON.stringify({
                       rmName: rm,
                       address: address,
-                      entryText: entryText
+                      entryText: entryText,
+                      timestamp: timestamp,
+                      commentText: commentText
                   })
               });
+              if (!res.ok) backendOk = false;
+          } else {
+              backendOk = false;
           }
       } catch (e) {
           console.error("Failed to delete comment from backend:", e);
+          backendOk = false;
+      }
+
+      // Rollback UI if backend failed
+      if (!backendOk) {
+          setHistory(prev => {
+              const copy = [...prev];
+              copy.splice(idx, 0, item);
+              return copy;
+          });
+          setStatus('error_deleting');
+          setError('Не удалось удалить комментарий в базе (Google). Изменение отменено.');
+          return;
       }
 
       // Call parent to save delta (delete_comment)
-      const timestamp = typeof item === 'object' ? item.timestamp : 0;
+      const originalTimestamp = typeof item === 'object' ? item.timestamp : 0;
       
       // If the deleted comment is the current comment on the point, clear it
       const currentComment = (data as MapPoint).comment || '';
@@ -614,7 +663,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
           pointToUpdate.comment = '';
       }
 
-      onDataUpdate(oldKey, pointToUpdate, undefined, { type: 'delete_comment', originalTimestamp: timestamp });
+      onDataUpdate(oldKey, pointToUpdate, undefined, { type: 'delete_comment', originalTimestamp: originalTimestamp });
   };
 
   const handleSave = async () => {
@@ -834,23 +883,35 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                                 let isAuthor = false;
 
                                 if (typeof item === 'string') {
-                                    // Try to extract user if format is "User: Text [Date]"
-                                    const userMatch = item.match(/^([^:]+):/);
-                                    if (userMatch && userMatch[1] !== 'Координаты' && userMatch[1] !== 'Комментарий') {
-                                        displayUser = userMatch[1].trim();
-                                        displayText = item.substring(userMatch[0].length).trim();
+                                    // Robust parsing for "User: Text [Date]" or "Text [Date]"
+                                    // 1. Extract Date from the end
+                                    const dateMatch = item.match(/\[([^\]]+)\]$/);
+                                    if (dateMatch) {
+                                        const rawDate = dateMatch[1].trim();
+
+                                        // If no time is present, append "00:00"
+                                        // Simple check: does it contain HH:MM pattern?
+                                        displayDate = /(\d{1,2}:\d{2})/.test(rawDate) ? rawDate : `${rawDate} 00:00`;
+
+                                        const contentWithoutDate = item.substring(0, dateMatch.index).trim();
+                                        
+                                        // 2. Extract User from the remaining content
+                                        // Look for the FIRST colon. Everything before it is User, after is Text.
+                                        // Constraint: User shouldn't be too long (e.g. < 50 chars) to avoid matching address parts.
+                                        const userMatch = contentWithoutDate.match(/^([^:]{1,50}):\s*(.*)/);
+                                        if (userMatch) {
+                                            displayUser = userMatch[1].trim();
+                                            displayText = userMatch[2].trim();
+                                        } else {
+                                            // No user prefix found, assume System/Legacy
+                                            displayText = contentWithoutDate;
+                                        }
                                     } else {
+                                        // No date found, treat whole string as text
                                         displayText = item;
                                     }
                                     
-                                    // Extract date
-                                    const dateMatch = displayText.match(/\[(.*?)\]$/);
-                                    if (dateMatch) {
-                                        displayDate = dateMatch[1];
-                                        displayText = displayText.replace(/\[.*?\]$/, '').trim();
-                                    }
-                                    
-                                    // Check authorship for string format (less reliable, but best effort)
+                                    // Check authorship
                                     if (displayUser === currentUserFull) isAuthor = true;
 
                                 } else {
@@ -861,28 +922,32 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                                     if (displayUser === currentUserFull) isAuthor = true;
                                 }
 
-                                const isComment = displayText.startsWith('Комментарий:');
-
+                                const isComment = displayText.startsWith('Комментарий:') || displayText.startsWith('Комментарий');
+                                // Clean up display text if it starts with "Комментарий: " for cleaner look? 
+                                // User didn't ask for this, but it might be nice. 
+                                // User asked: "сделай так что бы в заголовке коментария и изменения было имя..."
+                                
                                 return (
                                   <div key={idx} className="group relative p-4 bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-all">
-                                    <div className="flex justify-between items-start mb-2">
-                                      <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">
-                                        {displayUser}
-                                      </span>
+                                    <div className="flex justify-between items-center mb-2">
                                       <div className="flex items-center gap-2">
-                                          <span className="text-[10px] font-bold text-slate-400">
+                                          <span className="text-[11px] font-black uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">
+                                            {displayUser}
+                                          </span>
+                                          <span className="text-[11px] font-semibold text-slate-400">
                                             {displayDate}
                                           </span>
-                                          {(isComment && (isAdmin || isAuthor)) && (
-                                              <button 
-                                                  onClick={() => handleDeleteComment(idx, item)}
-                                                  className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 rounded text-slate-400 hover:text-red-500 transition-all"
-                                                  title="Удалить комментарий"
-                                              >
-                                                  <TrashIcon className="w-3 h-3" />
-                                              </button>
-                                          )}
                                       </div>
+                                      
+                                      {(isComment && (isAdmin || isAuthor)) && (
+                                          <button 
+                                              onClick={() => handleDeleteComment(idx, item)}
+                                              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 rounded text-slate-400 hover:text-red-500 transition-all"
+                                              title="Удалить комментарий"
+                                          >
+                                              <TrashIcon className="w-3.5 h-3.5" />
+                                          </button>
+                                      )}
                                     </div>
                                     <div className="text-xs font-medium text-slate-700 leading-relaxed whitespace-pre-wrap">
                                       {displayText}
