@@ -391,10 +391,6 @@ export type ActionQueueItem =
             lat?: number; 
             lon?: number;
             skipHistory?: boolean; // NEW: Flag to suppress Google Sheet history logging
-            // Extended fields for polling
-            oldKey?: string;
-            basePoint?: any; // MapPoint to avoid circular dependency if possible, or import it
-            originalIndex?: number;
         };
         retryCount: number;
       }

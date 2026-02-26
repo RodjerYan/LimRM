@@ -297,157 +297,146 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
             const totalChunks = fileList.length;
 
             // --- WORKER SETUP ---
-            // Ensure worker is terminated even if errors occur
-            try {
-                await new Promise<void>((resolve, reject) => {
-                    worker.onmessage = (e) => {
-                        const msg = e.data as WorkerMessage;
-                        
-                        if (msg.type === 'progress') {
-                            setProcessingState(prev => ({ 
-                                ...prev, 
-                                progress: msg.payload.percentage,
-                                message: msg.payload.message,
-                                totalRowsProcessed: msg.payload.totalProcessed
-                            }));
-                        } else if (msg.type === 'result_init') {
-                            setOkbRegionCounts(msg.payload.okbRegionCounts);
-                        } else if (msg.type === 'result_chunk_aggregated') {
-                            // Incremental update
-                        } else if (msg.type === 'result_finished') {
-                            console.log('[PARENT] worker payload keys:', Object.keys(msg.payload));
-                            console.log('[PARENT] payload aggregatedData len:', msg.payload.aggregatedData?.length);
-                            finalWorkerPayload = msg.payload;
-                            accumulatedRows = msg.payload.aggregatedData;
-                            setUnidentifiedRows(msg.payload.unidentifiedRows);
-                            setOkbRegionCounts(msg.payload.okbRegionCounts);
-                            totalRowsProcessedRef.current = msg.payload.totalRowsProcessed;
-                            resolve();
-                        } else if (msg.type === 'error') {
-                            reject(new Error(msg.payload));
-                        }
-                    };
-
-                    worker.onerror = (e) => {
-                        reject(new Error(`Worker error: ${e.message}`));
-                    };
-
-                    worker.postMessage({
-                        type: 'INIT_STREAM',
-                        payload: { okbData: [], cacheData: {}, startDate, endDate }
-                    });
-
-                    const CONCURRENCY = 6;
-                    const queue = fileList.map((file: any, index: number) => ({ file, index }));
+            const worker = new Worker(new URL('../services/processing.worker.ts', import.meta.url), { type: 'module' });
+            
+            await new Promise<void>((resolve, reject) => {
+                worker.onmessage = (e) => {
+                    const msg = e.data as WorkerMessage;
                     
-                    const downloadWorker = async () => {
-                        while (queue.length > 0) {
-                            const item = queue.shift();
-                            if (!item) break;
-                            
-                            try {
-                                const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${item.file.id}`);
-                                if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
-                                const text = await res.text();
-                                
-                                // Update progress counter
-                                chunksProcessed++;
-                                const chunkProgress = Math.min(99, Math.round((chunksProcessed / totalChunks) * 100));
+                    if (msg.type === 'progress') {
+                        setProcessingState(prev => ({ 
+                            ...prev, 
+                            progress: msg.payload.percentage,
+                            message: msg.payload.message,
+                            totalRowsProcessed: msg.payload.totalProcessed
+                        }));
+                    } else if (msg.type === 'result_init') {
+                        setOkbRegionCounts(msg.payload.okbRegionCounts);
+                    } else if (msg.type === 'result_chunk_aggregated') {
+                        // Incremental update
+                    } else if (msg.type === 'result_finished') {
+                        console.log('[PARENT] worker payload keys:', Object.keys(msg.payload));
+                        console.log('[PARENT] payload aggregatedData len:', msg.payload.aggregatedData?.length);
+                        finalWorkerPayload = msg.payload;
+                        accumulatedRows = msg.payload.aggregatedData;
+                        setUnidentifiedRows(msg.payload.unidentifiedRows);
+                        setOkbRegionCounts(msg.payload.okbRegionCounts);
+                        totalRowsProcessedRef.current = msg.payload.totalRowsProcessed;
+                        resolve();
+                    } else if (msg.type === 'error') {
+                        reject(new Error(msg.payload));
+                    }
+                };
 
-                                if (text && text.trim().length > 0) {
-                                    lastSavedChunksRef.current.set(item.index, text);
-                                    const chunkData = JSON.parse(text);
-                                    
-                                    let newRows: any[] = [];
-                                    if (Array.isArray(chunkData.rows)) newRows = chunkData.rows;
-                                    else if (Array.isArray(chunkData.aggregatedData)) newRows = chunkData.aggregatedData;
-                                    
-                                    if (!Array.isArray(newRows) || newRows.length === 0) {
-                                        if (chunkData.rows || chunkData.aggregatedData) {
-                                            console.warn(`⚠️ ${item.file.name}: rows/aggregatedData is not an array. Skipping until converter available.`);
-                                        } else {
-                                            console.warn(`Empty chunk skipped: ${item.file.name}`);
-                                        }
-                                    } else {
-                                        const firstRow = newRows[0];
-
-                                        const isGroupSnapshot = 
-                                            firstRow &&
-                                            typeof firstRow === 'object' && 
-                                            !Array.isArray(firstRow) && 
-                                            Array.isArray((firstRow as any).clients);
-
-                                        const isPointSnapshot =
-                                            firstRow &&
-                                            !isGroupSnapshot &&
-                                            typeof firstRow === 'object' && 
-                                            !Array.isArray(firstRow) &&
-                                            ('address' in firstRow) && 
-                                            ('name' in firstRow);
-
-                                        const isRawArray = Array.isArray(firstRow);
-                                        
-                                        const isObjectRaw = !isGroupSnapshot && !isPointSnapshot && typeof firstRow === 'object' && !Array.isArray(firstRow);
-
-                                        if (isGroupSnapshot) {
-                                            worker.postMessage({
-                                                type: 'RESTORE_CHUNK',
-                                                payload: { chunkData: newRows, progress: chunkProgress }
-                                            });
-                                        } else if (isPointSnapshot) {
-                                            worker.postMessage({
-                                                type: 'PROCESS_CHUNK',
-                                                payload: {
-                                                    rawData: newRows,
-                                                    isFirstChunk: item.index === 0,
-                                                    objectKind: 'POINT_SNAPSHOT',
-                                                    progress: chunkProgress
-                                                }
-                                            });
-                                        } else if (isRawArray) {
-                                            worker.postMessage({
-                                                type: 'PROCESS_CHUNK',
-                                                payload: {
-                                                    rawData: newRows,
-                                                    isFirstChunk: item.index === 0,
-                                                    progress: chunkProgress
-                                                }
-                                            });
-                                        } else if (isObjectRaw) {
-                                            worker.postMessage({
-                                                type: 'PROCESS_CHUNK',
-                                                payload: {
-                                                    rawData: newRows,
-                                                    isFirstChunk: item.index === 0,
-                                                    isObjectMode: true,
-                                                    progress: chunkProgress
-                                                }
-                                            });
-                                        } else {
-                                            console.warn(`❌ SKIPPING chunk ${item.file.name} to avoid worker crash. Unknown format.`);
-                                        }
-                                    }
-
-                                    if (chunkData.meta && !loadedMeta) loadedMeta = chunkData.meta;
-                                }
-                            } catch (chunkError) {
-                                console.error(`❌ [Snapshot] Error processing chunk ${item.file.name}:`, chunkError);
-                            }
-                        }
-                    };
-
-                    Promise.all(Array.from({ length: CONCURRENCY }, downloadWorker))
-                        .then(() => {
-                            worker.postMessage({ type: 'FINALIZE_STREAM' });
-                        })
-                        .catch(e => {
-                            console.error("Worker stream error:", e);
-                            reject(e);
-                        });
+                worker.postMessage({
+                    type: 'INIT_STREAM',
+                    payload: { okbData: [], cacheData: {}, startDate, endDate }
                 });
-            } finally {
-                worker.terminate();
-            }
+
+                const CONCURRENCY = 6;
+                const queue = fileList.map((file: any, index: number) => ({ file, index }));
+                
+                const downloadWorker = async () => {
+                    while (queue.length > 0) {
+                        const item = queue.shift();
+                        if (!item) break;
+                        
+                        try {
+                            const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${item.file.id}`);
+                            const text = await res.text();
+                            
+                            // Update progress counter
+                            chunksProcessed++;
+                            const chunkProgress = Math.min(99, Math.round((chunksProcessed / totalChunks) * 100));
+
+                            if (text && text.trim().length > 0) {
+                                lastSavedChunksRef.current.set(item.index, text);
+                                const chunkData = JSON.parse(text);
+                                
+                                let newRows: any[] = [];
+                                if (Array.isArray(chunkData.rows)) newRows = chunkData.rows;
+                                else if (Array.isArray(chunkData.aggregatedData)) newRows = chunkData.aggregatedData;
+                                
+                                if (!Array.isArray(newRows) || newRows.length === 0) {
+                                    if (chunkData.rows || chunkData.aggregatedData) {
+                                        console.warn(`⚠️ ${item.file.name}: rows/aggregatedData is not an array. Skipping until converter available.`);
+                                    } else {
+                                        console.warn(`Empty chunk skipped: ${item.file.name}`);
+                                    }
+                                } else {
+                                    const firstRow = newRows[0];
+
+                                    const isGroupSnapshot = 
+                                        firstRow &&
+                                        typeof firstRow === 'object' && 
+                                        !Array.isArray(firstRow) && 
+                                        Array.isArray((firstRow as any).clients);
+
+                                    const isPointSnapshot =
+                                        firstRow &&
+                                        !isGroupSnapshot &&
+                                        typeof firstRow === 'object' &&
+                                        !Array.isArray(firstRow) &&
+                                        ('address' in firstRow) && 
+                                        ('name' in firstRow);
+
+                                    const isRawArray = Array.isArray(firstRow);
+                                    
+                                    const isObjectRaw = !isGroupSnapshot && !isPointSnapshot && typeof firstRow === 'object' && !Array.isArray(firstRow);
+
+                                    if (isGroupSnapshot) {
+                                        worker.postMessage({
+                                            type: 'RESTORE_CHUNK',
+                                            payload: { chunkData: newRows, progress: chunkProgress }
+                                        });
+                                    } else if (isPointSnapshot) {
+                                        worker.postMessage({
+                                            type: 'PROCESS_CHUNK',
+                                            payload: {
+                                                rawData: newRows,
+                                                isFirstChunk: item.index === 0,
+                                                objectKind: 'POINT_SNAPSHOT',
+                                                progress: chunkProgress
+                                            }
+                                        });
+                                    } else if (isRawArray) {
+                                        worker.postMessage({
+                                            type: 'PROCESS_CHUNK',
+                                            payload: {
+                                                rawData: newRows,
+                                                isFirstChunk: item.index === 0,
+                                                progress: chunkProgress
+                                            }
+                                        });
+                                    } else if (isObjectRaw) {
+                                        worker.postMessage({
+                                            type: 'PROCESS_CHUNK',
+                                            payload: {
+                                                rawData: newRows,
+                                                isFirstChunk: item.index === 0,
+                                                isObjectMode: true,
+                                                progress: chunkProgress
+                                            }
+                                        });
+                                    } else {
+                                        console.warn(`❌ SKIPPING chunk ${item.file.name} to avoid worker crash. Unknown format.`);
+                                    }
+                                }
+
+                                if (chunkData.meta && !loadedMeta) loadedMeta = chunkData.meta;
+                            }
+                        } catch (chunkError) {
+                            console.error(`❌ [Snapshot] Error processing chunk ${item.file.name}:`, chunkError);
+                        }
+                    }
+                };
+
+                Promise.all(Array.from({ length: CONCURRENCY }, downloadWorker))
+                    .then(() => worker.postMessage({ type: 'FINALIZE_STREAM' }))
+                    .catch(reject);
+            });
+            
+            worker.terminate();
 
             if (loadedMeta || accumulatedRows.length > 0 || total > 0) {
                 console.info(`4. [Sync] Processing complete. Total rows in range: ${accumulatedRows.length}`);
