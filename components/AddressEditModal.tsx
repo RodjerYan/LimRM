@@ -636,7 +636,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                       address: address,
                       entryText: entryText,
                       timestamp: timestamp,
-                      commentText: commentText
+                      commentText: commentText,
+                      author: typeof item === 'string' ? item.split(':')[0].trim() : item.user
                   })
               });
               if (!res.ok) backendOk = false;

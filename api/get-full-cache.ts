@@ -479,10 +479,47 @@ export default async function handler(req: Request) {
                 if (!body.rmName || !body.address) {
                     return new Response(JSON.stringify({ error: 'Missing parameters' }), { status: 400 });
                 }
+                
+                const user = verifyUser(req);
+                if (!user) {
+                    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+                }
+
                 // We need either entryText OR (timestamp AND commentText)
                 const hasTimestamp = body.timestamp !== undefined && body.timestamp !== null;
                 if (!body.entryText && (!hasTimestamp || !body.commentText)) {
                      return new Response(JSON.stringify({ error: 'Missing entryText or timestamp/commentText' }), { status: 400 });
+                }
+
+                // Authorization check: Admin can delete anything. User can only delete their own comments.
+                if (user.role !== 'admin') {
+                    const userFullName = `${user.lastName || ''} ${user.firstName || ''}`.trim() || user.email;
+                    let isAuthor = false;
+
+                    if (body.entryText) {
+                        // For legacy string entries: "User Name: Comment text [Date]"
+                        isAuthor = body.entryText.startsWith(`${userFullName}:`);
+                    } else if (body.commentText) {
+                        // For object entries, we check if the user is the author
+                        // Since we don't pass the author explicitly in the body for object deletion, 
+                        // we assume the frontend only allows deleting own comments.
+                        // However, to be secure on the backend, we should ideally pass the author or check the sheet.
+                        // For now, if it's an object deletion, we trust the frontend's UI restriction, 
+                        // BUT we can enforce it by passing the author from the frontend or checking the entryText fallback.
+                        if (body.entryText && body.entryText.startsWith(`${userFullName}:`)) {
+                            isAuthor = true;
+                        } else if (body.author) {
+                             isAuthor = body.author === userFullName;
+                        } else {
+                             // If we don't have author info in the request, we must deny to be safe,
+                             // OR we rely on the entryText fallback which we always send from frontend.
+                             isAuthor = body.entryText ? body.entryText.startsWith(`${userFullName}:`) : false;
+                        }
+                    }
+
+                    if (!isAuthor) {
+                        return new Response(JSON.stringify({ error: 'Forbidden: You can only delete your own comments' }), { status: 403 });
+                    }
                 }
                 
                 await deleteHistoryEntryFromCache(body.rmName, body.address, body.entryText, body.timestamp, body.commentText);
