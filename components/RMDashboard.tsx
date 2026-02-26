@@ -58,6 +58,14 @@ const daysBetweenInclusive = (start: Date, end: Date) => {
   return Math.max(1, Math.floor(ms / 86400000) + 1);
 };
 
+const getLastSaleDate = (client: MapPoint): Date | null => {
+    if (!client.monthlyFact) return null;
+    const months = Object.keys(client.monthlyFact).filter(m => (client.monthlyFact![m] || 0) > 0).sort();
+    if (months.length === 0) return null;
+    const lastMonth = months[months.length - 1];
+    return new Date(`${lastMonth}-01`);
+};
+
 const isLeapYear = (y: number) => (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
 
 // Helper for date formatting
@@ -384,6 +392,8 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const [isTaskActionModalOpen, setIsTaskActionModalOpen] = useState(false);
     const [isTaskHistoryModalOpen, setIsTaskHistoryModalOpen] = useState(false);
 
+    const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+
     // Load base rate from server on mount
     useEffect(() => {
         const fetchSettings = async () => {
@@ -654,6 +664,63 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         XLSX.writeFile(wb, `Global_Uncovered_Potential_${new Date().toISOString().split('T')[0]}.xlsx`);
     };
 
+    const handleExportOption = (option: 'uncovered' | 'active_6m' | 'active_6_12m' | 'lost_12m') => {
+        const now = new Date();
+        const sixMonthsAgo = new Date(); sixMonthsAgo.setMonth(now.getMonth() - 6);
+        const twelveMonthsAgo = new Date(); twelveMonthsAgo.setMonth(now.getMonth() - 12);
+
+        if (option === 'uncovered') {
+            handleGlobalExportUncovered();
+            setIsExportModalOpen(false);
+            return;
+        }
+
+        const allClients = data.flatMap(d => d.clients);
+        let filteredClients: MapPoint[] = [];
+        let fileName = '';
+
+        if (option === 'active_6m') {
+            filteredClients = allClients.filter(c => {
+                const lastSale = getLastSaleDate(c);
+                return lastSale && lastSale >= sixMonthsAgo;
+            });
+            fileName = 'Active_Sales_Last_6_Months';
+        } else if (option === 'active_6_12m') {
+            filteredClients = allClients.filter(c => {
+                const lastSale = getLastSaleDate(c);
+                return lastSale && lastSale >= twelveMonthsAgo && lastSale < sixMonthsAgo;
+            });
+            fileName = 'Sales_6_to_12_Months';
+        } else if (option === 'lost_12m') {
+            filteredClients = allClients.filter(c => {
+                const lastSale = getLastSaleDate(c);
+                return lastSale && lastSale < twelveMonthsAgo;
+            });
+            fileName = 'Lost_Points_Over_12_Months';
+        }
+
+        if (filteredClients.length === 0) {
+            alert("Нет данных для выбранного периода");
+            return;
+        }
+
+        const exportData = filteredClients.map(c => ({
+            'Наименование': c.name,
+            'Адрес': c.address,
+            'Регион': c.region,
+            'Город': c.city,
+            'РМ': c.rm,
+            'Последняя продажа': getLastSaleDate(c)?.toLocaleDateString() || 'Неизвестно',
+            'Объем продаж': c.fact || 0
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(exportData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Export");
+        XLSX.writeFile(wb, `${fileName}_${now.toISOString().split('T')[0]}.xlsx`);
+        setIsExportModalOpen(false);
+    };
+
     const renderContent = () => (
         <div className="space-y-6">
             {/* NBA PANEL - TOP PRIORITY */}
@@ -689,12 +756,12 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                     </button>
 
                     <button 
-                        onClick={handleGlobalExportUncovered}
+                        onClick={() => setIsExportModalOpen(true)}
                         disabled={!okbData || okbData.length === 0}
                         className="flex items-center gap-2 px-4 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-xs font-bold rounded-xl border border-indigo-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed h-full shadow-sm"
-                        title="Скачать полный список непокрытых точек по всей компании"
+                        title="Выгрузить данные"
                     >
-                        <ExportIcon small /> Выгрузить весь потенциал (ОКБ)
+                        <ExportIcon small /> Выгрузить точки
                     </button>
 
                     <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 flex items-center gap-6 w-full md:w-auto shadow-inner">
@@ -1002,6 +1069,44 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 onConfirmAction={() => {}}
                 onRestore={(id) => taskManager.restoreTask(id)}
             />
+
+            <Modal
+                isOpen={isExportModalOpen}
+                onClose={() => setIsExportModalOpen(false)}
+                title="Выгрузка данных"
+                maxWidth="max-w-md"
+            >
+                <div className="flex flex-col gap-3">
+                    <button
+                        onClick={() => handleExportOption('uncovered')}
+                        className="w-full text-left px-4 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl font-bold text-sm transition-colors border border-indigo-200 flex items-center justify-between group"
+                    >
+                        <span>Выгрузить весь непокрытый потенциал (ОКБ)</span>
+                        <ExportIcon small className="opacity-50 group-hover:opacity-100" />
+                    </button>
+                    <button
+                        onClick={() => handleExportOption('active_6m')}
+                        className="w-full text-left px-4 py-3 bg-white hover:bg-gray-50 text-gray-700 rounded-xl font-medium text-sm transition-colors border border-gray-200 flex items-center justify-between group"
+                    >
+                        <span>Активные продажи (последние 6 мес.)</span>
+                        <ExportIcon small className="opacity-50 group-hover:opacity-100" />
+                    </button>
+                    <button
+                        onClick={() => handleExportOption('active_6_12m')}
+                        className="w-full text-left px-4 py-3 bg-white hover:bg-gray-50 text-gray-700 rounded-xl font-medium text-sm transition-colors border border-gray-200 flex items-center justify-between group"
+                    >
+                        <span>Продажи от 6 до 12 мес.</span>
+                        <ExportIcon small className="opacity-50 group-hover:opacity-100" />
+                    </button>
+                    <button
+                        onClick={() => handleExportOption('lost_12m')}
+                        className="w-full text-left px-4 py-3 bg-white hover:bg-gray-50 text-gray-700 rounded-xl font-medium text-sm transition-colors border border-gray-200 flex items-center justify-between group"
+                    >
+                        <span>Потерянные точки (продажи &gt; 12 мес. назад)</span>
+                        <ExportIcon small className="opacity-50 group-hover:opacity-100" />
+                    </button>
+                </div>
+            </Modal>
         </div>
     );
 
