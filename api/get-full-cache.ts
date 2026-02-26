@@ -8,7 +8,8 @@ import {
     appendToCache, 
     deleteAddressFromCache, 
     updateAddressInCache, 
-    updateCacheCoords 
+    updateCacheCoords,
+    deleteHistoryEntryFromCache
 } from './_lib/sheets.js';
 
 // Updated IDs based on user input

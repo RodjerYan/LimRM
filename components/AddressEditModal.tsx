@@ -624,13 +624,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
           const address = (data as MapPoint).address || findAddressInRow(originalRow) || '';
           
           if (rm && address) {
-              const res = await fetch('/api/get-full-cache?action=delete-history-entry', {
+              const res = await fetch('/api/get-full-cache', {
                   method: 'POST',
                   headers: { 
                       'Content-Type': 'application/json',
                       'Authorization': `Bearer ${token}`
                   },
                   body: JSON.stringify({
+                      action: 'delete-history-entry',
                       rmName: rm,
                       address: address,
                       entryText: entryText,
