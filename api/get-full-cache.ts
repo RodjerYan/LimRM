@@ -156,12 +156,18 @@ export default async function handler(req: Request) {
     }
 
     try {
+        const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
+
+        // ✅ CRITICAL FIX: allow action passed via JSON body
+        if ((!action || action === 'null') && body && typeof (body as any).action === 'string') {
+            action = (body as any).action;
+        }
+
         // We only need Drive client for snapshot/delta/tasks operations
         const needsDrive = ['save-delta', 'save-interest-delta', 'get-interest-deltas', 'clear-deltas', 'save-chunk', 'save-meta', 'cleanup-chunks', 'get-deltas', 'get-snapshot-meta', 'get-snapshot-list', 'get-file-content', 'get-settings', 'save-settings', 'get-tasks', 'save-task', 'restore-task'].includes(action || '');
         const drive = needsDrive ? await getDriveClient() : null;
 
         if (req.method === 'POST') {
-            const body = await req.json().catch(() => ({}));
             
             // --- SAVE INTEREST DELTA (BLUE POINTS) ---
             if (action === 'save-interest-delta' && drive) {
@@ -474,7 +480,8 @@ export default async function handler(req: Request) {
                     return new Response(JSON.stringify({ error: 'Missing parameters' }), { status: 400 });
                 }
                 // We need either entryText OR (timestamp AND commentText)
-                if (!body.entryText && (!body.timestamp || !body.commentText)) {
+                const hasTimestamp = body.timestamp !== undefined && body.timestamp !== null;
+                if (!body.entryText && (!hasTimestamp || !body.commentText)) {
                      return new Response(JSON.stringify({ error: 'Missing entryText or timestamp/commentText' }), { status: 400 });
                 }
                 
