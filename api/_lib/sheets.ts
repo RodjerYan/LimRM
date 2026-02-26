@@ -320,11 +320,22 @@ export async function updateAddressInCache(
     const coordStatus = (lat !== undefined && lon !== undefined) ? 'confirmed' : 'pending';
 
     if (rowIndex === -1) {
+        // If the address isn't found yet in cache, we still want a meaningful history entry.
+        // Previously we logged the *address* as if it was the change text, which made the UI
+        // show the address instead of "Комментарий: ...".
+        let historyText = '';
+        if (!skipHistory) {
+            const parts: string[] = [];
+            if (oldNorm && newNorm && oldNorm !== newNorm) parts.push(`Адрес: ${oldAddress} → ${newAddress}`);
+            if (lat !== undefined && lon !== undefined) parts.push(`Координаты: ${lat}, ${lon}`);
+            if (comment !== undefined) parts.push(`Комментарий: ${String(comment).trim()}`);
+            historyText = `${author}: ${(parts.length ? parts.join(' | ') : newAddress)} [${timestamp}]`;
+        }
         await callWithRetry(() => sheets.spreadsheets.values.append({ 
             spreadsheetId: CACHE_SPREADSHEET_ID, 
             range: `'${actualSheetTitle}'!A1`, 
             valueInputOption: 'USER_ENTERED', 
-            requestBody: { values: [[newAddress, newLat, newLon, `${author}: ${oldAddress} [${timestamp}]`, comment || "", coordStatus, 'FALSE']] } 
+            requestBody: { values: [[newAddress, newLat, newLon, historyText, comment || "", coordStatus, 'FALSE']] } 
         }), 'appendNewUpdate');
         return { success: true };
     }

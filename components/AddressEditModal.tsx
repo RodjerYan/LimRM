@@ -515,6 +515,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
 
   const handleSendComment = async () => {
       if (!newComment.trim() || !data) return;
+
+      // Без токена backend не сможет определить автора, и в истории будет "Система".
+      if (!token) {
+          setStatus('error_saving');
+          setError('Нет токена авторизации. Перезайдите в систему и повторите.');
+          return;
+      }
       
       const oldKey = (data as MapPoint).key;
       const baseNewPoint: MapPoint = { ...(data as MapPoint), comment: newComment, lastUpdated: Date.now() };
@@ -526,7 +533,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       const optimisticEntry = {
           user: userName,
           date: dateStr,
-          text: newComment,
+          text: `Комментарий: ${newComment}`,
           timestamp: timestamp
       };
       
@@ -721,6 +728,54 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       setStatus('geocoding');
       onStartPolling(rm, editedAddress, oldKey, baseNewPoint, originalIndex, oldAddress);
     } else {
+      // Если изменили только комментарий ("Заметка менеджера"),
+      // раньше он появлялся в истории только после повторного открытия модалки,
+      // потому что история подтягивается из Google Cache.
+      // Делаем: оптимистично добавляем запись в UI + сразу пишем в Google Cache
+      // (чтобы там появился автор, время и работала кнопка удаления).
+      const prevComment = String((data as MapPoint).comment || '').trim();
+      const nextComment = String(comment || '').trim();
+      const commentChanged = prevComment !== nextComment;
+      if (commentChanged && nextComment) {
+          if (!token) {
+              setStatus('error_saving');
+              setError('Нет токена авторизации. Перезайдите в систему и повторите.');
+              return;
+          }
+
+          const ts = Date.now();
+          const userName = user ? `${user.lastName || ''} ${user.firstName || ''}`.trim() || user.email || 'Пользователь' : 'Пользователь';
+          const optimisticEntry = { user: userName, date: new Date(ts).toLocaleString('ru-RU'), text: `Комментарий: ${nextComment}`, timestamp: ts };
+          setHistory((prev) => [...prev, optimisticEntry]);
+
+          try {
+              const res = await fetch('/api/get-full-cache?action=update-address', {
+                  method: 'POST',
+                  headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${token}`,
+                  },
+                  body: JSON.stringify({
+                      rmName: rm,
+                      oldAddress,
+                      newAddress: oldAddress,
+                      comment: nextComment,
+                      skipHistory: false,
+                  }),
+              });
+              if (!res.ok) {
+                  const j = await res.json().catch(() => ({}));
+                  throw new Error(j?.error || 'Не удалось сохранить комментарий в Google');
+              }
+          } catch (e: any) {
+              // rollback optimistic
+              setHistory((prev) => prev.filter((h) => (typeof h === 'object' ? (h as any).timestamp !== ts : true)));
+              setStatus('error_saving');
+              setError(e?.message || 'Не удалось сохранить комментарий');
+              return;
+          }
+      }
+
       onDataUpdate(oldKey, baseNewPoint, originalIndex);
       setStatus('success');
       
