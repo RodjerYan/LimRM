@@ -142,7 +142,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
             isOpen={isOpen} 
             onClose={onClose} 
             title="Профиль пользователя"
-            maxWidth="max-w-4xl"
+            maxWidth="max-w-5xl"
             footer={
                 activeTab === 'profile' ? (
                     <div className="flex justify-end gap-3 w-full">
