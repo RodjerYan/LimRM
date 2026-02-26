@@ -23,8 +23,10 @@ const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#3b82f6'
 
 export function ChannelBarChart({
   data,
+  onBarClick,
 }: {
   data: Array<{ name: string; count: number; volumeTons: number }>;
+  onBarClick?: (name: string) => void;
 }) {
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -50,7 +52,17 @@ export function ChannelBarChart({
             cursor={{ fill: 'rgba(241, 245, 249, 0.5)' }}
             contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)', fontSize: '12px', fontWeight: 'bold' }}
         />
-        <Bar dataKey="count" radius={[6, 6, 0, 0]} animationDuration={1000}>
+        <Bar 
+            dataKey="count" 
+            radius={[6, 6, 0, 0]} 
+            animationDuration={1000}
+            onClick={(data) => {
+                if (onBarClick && data && data.name) {
+                    onBarClick(data.name);
+                }
+            }}
+            style={{ cursor: onBarClick ? 'pointer' : 'default' }}
+        >
             {data.map((entry, index) => (
                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
             ))}

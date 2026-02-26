@@ -628,6 +628,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                             count: s.count,
                             volumeTons: s.volumeTons,
                           }))}
+                          onBarClick={(name) => setSelectedChannel(name)}
                         />
                       </div>
 
