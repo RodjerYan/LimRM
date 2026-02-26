@@ -345,7 +345,7 @@ interface PlanConfig {
 }
 
 export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData, mode = 'modal', metrics, okbStatus, onActiveClientsClick, onEditClient, startDate, endDate, dateRange }) => {
-    const { user } = useAuth();
+    const { user, token } = useAuth();
     const isAdmin = user?.role === 'admin';
     const taskManager = useTaskManager();
     
@@ -378,7 +378,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const [tempPlanEnd, setTempPlanEnd] = useState('');
 
     // --- TASK ACTION STATES ---
-    const [taskActionTarget, setTaskActionTarget] = useState<{id: string, name: string, rm: string} | null>(null); // <--- Added RM to type
+    const [taskActionTarget, setTaskActionTarget] = useState<{id: string, name: string, rm: string, address: string} | null>(null); // <--- Added RM and Address
     // NEW: Add state to track which action type to open immediately
     const [taskActionType, setTaskActionType] = useState<'delete' | 'snooze'>('delete'); 
     const [isTaskActionModalOpen, setIsTaskActionModalOpen] = useState(false);
@@ -601,8 +601,8 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         }
     };
 
-    // UPDATE: Now we accept RM in handleTaskAction
-    const handleTaskAction = (target: {id: string, name: string, rm: string}, type: 'delete' | 'snooze') => {
+    // UPDATE: Now we accept RM and Address in handleTaskAction
+    const handleTaskAction = (target: {id: string, name: string, rm: string, address: string}, type: 'delete' | 'snooze') => {
         setTaskActionTarget(target);
         setTaskActionType(type); // Store the type so modal opens correct tab
         setIsTaskActionModalOpen(true);
@@ -669,9 +669,9 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 <NBAPanel 
                     actions={nbaActions} 
                     onActionClick={handleActionClick} 
-                    // PASS RM to handler
-                    onDelete={(a) => handleTaskAction({id: a.clientId, name: a.clientName, rm: a.rm}, 'delete')}
-                    onSnooze={(a) => handleTaskAction({id: a.clientId, name: a.clientName, rm: a.rm}, 'snooze')}
+                    // PASS RM and Address to handler
+                    onDelete={(a) => handleTaskAction({id: a.clientId, name: a.clientName, rm: a.rm, address: a.address}, 'delete')}
+                    onSnooze={(a) => handleTaskAction({id: a.clientId, name: a.clientName, rm: a.rm, address: a.address}, 'snooze')}
                 />
             </div>
 
@@ -952,8 +952,9 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 targetItem={taskActionTarget || undefined}
                 initialActionType={taskActionType} // PASS NEW PROP HERE
                 history={[]}
-                onConfirmAction={(type, reason, snoozeDate) => {
+                onConfirmAction={async (type, reason, snoozeDate) => {
                     if (taskActionTarget) {
+                        // 1. Perform Task Action (Snooze/Delete)
                         taskManager.performAction(
                             taskActionTarget.id,
                             taskActionTarget.name,
@@ -962,6 +963,32 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                             taskActionTarget.rm, // NEW: PASS OWNER RM
                             snoozeDate ? new Date(snoozeDate).getTime() : undefined
                         );
+
+                        // 2. Add History Entry (Comment)
+                        if (token) {
+                            try {
+                                const commentText = type === 'delete' 
+                                    ? `Задача удалена: ${reason}` 
+                                    : `Задача отложена до ${snoozeDate}: ${reason}`;
+                                
+                                await fetch('/api/get-full-cache?action=update-address', {
+                                    method: 'POST',
+                                    headers: { 
+                                        'Content-Type': 'application/json',
+                                        'Authorization': `Bearer ${token}`
+                                    },
+                                    body: JSON.stringify({
+                                        rmName: taskActionTarget.rm,
+                                        oldAddress: taskActionTarget.address,
+                                        newAddress: taskActionTarget.address,
+                                        comment: commentText,
+                                        skipHistory: false
+                                    })
+                                });
+                            } catch (e) {
+                                console.error("Failed to save task history comment:", e);
+                            }
+                        }
                     }
                 }}
                 onRestore={() => {}}
