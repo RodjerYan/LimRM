@@ -190,6 +190,21 @@ const AppContent: React.FC = () => {
     }
     // ------------------------
 
+    const potentialClientsCount = useMemo(() => {
+        if (okbStatus?.status !== 'ready') return undefined;
+        return mapPotentialClients.length;
+    }, [okbStatus?.status, mapPotentialClients]);
+      
+    const potentialCoordsCount = useMemo(() => {
+        if (okbStatus?.status !== 'ready') return undefined;
+      
+        return mapPotentialClients.filter((r: any) => {
+          const lat = Number(r.lat);
+          const lon = Number(r.lon);
+          return Number.isFinite(lat) && Number.isFinite(lon) && lat !== 0 && lon !== 0;
+        }).length;
+    }, [okbStatus?.status, mapPotentialClients]);
+
     return (
         <div className="app-premium-bg">
             <div className="relative flex">
@@ -251,8 +266,8 @@ const AppContent: React.FC = () => {
                                 setIsSearchOpen={setIsSearchOpen}
                                 selectedRm={filters.rm}
                                 onRmChange={(rm) => setFilters(prev => ({ ...prev, rm }))}
-                                potentialClientsCount={okbStatus?.status === 'ready' ? mapPotentialClients.length : undefined}
-                                potentialCoordsCount={okbStatus?.status === 'ready' ? mapPotentialClients.length : undefined}
+                                potentialClientsCount={potentialClientsCount}
+                                potentialCoordsCount={potentialCoordsCount}
                             />
                         )}
 
