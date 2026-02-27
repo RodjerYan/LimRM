@@ -99,21 +99,6 @@ const AppContent: React.FC = () => {
         return [];
     }, [activeModule, ampView, allActiveClients]);
 
-    const potentialClientsCount = useMemo(() => {
-        if (okbStatus?.status !== 'ready') return undefined;
-        return mapPotentialClients.length;
-    }, [okbStatus?.status, mapPotentialClients]);
-      
-    const potentialCoordsCount = useMemo(() => {
-        if (okbStatus?.status !== 'ready') return undefined;
-      
-        return mapPotentialClients.filter((r: any) => {
-          const lat = Number(r.lat);
-          const lon = Number(r.lon);
-          return Number.isFinite(lat) && Number.isFinite(lon) && lat !== 0 && lon !== 0;
-        }).length;
-    }, [okbStatus?.status, mapPotentialClients]);
-
     const handleLoadStartDateChange = (date: string) => {
         setLoadStartDate(date);
         if (!date) setFilterStartDate('');
@@ -266,8 +251,6 @@ const AppContent: React.FC = () => {
                                 setIsSearchOpen={setIsSearchOpen}
                                 selectedRm={filters.rm}
                                 onRmChange={(rm) => setFilters(prev => ({ ...prev, rm }))}
-                                potentialClientsCount={potentialClientsCount}
-                                potentialCoordsCount={potentialCoordsCount}
                             />
                         )}
 
