@@ -307,79 +307,97 @@ export default async function handler(req: Request) {
             // ---------------------------
 
             if (action === 'save-delta' && drive) {
-                try {
-                    const deltaItem = body;
-                    if (!deltaItem || Object.keys(deltaItem).length === 0) {
-                        return new Response(JSON.stringify({ error: 'Missing or empty delta payload' }), { status: 400 });
-                    }
+                const MAX_RETRIES = 5;
+                let lastError;
 
-                    const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID, 'savepoints');
-                    let targetFile = null;
-                    let fileContent: { deltas: any[] } = { deltas: [] };
-                    let nextIndex = 1;
+                for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                    try {
+                        const deltaItem = body;
+                        if (!deltaItem || Object.keys(deltaItem).length === 0) {
+                            return new Response(JSON.stringify({ error: 'Missing or empty delta payload' }), { status: 400 });
+                        }
 
-                    if (savepointsFiles.length > 0) {
-                        const lastFile = savepointsFiles[savepointsFiles.length - 1];
-                        const match = lastFile.name.match(/savepoints(\d+)\.json/i);
-                        const currentIndex = match ? parseInt(match[1], 10) : 1;
-                        nextIndex = currentIndex;
-                        const fileSize = lastFile.size;
-                        
-                        if (fileSize > 250 * 1024) { // Limit delta file size to 250KB to avoid huge reads
-                            nextIndex = currentIndex + 1;
-                            targetFile = null;
-                        } else {
-                            try {
-                                const fileRes = await drive.files.get({ fileId: lastFile.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
-                                const contentStr = Buffer.from(fileRes.data as any).toString('utf-8');
-                                targetFile = lastFile;
-                                try { 
-                                    const parsed = JSON.parse(contentStr); 
-                                    if (parsed && Array.isArray(parsed.deltas)) {
-                                        fileContent = parsed;
-                                    } else if (Array.isArray(parsed)) {
-                                         // Handle legacy array format if any
-                                         fileContent = { deltas: parsed };
-                                    }
-                                } catch (e) { }
-                            } catch (e) {
-                                // If failed to read, start new file
+                        const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID, 'savepoints');
+                        let targetFile = null;
+                        let fileContent: { deltas: any[] } = { deltas: [] };
+                        let nextIndex = 1;
+
+                        if (savepointsFiles.length > 0) {
+                            const lastFile = savepointsFiles[savepointsFiles.length - 1];
+                            const match = lastFile.name.match(/savepoints(\d+)\.json/i);
+                            const currentIndex = match ? parseInt(match[1], 10) : 1;
+                            nextIndex = currentIndex;
+                            const fileSize = lastFile.size;
+                            
+                            if (fileSize > 250 * 1024) { // Limit delta file size to 250KB to avoid huge reads
                                 nextIndex = currentIndex + 1;
-                                targetFile = null; 
+                                targetFile = null;
+                            } else {
+                                try {
+                                    const fileRes = await drive.files.get({ fileId: lastFile.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
+                                    const contentStr = Buffer.from(fileRes.data as any).toString('utf-8');
+                                    targetFile = lastFile;
+                                    try { 
+                                        const parsed = JSON.parse(contentStr); 
+                                        if (parsed && Array.isArray(parsed.deltas)) {
+                                            fileContent = parsed;
+                                        } else if (Array.isArray(parsed)) {
+                                             // Handle legacy array format if any
+                                             fileContent = { deltas: parsed };
+                                        }
+                                    } catch (e) { }
+                                } catch (e) {
+                                    // If failed to read, start new file
+                                    nextIndex = currentIndex + 1;
+                                    targetFile = null; 
+                                }
                             }
                         }
-                    }
 
-                    if (!fileContent.deltas) fileContent.deltas = [];
-                    fileContent.deltas.push(deltaItem);
-                    
-                    const newContentStr = JSON.stringify(fileContent);
-                    const fileName = `savepoints${nextIndex}.json`;
+                        if (!fileContent.deltas) fileContent.deltas = [];
+                        fileContent.deltas.push(deltaItem);
+                        
+                        const newContentStr = JSON.stringify(fileContent);
+                        const fileName = `savepoints${nextIndex}.json`;
 
-                    if (targetFile) {
-                        await drive.files.update({
-                            fileId: targetFile.id,
-                            media: { mimeType: 'application/json', body: newContentStr },
-                            supportsAllDrives: true
-                        });
-                        return new Response(JSON.stringify({ status: 'appended', file: fileName }));
-                    } else {
-                        await drive.files.create({
-                            requestBody: {
-                                name: fileName,
-                                parents: [DELTA_FOLDER_ID],
-                                mimeType: 'application/json'
-                            },
-                            media: { mimeType: 'application/json', body: newContentStr },
-                            supportsAllDrives: true
-                        });
-                        return new Response(JSON.stringify({ status: 'created', file: fileName }));
+                        if (targetFile) {
+                            await drive.files.update({
+                                fileId: targetFile.id,
+                                media: { mimeType: 'application/json', body: newContentStr },
+                                supportsAllDrives: true
+                            });
+                            return new Response(JSON.stringify({ status: 'appended', file: fileName }));
+                        } else {
+                            await drive.files.create({
+                                requestBody: {
+                                    name: fileName,
+                                    parents: [DELTA_FOLDER_ID],
+                                    mimeType: 'application/json'
+                                },
+                                media: { mimeType: 'application/json', body: newContentStr },
+                                supportsAllDrives: true
+                            });
+                            return new Response(JSON.stringify({ status: 'created', file: fileName }));
+                        }
+                    } catch (e: any) {
+                        lastError = e;
+                        const status = e.code || e.status || 500;
+                        // Retry only on 403 (Rate Limit/Forbidden) or 429 (Too Many Requests)
+                        // Google API often returns 403 for rate limits
+                        if (status === 403 || status === 429) {
+                            console.warn(`[SaveDelta] Attempt ${attempt} failed with ${status}. Retrying in ${attempt * 1000}ms...`);
+                            await new Promise(r => setTimeout(r, attempt * 1000));
+                            continue;
+                        }
+                        // Other errors: fail immediately
+                        console.error("Error in save-delta:", e);
+                        return new Response(JSON.stringify({ error: e.message, details: e.stack }), { status: Number(status) || 500 });
                     }
-                } catch (e: any) {
-                    console.error("Error in save-delta:", e);
-                    const status = e.code || e.status || 500;
-                    return new Response(JSON.stringify({ error: e.message, details: e.stack }), { status: Number(status) || 500 });
                 }
+                
+                console.error("Error in save-delta after retries:", lastError);
+                const finalStatus = lastError?.code || lastError?.status || 500;
+                return new Response(JSON.stringify({ error: lastError?.message || 'Max retries exceeded', details: lastError?.stack }), { status: Number(finalStatus) });
             }
 
             if (action === 'clear-deltas' && drive) {

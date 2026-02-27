@@ -4,6 +4,7 @@ export interface AggregatedDataRow {
     _chunkIndex?: number; // STICKY CHUNK ID: Remembers which file this row belongs to
     key: string;
     rm: string;
+    dm?: string; // New field: Divisional Manager
     clientName: string;
     brand: string;
     packaging: string; // New field
@@ -36,6 +37,7 @@ export interface MapPoint {
     city: string;
     region: string;
     rm: string;
+    dm?: string; // New field: Divisional Manager
     brand: string;
     packaging: string; // New field
     type: string;

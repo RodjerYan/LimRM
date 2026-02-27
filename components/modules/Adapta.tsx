@@ -90,14 +90,15 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
   const effectiveStart = props.startDate;
   const effectiveEnd = props.endDate;
 
-  // Extract unique RMs for the dropdown
-  const availableRMs = useMemo(() => {
+  // Extract unique Managers (RM + DM) for the dropdown
+  const availableManagers = useMemo(() => {
       if (!props.uploadedData) return [];
-      const rms = new Set<string>();
+      const managers = new Set<string>();
       props.uploadedData.forEach(row => {
-          if (row.rm) rms.add(row.rm);
+          if (row.rm && row.rm !== 'Unknown_RM') managers.add(row.rm);
+          if (row.dm) managers.add(row.dm);
       });
-      return Array.from(rms).sort();
+      return Array.from(managers).sort();
   }, [props.uploadedData]);
 
   // Dynamic Greeting based on User's local time
@@ -205,8 +206,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const set = new Set<string>();
     if (props.uploadedData) {
       props.uploadedData.forEach((row) => {
-        // RM Filter Check
-        if (props.selectedRm && row.rm !== props.selectedRm) return;
+        // Manager Filter Check (RM or DM)
+        if (props.selectedRm && row.rm !== props.selectedRm && row.dm !== props.selectedRm) return;
 
         row.clients.forEach((c) => {
           const { inPeriod, undated } = getClientFact(c);
@@ -260,7 +261,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     if (!props.uploadedData || props.uploadedData.length === 0) return [];
 
     const relevantData = props.uploadedData
-      .filter(row => !props.selectedRm || row.rm === props.selectedRm) // Apply RM Filter
+      .filter(row => !props.selectedRm || row.rm === props.selectedRm || row.dm === props.selectedRm) // Apply Manager Filter
       .map((row) => {
         const activeClients = row.clients
           .map((client) => {
@@ -290,8 +291,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const globalUniqueKeys = new Set<string>();
 
     props.uploadedData.forEach((row) => {
-      // Apply RM Filter
-      if (props.selectedRm && row.rm !== props.selectedRm) return;
+      // Apply Manager Filter
+      if (props.selectedRm && row.rm !== props.selectedRm && row.dm !== props.selectedRm) return;
 
       row.clients.forEach((client) => {
         // Direct calculation instead of pre-filtered Set lookup for robustness
@@ -328,8 +329,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const safeLower = (val: any) => (val || '').toString().toLowerCase();
 
     props.uploadedData.forEach((row) => {
-      // Apply RM Filter
-      if (props.selectedRm && row.rm !== props.selectedRm) return;
+      // Apply Manager Filter
+      if (props.selectedRm && row.rm !== props.selectedRm && row.dm !== props.selectedRm) return;
 
       row.clients.forEach((c) => {
         // Direct calculation instead of pre-filtered Set lookup
@@ -394,8 +395,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 }}
                 extraControls={
                    <div className="flex items-center gap-2">
-                       {/* RM Selector */}
-                       {availableRMs.length > 0 && props.onRmChange && (
+                       {/* Manager Selector */}
+                       {availableManagers.length > 0 && props.onRmChange && (
                            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 h-9">
                               <FilterIcon />
                               <select 
@@ -404,7 +405,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                  className="bg-transparent text-sm text-slate-800 outline-none w-[160px] cursor-pointer"
                               >
                                  <option value="">Все менеджеры</option>
-                                 {availableRMs.map(rm => (
+                                 {availableManagers.map(rm => (
                                      <option key={rm} value={rm}>{rm}</option>
                                  ))}
                               </select>

@@ -26,7 +26,8 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
         setIsCloudSaving(true);
         console.info(`☁️ [Cloud] Saving Delta (${delta.type}):`, delta.key);
         try {
-            await fetch('/api/get-full-cache?action=save-delta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(delta) });
+            const res = await fetch('/api/get-full-cache?action=save-delta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(delta) });
+            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
             console.log("✅ [Cloud] Delta saved successfully");
         } catch (e) { console.error("❌ [Cloud] Failed to save delta:", e); addNotification('Ошибка сохранения изменений в облако', 'warning'); } 
         finally { setIsCloudSaving(false); }
@@ -37,11 +38,12 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
         setIsCloudSaving(true);
         console.info(`☁️ [Cloud] Saving Interest Delta (${delta.type}):`, delta.key);
         try {
-            await fetch('/api/get-full-cache?action=save-interest-delta', { 
+            const res = await fetch('/api/get-full-cache?action=save-interest-delta', { 
                 method: 'POST', 
                 headers: { 'Content-Type': 'application/json' }, 
                 body: JSON.stringify(delta) 
             });
+            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
             console.log("✅ [Cloud] Interest Delta saved successfully");
             // Optimistically update local state
             setInterestDeltas(prev => [...prev, delta]);

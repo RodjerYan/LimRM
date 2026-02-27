@@ -409,6 +409,7 @@ function restoreChunk(payload: { chunkData: any, progress?: number }, postMessag
             
             const reg = filteredClient.region || 'Не определен';
             const rm = filteredClient.rm || 'Не указан';
+            const dm = filteredClient.dm; // Restore DM
             const brand = filteredClient.brand || 'Без бренда';
             const packaging = filteredClient.packaging || 'Не указана';
             const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
@@ -418,7 +419,7 @@ function restoreChunk(payload: { chunkData: any, progress?: number }, postMessag
                     __rowId: generateRowId(),
                     key: groupKey,
                     clientName: `${reg}: ${brand}`,
-                    brand, packaging, rm, region: reg, 
+                    brand, packaging, rm, dm, region: reg, 
                     city: filteredClient.city || 'Не определен',
                     fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0, 
                     monthlyFact: {},
@@ -515,6 +516,7 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
 
             const region = String(p.region ?? 'Регион не определен');
             const rm = String(p.rm ?? 'Unknown_RM');
+            const dm = p.dm ? String(p.dm) : undefined;
             const brand = String(p.brand ?? 'Без бренда');
             const packaging = String(p.packaging ?? 'Не указана'); 
             const type = String(p.type ?? detectChannelByName(p.name || ''));
@@ -539,6 +541,7 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
                     brand: brand, 
                     packaging: packaging, 
                     rm, 
+                    dm,
                     city: city, 
                     region: region, 
                     fact: 0,
@@ -579,6 +582,7 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
                     city,
                     region,
                     rm,
+                    dm,
                     brand,
                     packaging,
                     type,
@@ -703,6 +707,8 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
         let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
         if (!rm) rm = 'Unknown_RM';
 
+        let dm = findManagerValue(row, ['дм', 'дивизиональный менеджер', 'дивизион'], []);
+
         // --- COORDINATE EXTRACTION ---
         const latRaw = findValueInRowLocal(row, ['широта', 'lat', 'ldt', 'latitude', 'широта (lat)', 'geo_lat', 'y', 'lat_clean'], rowIdx);
         const lonRaw = findValueInRowLocal(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x', 'lon_clean'], rowIdx);
@@ -778,6 +784,7 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
                     brand: brand, 
                     packaging: packaging, 
                     rm, 
+                    dm,
                     city: parsed.city, 
                     region: reg, 
                     fact: 0,
@@ -814,6 +821,7 @@ function processChunk(payload: { rawData: any[], isFirstChunk: boolean, fileName
                     city: parsed.city, 
                     region: reg, 
                     rm, 
+                    dm,
                     brand: brand, 
                     packaging: packaging, 
                     type: channel,

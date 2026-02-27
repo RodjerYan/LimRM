@@ -60,7 +60,7 @@ export const detectChannelByName = (name: string): string => {
  */
 export const applyFilters = (data: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
   return data.filter(row => {
-    const rmMatch = !filters.rm || row.rm === filters.rm;
+    const rmMatch = !filters.rm || row.rm === filters.rm || row.dm === filters.rm;
     const brandMatch = filters.brand.length === 0 || filters.brand.includes(row.brand);
     const packagingMatch = filters.packaging.length === 0 || filters.packaging.includes(row.packaging);
     const regionMatch = filters.region.length === 0 || filters.region.includes(row.region);
@@ -78,7 +78,8 @@ export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
   const regions = new Set<string>();
 
   data.forEach(row => {
-    if (row.rm) rms.add(row.rm);
+    if (row.rm && row.rm !== 'Unknown_RM') rms.add(row.rm);
+    if (row.dm) rms.add(row.dm);
     if (row.brand) brands.add(row.brand);
     if (row.packaging) packagings.add(row.packaging);
     if (row.region && row.region !== 'Регион не определен') regions.add(row.region);
