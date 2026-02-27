@@ -44,11 +44,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
           message: `ОКБ Онлайн (v5 Live)`,
           timestamp: new Date().toISOString(),
           rowCount: data.length,
-          coordsCount: data.filter((d) => {
-            const lat = Number((d as any).lat);
-            const lon = Number((d as any).lon ?? (d as any).lng);
-            return Number.isFinite(lat) && Number.isFinite(lon) && lat !== 0 && lon !== 0;
-          }).length,
+          coordsCount: data.filter((d) => d.lat && d.lon).length,
         });
       } catch (error) {
         console.error('OKB Load Error:', error);
@@ -110,66 +106,29 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
         </div>
 
         {/* Metrics Grid */}
-        <div className="space-y-3 mb-6">
-             {/* ROW 1: OKB RAW */}
-             <div className="grid grid-cols-3 gap-4">
-                  <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
-                       <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-3">
-                           ОКБ RAW<br/>записей
-                       </div>
-                       <div className="text-xl font-black text-slate-900 tracking-tight">
-                           {status?.rowCount !== undefined ? status.rowCount.toLocaleString('ru-RU') : '—'}
-                       </div>
+        <div className="grid grid-cols-3 gap-4 mb-6">
+             <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
+                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-3">
+                      Всего<br/>записей
                   </div>
-
-                  <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
-                       <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-3">
-                           ОКБ RAW<br/>с координ.
-                       </div>
-                       <div className="text-xl font-black text-slate-900 tracking-tight">
-                           {status?.coordsCount !== undefined ? status.coordsCount.toLocaleString('ru-RU') : '—'}
-                       </div>
-                  </div>
-
-                  <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
-                       <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-3">
-                           Время<br/>обновления
-                       </div>
-                       <div className="text-lg font-black text-slate-900 tracking-tight leading-tight">
-                           {status?.timestamp ? new Date(status.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'}) : '—'}
-                       </div>
+                  <div className="text-xl font-black text-slate-900 tracking-tight">
+                      {potentialRowCount !== undefined ? potentialRowCount.toLocaleString('ru-RU') : (status?.rowCount ? status.rowCount.toLocaleString('ru-RU') : '—')}
                   </div>
              </div>
-
-             {/* ROW 2: POTENTIAL (Filtered OKB) */}
-             <div className="grid grid-cols-3 gap-4">
-                  <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
-                       <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-3">
-                           Потенциал<br/>записей
-                       </div>
-                       <div className="text-xl font-black text-slate-900 tracking-tight">
-                           {potentialRowCount !== undefined ? potentialRowCount.toLocaleString('ru-RU') : '—'}
-                       </div>
+             <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
+                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-3">
+                      С коорди-<br/>натами
                   </div>
-
-                  <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
-                       <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-3">
-                           Потенциал<br/>с координ.
-                       </div>
-                       <div className="text-xl font-black text-slate-900 tracking-tight">
-                           {potentialCoordsCount !== undefined ? potentialCoordsCount.toLocaleString('ru-RU') : '—'}
-                       </div>
+                  <div className="text-xl font-black text-slate-900 tracking-tight">
+                      {potentialCoordsCount !== undefined ? potentialCoordsCount.toLocaleString('ru-RU') : (status?.coordsCount ? status.coordsCount.toLocaleString('ru-RU') : '—')}
                   </div>
-
-                  <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
-                       <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-3">
-                           Дубликаты<br/>снято
-                       </div>
-                       <div className="text-xl font-black text-slate-900 tracking-tight">
-                           {(status?.rowCount !== undefined && potentialRowCount !== undefined)
-                             ? Math.max(0, status.rowCount - potentialRowCount).toLocaleString('ru-RU')
-                             : '—'}
-                       </div>
+             </div>
+             <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
+                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-3">
+                      Время<br/>обновления
+                  </div>
+                  <div className="text-lg font-black text-slate-900 tracking-tight leading-tight">
+                      {status?.timestamp ? new Date(status.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'}) : '—'}
                   </div>
              </div>
         </div>

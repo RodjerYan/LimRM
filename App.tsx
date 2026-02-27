@@ -99,23 +99,6 @@ const AppContent: React.FC = () => {
         return [];
     }, [activeModule, ampView, allActiveClients]);
 
-    const hasOkbData = useMemo(() => Array.isArray(okbData) && okbData.length > 0, [okbData]);
-
-    const potentialClientsCount = useMemo(() => {
-        if (!hasOkbData) return undefined;
-        return mapPotentialClients.length;
-    }, [hasOkbData, mapPotentialClients]);
-      
-    const potentialCoordsCount = useMemo(() => {
-        if (!hasOkbData) return undefined;
-      
-        return mapPotentialClients.filter((r: any) => {
-          const lat = Number(r.lat);
-          const lon = Number(r.lon ?? r.lng);
-          return Number.isFinite(lat) && Number.isFinite(lon) && lat !== 0 && lon !== 0;
-        }).length;
-    }, [hasOkbData, mapPotentialClients]);
-
     const handleLoadStartDateChange = (date: string) => {
         setLoadStartDate(date);
         if (!date) setFilterStartDate('');
@@ -206,6 +189,21 @@ const AppContent: React.FC = () => {
         );
     }
     // ------------------------
+
+    const potentialClientsCount = useMemo(() => {
+        if (okbStatus?.status !== 'ready') return undefined;
+        return mapPotentialClients.length;
+    }, [okbStatus?.status, mapPotentialClients]);
+      
+    const potentialCoordsCount = useMemo(() => {
+        if (okbStatus?.status !== 'ready') return undefined;
+      
+        return mapPotentialClients.filter((r: any) => {
+          const lat = Number(r.lat);
+          const lon = Number(r.lon);
+          return Number.isFinite(lat) && Number.isFinite(lon) && lat !== 0 && lon !== 0;
+        }).length;
+    }, [okbStatus?.status, mapPotentialClients]);
 
     return (
         <div className="app-premium-bg">
