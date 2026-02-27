@@ -297,6 +297,8 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
             const totalChunks = fileList.length;
 
             // --- WORKER SETUP ---
+            const worker = new Worker(new URL('../services/processing.worker.ts', import.meta.url), { type: 'module' });
+
             // Ensure worker is terminated even if errors occur
             try {
                 await new Promise<void>((resolve, reject) => {
