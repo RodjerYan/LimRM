@@ -4,7 +4,6 @@ import {
   FilterState,
   FilterOptions,
   SummaryMetrics,
-  OkbDataRow,
   MapPoint
 } from '../types';
 import { REGION_KEYWORD_MAP, REGION_BY_CITY_MAP } from './addressMappings';
@@ -15,7 +14,7 @@ import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';
  */
 export const normalizeRmNameForMatching = (str: string): string => {
     if (!str) return '';
-    let clean = str.toLowerCase().trim();
+    const clean = str.toLowerCase().trim();
     const surname = clean.split(/[\s.]+/)[0];
     return surname.replace(/[^a-zа-я0-9]/g, '');
 };
@@ -195,7 +194,7 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 
 const REGION_MATCHER_LIST = Object.values(REGION_KEYWORD_MAP).reduce((acc, regionName) => {
     const lowerName = regionName.toLowerCase();
-    let root = lowerName.replace(/\bобласть\b/g, '').replace(/\bкрай\b/g, '').replace(/\bреспублика\b/g, '').replace(/\bавтономный округ\b/g, '').replace(/\bао\b/g, '').replace(/\bг\.\s*/g, '').replace(/[()]/g, '').trim();
+    const root = lowerName.replace(/\bобласть\b/g, '').replace(/\bкрай\b/g, '').replace(/\bреспублика\b/g, '').replace(/\bавтономный округ\b/g, '').replace(/\bао\b/g, '').replace(/\bг\.\s*/g, '').replace(/[()]/g, '').trim();
     if (root.length > 2) {
          if (!acc.some(item => item.root === root)) acc.push({ root, regionName });
     }
@@ -224,7 +223,7 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
 };
 
 const createStopwords = (): Set<string> => {
-    const genericStopwords = ['улица', 'ул', 'проспект', 'пр', 'пр-т', 'пр-кт', 'проезд', 'пр-д', 'переулок', 'пер', 'шоссе', 'ш', 'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб', 'тупик', 'аллея', 'линия', 'город', 'г', 'поселок', 'пос', 'пгт', 'деревня', 'дер', 'село', 'с', 'хутор', 'х', 'станица', 'ст-ца', 'аул', 'рп', 'рабочий', 'поселение', 'сельское', 'городское', 'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'район', 'р-н', 'р', 'н', 'кыргызстан', 'киргизия', 'кыргызская', 'казахстан', 'россия', 'рф', 'беларусь', 'белоруссия', 'таджикистан', 'узбекистан', 'туркменистан', 'армения', 'азербайджан', 'молдова', 'грузия', 'дом', 'корпус', 'корп', 'строение', 'стр', 'литер', 'лит', 'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом', 'комната', 'комн', 'мкр', 'микрорайон', 'автодорога'];
+    const genericStopwords = ['улица', 'ул', 'проспект', 'пр', 'пр-т', 'пр-кт', 'проезд', 'пр-д', 'переулок', 'пер', 'шоссе', 'ш', 'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб', 'тупик', 'аллея', 'линия', 'город', 'г', 'поселок', 'пос', 'пгт', 'деревня', 'дер', 'село', 'с', 'хутор', 'х', 'станица', 'ст-ца', 'аул', 'рп', 'рабочий', 'поселение', 'сельское', 'городское', 'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'район', 'р-н', 'р', 'н', 'кыргызстан', 'киргизия', 'кыргызская', 'казахстан', 'россия', 'рф', 'российская', 'федерация', 'беларусь', 'белоруссия', 'таджикистан', 'узбекистан', 'туркменистан', 'армения', 'азербайджан', 'молдова', 'грузия', 'дом', 'корпус', 'корп', 'строение', 'стр', 'литер', 'лит', 'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом', 'комната', 'комн', 'мкр', 'микрорайон', 'автодорога'];
     const regionNameParts = new Set<string>();
     const allCities = new Set(Object.keys(REGION_BY_CITY_WITH_INDEXES));
     for (const item of Object.entries(REGION_KEYWORD_MAP)) {
@@ -236,14 +235,49 @@ const createStopwords = (): Set<string> => {
 };
 
 const STOPWORDS = createStopwords();
-const ALL_CITIES = new Set(Object.keys(REGION_BY_CITY_WITH_INDEXES));
+export const ALL_CITIES = new Set(Object.keys(REGION_BY_CITY_WITH_INDEXES));
+
+// Pre-calculate region tokens for fast filtering
+const REGION_TOKENS_SET = new Set<string>();
+Object.keys(REGION_KEYWORD_MAP).forEach(k => {
+    k.toLowerCase().split(/[\s-]+/).forEach(w => {
+        if (w.length > 2) REGION_TOKENS_SET.add(w);
+    });
+});
+Object.values(REGION_KEYWORD_MAP).forEach(v => {
+    v.toLowerCase().split(/[\s-]+/).forEach(w => {
+        if (w.length > 2) REGION_TOKENS_SET.add(w);
+    });
+});
+
+export const getCoreAddressTokens = (address: string): { cities: string[], tokens: string[] } => {
+    const norm = normalizeAddress(address);
+    const rawTokens = norm.split(' ');
+    
+    const cities: string[] = [];
+    const coreTokens: string[] = [];
+    
+    for (const t of rawTokens) {
+        if (ALL_CITIES.has(t)) {
+            cities.push(t);
+            continue; 
+        }
+        // Filter out region tokens (adjectives mostly)
+        // This is heuristic but helps with "Arkhangelskaya" vs "Arkhangelsk"
+        if (REGION_TOKENS_SET.has(t)) continue;
+        
+        coreTokens.push(t);
+    }
+    
+    return { cities, tokens: coreTokens };
+};
 
 export function normalizeAddress(address: string | null | undefined, options: { simplify?: boolean } = {}): string {
     if (!address) return "";
     let cleaned = address.toLowerCase().replace(/ё/g, 'е');
     cleaned = cleaned.replace(/(\d+)\s*\/\s*(\d+[а-я]?)/g, '$1к$2').replace(/\b(корпус|корп|к)\.?\s*([а-я])\b/g, 'к$2').replace(/\b(строение|стр)\.?\s*([а-я])\b/g, 'с$2').replace(/\b(литер|лит)\.?\s*([а-я])\b/g, 'л$2').replace(/\b(корпус|корп|к)\.?\s*(\d+[а-я]?\b)/g, 'к$2').replace(/\b(строение|стр)\.?\s*(\d+[а-я]?\b)/g, 'с$2').replace(/\b(литер|лит)\.?\s*(\d+[а-я]?\b)/g, 'л$2').replace(/\b(д|дом)\.?\s*(\d+[а-я]?\b)/g, '$2').replace(/\b(\d+)\s+([а-я])\b/g, '$1$2');
     cleaned = cleaned.replace(/\b\d{5,6}\b/g, ''); 
-    cleaned = cleaned.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, ' '); 
+    cleaned = cleaned.replace(new RegExp('[.,/#!$%^&*;:{}=\\-_`~()]', 'g'), ' '); 
     let parts = cleaned.split(/\s+/).filter(part => part && !STOPWORDS.has(part));
     if (options.simplify) {
         parts = parts.filter(part => {
@@ -269,13 +303,13 @@ export const toDayKey = (raw?: string | null | number): string | null => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
 
   // 2. YYYY.MM.DD or YYYY/MM/DD (common in data exports)
-  let match = s.match(/^(\d{4})[\.\-/](\d{1,2})[\.\-/](\d{1,2})/);
+  let match = s.match(/^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})/);
   if (match) {
       return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
   }
 
   // 3. DD.MM.YYYY or DD/MM/YYYY or DD-MM-YYYY (Russian/EU format)
-  match = s.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})/);
+  match = s.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})/);
   if (match) {
       return `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`;
   }

@@ -7,8 +7,8 @@ import {
   calculateSummaryMetrics,
   findAddressInRow,
   findValueInRow,
-  normalizeAddress,
-  toDayKey
+  toDayKey,
+  getCoreAddressTokens
 } from '../utils/dataUtils';
 import { enrichDataWithSmartPlan } from '../services/planning/integration';
 import { enrichWithAbcCategories } from '../utils/analytics';
@@ -49,7 +49,6 @@ export const useAnalytics = (
                 if (!dk) {
                     continue;
                 }
-                hasValidDates = true;
                 if (fStart && dk < fStart) continue;
                 if (fEnd && dk > fEnd) continue;
                 newRowFact += (val as number) || 0;
@@ -153,12 +152,25 @@ export const useAnalytics = (
     return Array.from(clientsMap.values());
   }, [filtered]);
 
-  const activeClientAddressSet = useMemo(() => {
-    const addressSet = new Set<string>();
+  const activeClientIndex = useMemo(() => {
+    const index = new Map<string, string[][]>();
+
     allActiveClients.forEach(client => {
-      if (client.address) addressSet.add(normalizeAddress(client.address));
+      if (!client.address) return;
+      const { cities, tokens } = getCoreAddressTokens(client.address);
+      
+      if (cities.length > 0) {
+          cities.forEach(city => {
+              if (!index.has(city)) index.set(city, []);
+              index.get(city)!.push(tokens);
+          });
+      } else {
+          // Fallback for addresses without detected city
+          if (!index.has('unknown')) index.set('unknown', []);
+          index.get('unknown')!.push(tokens);
+      }
     });
-    return addressSet;
+    return index;
   }, [allActiveClients]);
 
   const mapPotentialClients = useMemo(() => {
@@ -171,9 +183,44 @@ export const useAnalytics = (
     });
 
     const potentialOnly = coordsOnly.filter(r => {
-      const addr = findAddressInRow(r);
-      if (!addr) return true;
-      return !activeClientAddressSet.has(normalizeAddress(addr));
+      let addrRaw = findAddressInRow(r);
+      if (!addrRaw) return true;
+
+      // Append City if available in row and not in address
+      const rowCity = findValueInRow(r, ['город', 'city']);
+      if (rowCity && !addrRaw.toLowerCase().includes(rowCity.toLowerCase())) {
+          addrRaw = `${rowCity} ${addrRaw}`;
+      }
+
+      const { cities, tokens } = getCoreAddressTokens(addrRaw);
+      
+      // If no tokens left (e.g. just city/region), we can't safely dedupe, assume unique?
+      // Or assume duplicate if city matches? Better to be safe and show it.
+      if (tokens.length === 0) return true;
+
+      const candidates: string[][] = [];
+      
+      if (cities.length > 0) {
+          cities.forEach(c => {
+              const cityCandidates = activeClientIndex.get(c);
+              if (cityCandidates) candidates.push(...cityCandidates);
+          });
+      } else {
+          // Try unknown bucket
+          const unknownCandidates = activeClientIndex.get('unknown');
+          if (unknownCandidates) candidates.push(...unknownCandidates);
+      }
+
+      if (candidates.length === 0) return true;
+
+      // Check for match: OKB tokens must be a subset of Active tokens
+      const isMatch = candidates.some(activeTokens => {
+          // Optimization: Active address usually longer or equal
+          if (activeTokens.length < tokens.length) return false;
+          return tokens.every(t => activeTokens.includes(t));
+      });
+
+      return !isMatch;
     });
 
     if (filters.region.length === 0) return potentialOnly;
@@ -186,7 +233,7 @@ export const useAnalytics = (
         selectedReg.toLowerCase().includes(rawRegion.toLowerCase())
       );
     });
-  }, [okbData, filters.region, activeClientAddressSet]);
+  }, [okbData, filters.region, activeClientIndex]);
 
   const filterOptions = useMemo(() => getFilterOptions(allData), [allData]);
   const summaryMetrics = useMemo(() => calculateSummaryMetrics(filtered), [filtered]);
