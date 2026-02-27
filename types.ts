@@ -391,6 +391,10 @@ export type ActionQueueItem =
             lat?: number; 
             lon?: number;
             skipHistory?: boolean; // NEW: Flag to suppress Google Sheet history logging
+            waitForGeocoding?: boolean;
+            trackingKey?: string;
+            originalIndex?: number;
+            basePoint?: MapPoint;
         };
         retryCount: number;
       }

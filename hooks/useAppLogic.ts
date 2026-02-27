@@ -405,7 +405,7 @@ export const useAppLogic = () => {
     }, [user, saveInterestDelta, addNotification]);
 
     // --- 2. GEOCODING HOOK ---
-    const { pendingGeocoding, actionQueue, handleStartPolling, handleQueuedUpdate, handleQueuedDelete } = useGeocoding(addNotification, handleDataUpdate, handleDeleteClientLocal);
+    const { actionQueue, handleStartPolling, handleQueuedUpdate, handleQueuedDelete } = useGeocoding(addNotification, handleDataUpdate, handleDeleteClientLocal);
 
     // --- LIVE SYNC ---
     useEffect(() => {

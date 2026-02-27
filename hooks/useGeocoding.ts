@@ -1,17 +1,6 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { MapPoint, ActionQueueItem } from '../types';
-import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
-
-interface PendingGeocodingItem {
-    rm: string;
-    address: string;
-    oldKey: string;
-    basePoint: MapPoint;
-    originalIndex?: number;
-    attempts: number;
-    nextPollTime: number; // Added to manage polling schedule
-}
 
 const MAX_GEOCODING_ATTEMPTS = 60;
 const GEOCODING_POLLING_INTERVAL_MS = 3000;
@@ -22,7 +11,6 @@ export const useGeocoding = (
     onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number) => void,
     onDeleteClientLocal: (rm: string, address: string) => void
 ) => {
-    const [pendingGeocoding, setPendingGeocoding] = useState<PendingGeocodingItem[]>([]);
     const [actionQueue, setActionQueue] = useState<ActionQueueItem[]>([]);
     const [isProcessingQueue, setIsProcessingQueue] = useState(false);
 
@@ -50,7 +38,9 @@ export const useGeocoding = (
 
             try {
                 if (action.type === 'UPDATE_ADDRESS') {
-                    const { rmName, oldAddress, newAddress, comment, lat, lon, skipHistory } = action.payload;
+                    const { rmName, oldAddress, newAddress, comment, lat, lon, skipHistory, waitForGeocoding, trackingKey, originalIndex, basePoint } = action.payload;
+                    
+                    // 1. Send Update Request
                     const res = await fetch('/api/update-address', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -58,6 +48,78 @@ export const useGeocoding = (
                     });
                     if (!res.ok) throw new Error('Failed to update address');
                     console.log(`✅ [Queue] Successfully updated: ${newAddress}`);
+
+                    // 2. If Geocoding requested, POLL until done
+                    if (waitForGeocoding && trackingKey && basePoint) {
+                        console.log(`⏳ [Queue] Waiting for geocoding: ${newAddress}`);
+                        
+                        let attempts = 0;
+                        // Initial delay
+                        await new Promise(r => setTimeout(r, INITIAL_POLL_DELAY_MS));
+
+                        while (attempts < MAX_GEOCODING_ATTEMPTS) {
+                            attempts++;
+                            console.info(`📡 [Geocoding] Polling for ${newAddress} (Attempt ${attempts}/${MAX_GEOCODING_ATTEMPTS})`);
+                            
+                            try {
+                                const pollRes = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(newAddress)}&t=${Date.now()}`);
+                                if (pollRes.ok) {
+                                    const data = await pollRes.json();
+                                    
+                                    // Success Condition
+                                    if (data && typeof data.lat === 'number' && typeof data.lon === 'number' && data.lat !== 0) {
+                                        console.log(`✅ [Geocoding] Success for ${newAddress}:`, data);
+                                        
+                                        const newPoint: MapPoint = {
+                                            ...basePoint,
+                                            lat: data.lat,
+                                            lon: data.lon,
+                                            isGeocoding: false, 
+                                            coordStatus: 'confirmed',
+                                            comment: data.comment || basePoint.comment,
+                                            lastUpdated: Date.now()
+                                        };
+
+                                        onDataUpdateRef.current(trackingKey, newPoint, originalIndex);
+                                        addNotification(`Координаты получены: ${newAddress}`, 'success');
+                                        break; // Done
+                                    } 
+                                    // Invalid Condition
+                                    else if (data && (data.isInvalid || data.coordStatus === 'invalid')) {
+                                         console.warn(`⚠️ [Geocoding] Address marked invalid: ${newAddress}`);
+                                         const failedPoint: MapPoint = {
+                                            ...basePoint,
+                                            isGeocoding: false,
+                                            coordStatus: 'invalid',
+                                            geocodingError: 'Адрес не найден в картах',
+                                            lastUpdated: Date.now()
+                                        };
+                                        onDataUpdateRef.current(trackingKey, failedPoint, originalIndex);
+                                        addNotification(`Не удалось найти координаты: ${newAddress}`, 'error');
+                                        break; // Done
+                                    }
+                                }
+                            } catch (e) {
+                                console.error(`❌ Error polling for ${newAddress}:`, e);
+                            }
+
+                            // Wait before next attempt
+                            await new Promise(r => setTimeout(r, GEOCODING_POLLING_INTERVAL_MS));
+                        }
+
+                        if (attempts >= MAX_GEOCODING_ATTEMPTS) {
+                             console.warn(`⚠️ [Geocoding] Timeout for ${newAddress}`);
+                             const timeoutPoint: MapPoint = {
+                                 ...basePoint,
+                                 isGeocoding: false,
+                                 geocodingError: 'Timeout',
+                                 lastUpdated: Date.now()
+                             };
+                             onDataUpdateRef.current(trackingKey, timeoutPoint, originalIndex);
+                             addNotification(`Время ожидания координат истекло: ${newAddress}`, 'warning');
+                        }
+                    }
+
                 } else if (action.type === 'DELETE_ADDRESS') {
                     const { rmName, address } = action.payload;
                     const res = await fetch('/api/delete-address', {
@@ -72,11 +134,17 @@ export const useGeocoding = (
                     onDeleteClientLocalRef.current(rmName, address);
                 }
                 
+                // Remove processed action
                 setActionQueue(prev => prev.slice(1));
+
             } catch (error) {
                 console.error(`❌ [Queue] Error processing action ${action.type}:`, error);
                 
                 if (action.retryCount < 3) {
+                    // Retry logic (move to end or keep at front with delay?)
+                    // Here we move to end to not block others if it's a transient network error, 
+                    // but for strict sequencing maybe we should retry in place? 
+                    // Let's keep existing logic: move to end.
                     setActionQueue(prev => {
                         const [failed, ...rest] = prev;
                         return [...rest, { ...failed, retryCount: failed.retryCount + 1 }];
@@ -94,140 +162,11 @@ export const useGeocoding = (
         return () => clearInterval(timer);
     }, [actionQueue, isProcessingQueue, addNotification]);
 
-    // --- GEOCODING POLLER ---
-    useEffect(() => {
-        const checkPendingItems = async () => {
-            if (pendingGeocoding.length === 0) return;
-
-            const now = Date.now();
-            
-            // Filter items ready for polling
-            const activeItems = pendingGeocoding.filter(item => 
-                item.attempts < MAX_GEOCODING_ATTEMPTS && 
-                now >= item.nextPollTime
-            );
-            
-            // Items waiting for their time slot (keep them in state)
-            const waitingItems = pendingGeocoding.filter(item => 
-                item.attempts < MAX_GEOCODING_ATTEMPTS && 
-                now < item.nextPollTime
-            );
-            
-            if (activeItems.length === 0) {
-                // If nothing to poll yet, just keep waiting items
-                if (waitingItems.length < pendingGeocoding.length) {
-                     setPendingGeocoding(waitingItems);
-                }
-                return;
-            }
-
-            const itemsByRm: Record<string, PendingGeocodingItem[]> = {};
-            activeItems.forEach(item => {
-                if (!itemsByRm[item.rm]) itemsByRm[item.rm] = [];
-                itemsByRm[item.rm].push(item);
-            });
-
-            const processedKeys = new Set<string>();
-
-            for (const [rm, items] of Object.entries(itemsByRm)) {
-                try {
-                    for (const item of items) {
-                        console.info(`📡 [Geocoding] Polling for ${item.address} (Attempt ${item.attempts + 1}/${MAX_GEOCODING_ATTEMPTS})`);
-                        
-                        const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rm)}&address=${encodeURIComponent(item.address)}&t=${now}`);
-                        if (!res.ok) continue;
-                        
-                        const data = await res.json();
-                        
-                        // Success Condition: Must have valid numbers AND not be in pending state (if status available)
-                        // Backend now guarantees clearing coords if address changed, so data.lat will be undefined while pending.
-                        if (data && typeof data.lat === 'number' && typeof data.lon === 'number' && data.lat !== 0) {
-                            console.log(`✅ [Geocoding] Success for ${item.address}:`, data);
-                            
-                            const newPoint: MapPoint = {
-                                ...item.basePoint,
-                                lat: data.lat,
-                                lon: data.lon,
-                                isGeocoding: false, 
-                                coordStatus: 'confirmed',
-                                comment: data.comment || item.basePoint.comment,
-                                lastUpdated: Date.now()
-                            };
-
-                            // Use oldKey (which here is the tracking key) to update the existing placeholder
-                            onDataUpdateRef.current(item.oldKey, newPoint, item.originalIndex);
-                            
-                            processedKeys.add(item.oldKey);
-                            addNotification(`Координаты получены: ${item.address}`, 'success');
-                        } 
-                        else if (data && (data.isInvalid || data.coordStatus === 'invalid')) {
-                             console.warn(`⚠️ [Geocoding] Address marked invalid: ${item.address}`);
-                             const failedPoint: MapPoint = {
-                                ...item.basePoint,
-                                isGeocoding: false,
-                                coordStatus: 'invalid',
-                                geocodingError: 'Адрес не найден в картах',
-                                lastUpdated: Date.now()
-                            };
-                            onDataUpdateRef.current(item.oldKey, failedPoint, item.originalIndex);
-                            processedKeys.add(item.oldKey);
-                            addNotification(`Не удалось найти координаты: ${item.address}`, 'error');
-                        }
-                    }
-                } catch (e) {
-                    console.error(`❌ Error polling for RM ${rm}:`, e);
-                }
-            }
-
-            // Update state: Remove processed, update attempts/time for others
-            setPendingGeocoding(prev => {
-                const nextState: PendingGeocodingItem[] = [];
-                
-                prev.forEach(item => {
-                    // If processed successfully or failed terminally, drop it
-                    if (processedKeys.has(item.oldKey)) return;
-                    
-                    // If it was waiting, keep it as is
-                    if (now < item.nextPollTime) {
-                        nextState.push(item);
-                        return;
-                    }
-                    
-                    // If it was polled but not ready, increment attempt and delay
-                    if (item.attempts + 1 < MAX_GEOCODING_ATTEMPTS) {
-                        nextState.push({
-                            ...item,
-                            attempts: item.attempts + 1,
-                            nextPollTime: now + GEOCODING_POLLING_INTERVAL_MS
-                        });
-                    }
-                });
-                
-                return nextState;
-            });
-        };
-
-        const timer = setInterval(checkPendingItems, 1000); // Check every second for items ready to poll
-        return () => clearInterval(timer);
-    }, [pendingGeocoding, addNotification]);
-
     // --- PUBLIC HANDLERS ---
 
     const handleStartPolling = useCallback((rmName: string, address: string, oldKey: string, basePoint: MapPoint, originalIndex?: number, originalAddress?: string) => {
         // Use provided originalAddress or fallback to basePoint's address if not provided (safety)
         const oldAddr = originalAddress || basePoint.address;
-
-        setActionQueue(prev => [...prev, {
-            type: 'UPDATE_ADDRESS',
-            id: Date.now().toString(),
-            payload: { 
-                rmName, 
-                oldAddress: oldAddr, // CORRECT: Pass the OLD address so backend finds the record
-                newAddress: address, // CORRECT: Pass the NEW address to update to
-                comment: basePoint.comment 
-            },
-            retryCount: 0
-        }]);
 
         // CRITICAL: Determine tracking key. If basePoint has a new key (e.g. from Unidentified row conversion), use that.
         // Otherwise fallback to oldKey. This ensures subsequent updates find the correct item in allData.
@@ -246,21 +185,22 @@ export const useGeocoding = (
         // Update local data with the placeholder (moves from Unidentified to Active if originalIndex provided)
         onDataUpdateRef.current(oldKey, tempPoint, originalIndex);
 
-        setPendingGeocoding(prev => {
-            // Remove any existing pending item for this key to avoid duplicates
-            const filtered = prev.filter(p => p.oldKey !== trackingKey);
-            return [...filtered, {
-                rm: rmName,
-                address,
-                oldKey: trackingKey, // Use the new tracking key for future updates
-                basePoint: tempPoint,
+        // Add to Queue with waitForGeocoding flag
+        setActionQueue(prev => [...prev, {
+            type: 'UPDATE_ADDRESS',
+            id: Date.now().toString(),
+            payload: { 
+                rmName, 
+                oldAddress: oldAddr, 
+                newAddress: address, 
+                comment: basePoint.comment,
+                waitForGeocoding: true,
+                trackingKey,
                 originalIndex,
-                attempts: 0,
-                // CRITICAL FIX: Add delay before first poll to prevent race condition 
-                // reading old coords before write completes.
-                nextPollTime: Date.now() + INITIAL_POLL_DELAY_MS 
-            }];
-        });
+                basePoint: tempPoint
+            },
+            retryCount: 0
+        }]);
     }, []);
 
     const handleQueuedUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number, options?: { skipHistory?: boolean }) => {
@@ -275,7 +215,8 @@ export const useGeocoding = (
                     comment: newPoint.comment,
                     lat: newPoint.lat,
                     lon: newPoint.lon,
-                    skipHistory: options?.skipHistory
+                    skipHistory: options?.skipHistory,
+                    waitForGeocoding: false
                 },
                 retryCount: 0
             }]);
@@ -296,7 +237,6 @@ export const useGeocoding = (
     }, []);
 
     return {
-        pendingGeocoding,
         actionQueue,
         handleStartPolling,
         handleQueuedUpdate,
