@@ -8,9 +8,11 @@ interface OKBManagementProps {
   onDataChange: (data: OkbDataRow[]) => void;
   status: OkbStatus | null;
   disabled: boolean;
+  potentialRowCount?: number;
+  potentialCoordsCount?: number;
 }
 
-const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataChange, status, disabled }) => {
+const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataChange, status, disabled, potentialRowCount, potentialCoordsCount }) => {
   const [isFetching, setIsFetching] = useState(false);
 
   const handleFetchData = useCallback(
@@ -110,7 +112,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
                       Всего<br/>записей
                   </div>
                   <div className="text-xl font-black text-slate-900 tracking-tight">
-                      {status?.rowCount ? status.rowCount.toLocaleString('ru-RU') : '—'}
+                      {potentialRowCount !== undefined ? potentialRowCount.toLocaleString('ru-RU') : (status?.rowCount ? status.rowCount.toLocaleString('ru-RU') : '—')}
                   </div>
              </div>
              <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">
@@ -118,7 +120,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
                       С коорди-<br/>натами
                   </div>
                   <div className="text-xl font-black text-slate-900 tracking-tight">
-                      {status?.coordsCount ? status.coordsCount.toLocaleString('ru-RU') : '—'}
+                      {potentialCoordsCount !== undefined ? potentialCoordsCount.toLocaleString('ru-RU') : (status?.coordsCount ? status.coordsCount.toLocaleString('ru-RU') : '—')}
                   </div>
              </div>
              <div className="p-3 border border-slate-200 rounded-2xl flex flex-col justify-between h-20 shadow-sm">

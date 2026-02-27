@@ -251,6 +251,8 @@ const AppContent: React.FC = () => {
                                 setIsSearchOpen={setIsSearchOpen}
                                 selectedRm={filters.rm}
                                 onRmChange={(rm) => setFilters(prev => ({ ...prev, rm }))}
+                                potentialClientsCount={okbStatus?.status === 'ready' ? mapPotentialClients.length : undefined}
+                                potentialCoordsCount={okbStatus?.status === 'ready' ? mapPotentialClients.length : undefined}
                             />
                         )}
 

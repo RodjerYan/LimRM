@@ -37,6 +37,9 @@ interface AdaptaProps {
     loadEndDate?: string;
     onLoadStartDateChange?: (date: string) => void;
     onLoadEndDateChange?: (date: string) => void;
+
+    potentialClientsCount?: number;
+    potentialCoordsCount?: number;
 }
 
 interface OutlierItem {
@@ -283,7 +286,14 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                             </div>
                         </div>
 
-                        <OKBManagement onStatusChange={props.onOkbStatusChange} onDataChange={props.onOkbDataChange} status={props.okbStatus} disabled={props.disabled} />
+                        <OKBManagement 
+                            onStatusChange={props.onOkbStatusChange} 
+                            onDataChange={props.onOkbDataChange} 
+                            status={props.okbStatus} 
+                            disabled={props.disabled} 
+                            potentialRowCount={props.potentialClientsCount}
+                            potentialCoordsCount={props.potentialCoordsCount}
+                        />
                         
                         <FileUpload 
                             processingState={props.processingState} 
