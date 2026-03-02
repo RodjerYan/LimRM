@@ -374,6 +374,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
   const prevKeyRef = useRef<string | number | undefined>(undefined);
   const prevLastUpdatedRef = useRef<number | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   
   const isPotential = (data as MapPoint)?.status === 'potential';
 
@@ -383,8 +389,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       const res = await fetch(`/api/get-history?rm=${encodeURIComponent(rm)}&address=${encodeURIComponent(address)}`);
       if (!res.ok) throw new Error('Ошибка загрузки истории');
       const json = await res.json();
-      setHistory(Array.isArray(json.history) ? json.history : []);
-    } catch (e) { console.warn('History load error:', e); setHistory([]); } finally { setIsLoadingHistory(false); }
+      if (mountedRef.current) setHistory(Array.isArray(json.history) ? json.history : []);
+    } catch (e) { console.warn('History load error:', e); if (mountedRef.current) setHistory([]); } finally { if (mountedRef.current) setIsLoadingHistory(false); }
   };
 
   useEffect(() => {
@@ -507,10 +513,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       if (json?.updatedPoint) {
         const name = (data as MapPoint).name || findValueInRow(originalRow, ['наименование', 'клиент']) || 'ТТ';
         const mergedPoint: MapPoint = { ...json.updatedPoint, rm, name, status: (json.updatedPoint.lat && json.updatedPoint.lon) ? 'match' : 'potential' };
-        onDataUpdate((data as MapPoint).key || String((data as any).originalIndex), mergedPoint, (data as any).originalIndex, { skipHistory: true });
+        if (mountedRef.current) onDataUpdate((data as MapPoint).key || String((data as any).originalIndex), mergedPoint, (data as any).originalIndex, { skipHistory: true });
       }
-      setStatus('idle');
-    } catch (e: any) { setStatus('error_saving'); setError(e?.message || 'Ошибка синхронизации'); }
+      if (mountedRef.current) setStatus('idle');
+    } catch (e: any) { if (mountedRef.current) { setStatus('error_saving'); setError(e?.message || 'Ошибка синхронизации'); } }
   };
 
   const handleSendComment = async () => {
@@ -574,17 +580,19 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
 
       if (!backendOk) {
           // rollback optimistic entry
-          setHistory(prev => prev.filter((h) => {
-              if (typeof h === 'object') return h.timestamp !== timestamp;
-              return true;
-          }));
-          setStatus('error_saving');
-          setError('Не удалось сохранить комментарий в базе (Google).');
+          if (mountedRef.current) {
+              setHistory(prev => prev.filter((h) => {
+                  if (typeof h === 'object') return h.timestamp !== timestamp;
+                  return true;
+              }));
+              setStatus('error_saving');
+              setError('Не удалось сохранить комментарий в базе (Google).');
+          }
           return;
       }
 
       // Call parent to save delta (Local/Sync)
-      onDataUpdate(oldKey, baseNewPoint, undefined, { type: 'comment' });
+      if (mountedRef.current) onDataUpdate(oldKey, baseNewPoint, undefined, { type: 'comment' });
   };
 
   const handleDeleteComment = async (idx: number, item: string | { user: string, date: string, text: string, timestamp: number }) => {
@@ -651,13 +659,15 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
 
       // Rollback UI if backend failed
       if (!backendOk) {
-          setHistory(prev => {
-              const copy = [...prev];
-              copy.splice(idx, 0, item);
-              return copy;
-          });
-          setStatus('error_deleting');
-          setError('Не удалось удалить комментарий в базе (Google). Изменение отменено.');
+          if (mountedRef.current) {
+              setHistory(prev => {
+                  const copy = [...prev];
+                  copy.splice(idx, 0, item);
+                  return copy;
+              });
+              setStatus('error_deleting');
+              setError('Не удалось удалить комментарий в базе (Google). Изменение отменено.');
+          }
           return;
       }
 
@@ -672,7 +682,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
           pointToUpdate.comment = '';
       }
 
-      onDataUpdate(oldKey, pointToUpdate, undefined, { type: 'delete_comment', originalTimestamp: originalTimestamp });
+      if (mountedRef.current) onDataUpdate(oldKey, pointToUpdate, undefined, { type: 'delete_comment', originalTimestamp: originalTimestamp });
   };
 
   const handleSave = async () => {
@@ -771,22 +781,32 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
               }
           } catch (e: any) {
               // rollback optimistic
-              setHistory((prev) => prev.filter((h) => (typeof h === 'object' ? (h as any).timestamp !== ts : true)));
-              setStatus('error_saving');
-              setError(e?.message || 'Не удалось сохранить комментарий');
+              if (mountedRef.current) {
+                  setHistory((prev) => prev.filter((h) => (typeof h === 'object' ? (h as any).timestamp !== ts : true)));
+                  setStatus('error_saving');
+                  setError(e?.message || 'Не удалось сохранить комментарий');
+              }
               return;
           }
       }
 
-      onDataUpdate(oldKey, baseNewPoint, originalIndex);
-      setStatus('success');
-      
-      // Only close if address/coords changed. If just comment/channel, keep open.
-      if (isAddressChanged || (manualCoords && (manualCoords.lat !== (data as MapPoint).lat || manualCoords.lon !== (data as MapPoint).lon))) {
-          setTimeout(() => onClose(), 350);
-      } else {
-          // Reset status to idle after a delay so user can edit again
-          setTimeout(() => setStatus('idle'), 2000);
+      if (mountedRef.current) {
+          setStatus('success');
+          
+          // Defer the heavy data update to allow the UI to render the 'success' state first
+          setTimeout(() => {
+              if (mountedRef.current) {
+                  onDataUpdate(oldKey, baseNewPoint, originalIndex);
+                  
+                  // Only close if address/coords changed. If just comment/channel, keep open.
+                  if (isAddressChanged || (manualCoords && (manualCoords.lat !== (data as MapPoint).lat || manualCoords.lon !== (data as MapPoint).lon))) {
+                      setTimeout(() => onClose(), 350);
+                  } else {
+                      // Reset status to idle after a delay so user can edit again
+                      setTimeout(() => { if (mountedRef.current) setStatus('idle'); }, 2000);
+                  }
+              }
+          }, 50);
       }
     }
   };

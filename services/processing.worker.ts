@@ -9,7 +9,7 @@ import {
 } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
-import { normalizeAddress, findAddressInRow, detectChannelByName } from '../utils/dataUtils';
+import { normalizeAddress, findAddressInRow, detectChannelByName, normalizeTtName, ttNameSimilarity, getCoreAddressTokens } from '../utils/dataUtils';
 
 // Helper for Unique IDs
 const generateRowId = () => {
@@ -920,10 +920,265 @@ async function finalizeStream(postMessage: PostMessageFn) {
     });
 }
 
+const getDistanceMeters = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371e3; // metres
+    const φ1 = lat1 * Math.PI/180;
+    const φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1) * Math.PI/180;
+    const Δλ = (lon2-lon1) * Math.PI/180;
+
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+    return R * c;
+};
+
+function calculatePotentialClients(payload: { 
+    okbData: OkbDataRow[], 
+    filters: any, 
+    activeClients: MapPoint[] 
+}, postMessage: PostMessageFn) {
+    const { okbData, filters, activeClients } = payload;
+
+    if (!okbData || okbData.length === 0) {
+        postMessage({ type: 'result_potential_clients', payload: [] });
+        return;
+    }
+
+    // 1. Build Indexes from activeClients
+    const globalActiveClientIndex = new Map<string, { key: string; tokens: string[]; raw?: string; ttNameNorm: string }[]>();
+    const globalActiveClientCoords = new Map<string, { key: string; lat: number; lon: number; ttNameNorm: string }[]>();
+
+    activeClients.forEach(client => {
+        if (!client.key) return;
+        
+        // Address Index
+        if (client.address) {
+            const { cities, tokens } = getCoreAddressTokens(client.address);
+            if (tokens.length > 0) {
+                const signature = { 
+                    key: client.key, 
+                    tokens, 
+                    raw: client.address,
+                    ttNameNorm: normalizeTtName((client as any).ttName || (client as any).name || (client as any).title || (client as any).clientName)
+                };
+
+                if (cities.length > 0) {
+                    cities.forEach(city => {
+                        if (!globalActiveClientIndex.has(city)) globalActiveClientIndex.set(city, []);
+                        globalActiveClientIndex.get(city)!.push(signature);
+                    });
+                } else {
+                    if (!globalActiveClientIndex.has('unknown')) globalActiveClientIndex.set('unknown', []);
+                    globalActiveClientIndex.get('unknown')!.push(signature);
+                }
+            }
+        }
+
+        // Coords Index
+        const latN = Number((client as any).lat);
+        const lonN = Number((client as any).lon);
+        
+        if (Number.isFinite(latN) && Number.isFinite(lonN) && latN !== 0 && lonN !== 0) {
+            const cell = (x: number) => Math.round(x * 1000);
+            const key = `${cell(latN)}:${cell(lonN)}`;
+            
+            if (!globalActiveClientCoords.has(key)) globalActiveClientCoords.set(key, []);
+            globalActiveClientCoords.get(key)!.push({ 
+                key: client.key, 
+                lat: latN, 
+                lon: lonN,
+                ttNameNorm: normalizeTtName((client as any).ttName || (client as any).name || (client as any).title || (client as any).clientName)
+            });
+        }
+    });
+
+    // 2. Filter OKB Data
+    const coordsOnly = okbData.filter(r => {
+        const latN = Number(r.lat);
+        const lonN = Number(r.lon);
+        return Number.isFinite(latN) && Number.isFinite(lonN) && latN !== 0 && lonN !== 0;
+    });
+
+    const potentialOnly = coordsOnly.filter(r => {
+        // Extract OKB Name for validation
+        const okbNameRaw = findValueInRowLocal(r, ['наименование тт', 'название тт', 'торговая точка', 'тт', 'клиент', 'контрагент', 'наименование', 'название', 'name']);
+        const okbNameNorm = normalizeTtName(okbNameRaw);
+        const NAME_THRESHOLD = 0.75;
+
+        // 1. Coordinate Match (Fastest)
+        const rLat = Number(r.lat);
+        const rLon = Number(r.lon);
+        
+        let coordNear = false;
+        const nearNamesSet = new Set<string>();
+
+        // Check 9 neighbors grid
+        const cell = (x: number) => Math.round(x * 1000);
+        const centerLat = cell(rLat);
+        const centerLon = cell(rLon);
+
+        for (let latOff = -1; latOff <= 1; latOff++) {
+            for (let lonOff = -1; lonOff <= 1; lonOff++) {
+                const key = `${centerLat + latOff}:${centerLon + lonOff}`;
+                const candidates = globalActiveClientCoords.get(key);
+                if (candidates) {
+                    for (const cand of candidates) {
+                        if (getDistanceMeters(rLat, rLon, cand.lat, cand.lon) < 80) {
+                            coordNear = true;
+                            if (cand.ttNameNorm) nearNamesSet.add(cand.ttNameNorm);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Address Analysis (for Collective check)
+        let addrRaw = findAddressInRow(r);
+        let isCollective = false;
+
+        if (addrRaw) {
+            const addrCollective = addrRaw.toLowerCase().replace(/ё/g,'е');
+            isCollective = /\b(тц|т\/ц|т\.ц\.|трц|трк|тк|бц|торгов(ый|ого)|бизнес|центр|комплекс|рынок|пав(ильон)?|секц(ия)?|линия|ряд|офис|помещ(ение)?)\b/.test(addrCollective);
+        }
+
+        if (coordNear) {
+            if (isCollective) {
+                // Collective: Strict Name Match Required
+                if (okbNameNorm && nearNamesSet.size > 0) {
+                    const nearNames = Array.from(nearNamesSet);
+                    if (nearNames.some(n => ttNameSimilarity(okbNameNorm, n) >= NAME_THRESHOLD)) {
+                        return false; // Confirmed duplicate by coords + name
+                    }
+                }
+            } else {
+                // Ordinary Address (or no address): Coordinate match is sufficient (Strict Mode)
+                return false; // Duplicate
+            }
+        }
+
+        // 3. Address Match (Fallback)
+        if (!addrRaw) return true;
+
+        // Append City if available in row and not in address (Robust check)
+        const rowCity = findValueInRowLocal(r, ['город', 'city']);
+        if (rowCity) {
+            const addrLower = addrRaw.toLowerCase().replace(/ё/g,'е');
+            const cityLower = String(rowCity).toLowerCase().replace(/ё/g,'е').trim();
+            const hasCityWord = new RegExp(`(^|\\s)${cityLower}(\\s|$)`).test(addrLower);
+            if (!hasCityWord) addrRaw = `${rowCity} ${addrRaw}`;
+        }
+
+        const { cities, tokens } = getCoreAddressTokens(addrRaw);
+        if (tokens.length === 0) return true;
+
+        const candidates: { key: string; tokens: string[]; raw?: string; ttNameNorm: string }[] = [];
+        
+        if (cities.length > 0) {
+            cities.forEach(c => {
+                const cityCandidates = globalActiveClientIndex.get(c);
+                if (cityCandidates) candidates.push(...cityCandidates);
+            });
+
+            // fallback: if empty by city - try unknown
+            if (candidates.length === 0) {
+                const unknownCandidates = globalActiveClientIndex.get('unknown');
+                if (unknownCandidates) candidates.push(...unknownCandidates);
+            }
+        } else {
+            const unknownCandidates = globalActiveClientIndex.get('unknown');
+            if (unknownCandidates) candidates.push(...unknownCandidates);
+        }
+
+        if (candidates.length === 0) return true;
+
+        // Check for match: Symmetric subset check (OKB ⊆ ACTIVE) OR (ACTIVE ⊆ OKB)
+        const getHouseTokens = (tokens: string[]) => tokens.filter(t => 
+          /^\d+[а-я]?$/.test(t) ||                  // 98, 98а
+          /^\d+(к|с|л)\d+[а-я]?$/.test(t) ||        // 98к1, 98с1
+          /^[ксл]\d+[а-я]?$/.test(t)                // к1, с2
+        );
+
+        const isMatch = candidates.some(candidate => {
+            const activeTokens = candidate.tokens;
+            if (activeTokens.length === 0) return false;
+
+            // House Token Check (Anchor)
+            const okbHouses = getHouseTokens(tokens);
+            const actHouses = getHouseTokens(activeTokens);
+            
+            // If both have house tokens, they MUST match at least one
+            if (okbHouses.length > 0 && actHouses.length > 0) {
+                const houseMatch = okbHouses.some(h => actHouses.includes(h));
+                if (!houseMatch) return false;
+            }
+
+            // Short Token Safety
+            if (tokens.length < 3) {
+                // If very short, require strict Jaccard or house match
+                if (okbHouses.length > 0 && actHouses.length > 0) {
+                    // House matched above, so we are good
+                } else {
+                    // No houses, short address -> risky. Require high overlap.
+                    const overlap = tokens.filter(t => activeTokens.includes(t)).length;
+                    const jaccard = overlap / (new Set([...tokens, ...activeTokens]).size);
+                    if (jaccard < 0.85) return false;
+                }
+            }
+
+            const okbInActive = tokens.every(t => activeTokens.includes(t));
+            const activeInOkb = activeTokens.every(t => tokens.includes(t));
+            const addrMatch = okbInActive || activeInOkb;
+
+            if (!addrMatch) return false;
+
+            // Address Matched -> Validate by Name
+            const actName = candidate.ttNameNorm || '';
+            
+            // Hybrid Logic:
+            // 1. Collective Address (Mall, BC) -> Name match REQUIRED
+            if (isCollective) {
+                if (!okbNameNorm || !actName) return false; // Cannot verify -> assume different
+                return ttNameSimilarity(okbNameNorm, actName) >= NAME_THRESHOLD;
+            }
+
+            // 2. Ordinary Address -> Name match reinforces, but missing name = duplicate IF house matches
+            if (!okbNameNorm || !actName) {
+                // Check for house anchor match as final safety check
+                const hasHouse = okbHouses.length > 0 && actHouses.length > 0 && okbHouses.some(h => actHouses.includes(h));
+                return hasHouse; // Only cut if house number definitely matches
+            }
+
+            // If names present, check similarity with softer threshold
+            return ttNameSimilarity(okbNameNorm, actName) >= 0.6;
+        });
+
+        return !isMatch;
+    });
+
+    let finalResult = potentialOnly;
+
+    if (filters && filters.region && filters.region.length > 0) {
+        finalResult = potentialOnly.filter(row => {
+            const rawRegion = findValueInRowLocal(row, ['регион', 'субъект', 'область']);
+            if (!rawRegion) return false;
+            return filters.region.some((selectedReg: string) =>
+                rawRegion.toLowerCase().includes(selectedReg.toLowerCase()) ||
+                selectedReg.toLowerCase().includes(rawRegion.toLowerCase())
+            );
+        });
+    }
+
+    postMessage({ type: 'result_potential_clients', payload: finalResult });
+}
+
 self.onmessage = async (e) => {
     const msg = e.data;
     if (msg.type === 'INIT_STREAM') initStream(msg.payload, self.postMessage);
     else if (msg.type === 'PROCESS_CHUNK') processChunk(msg.payload, self.postMessage);
     else if (msg.type === 'RESTORE_CHUNK') restoreChunk(msg.payload, self.postMessage);
     else if (msg.type === 'FINALIZE_STREAM') await finalizeStream(self.postMessage);
+    else if (msg.type === 'CALCULATE_POTENTIAL_CLIENTS') calculatePotentialClients(msg.payload, self.postMessage);
 };

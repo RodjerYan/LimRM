@@ -40,9 +40,8 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({ items, isOpen, onClose }) =
     return () => window.removeEventListener("keydown", onKey);
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
-
   const filtered = useMemo(() => {
+    if (!isOpen) return [];
     if (!debounced.trim()) return [];
     const q = debounced.toLowerCase();
     return items.filter(
@@ -50,9 +49,10 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({ items, isOpen, onClose }) =
         i.title.toLowerCase().includes(q) ||
         i.subtitle?.toLowerCase().includes(q)
     );
-  }, [items, debounced]);
+  }, [items, debounced, isOpen]);
 
   const grouped = useMemo(() => {
+    if (!isOpen) return {};
     const map: Record<string, SearchItem[]> = {};
     const listToGroup = debounced.trim() ? filtered : recent;
 
@@ -71,7 +71,9 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({ items, isOpen, onClose }) =
     }
 
     return map;
-  }, [filtered, recent, debounced, items]);
+  }, [filtered, recent, debounced, items, isOpen]);
+
+  if (!isOpen) return null;
 
   const handleSelect = (item: SearchItem) => {
       pushRecent(item);

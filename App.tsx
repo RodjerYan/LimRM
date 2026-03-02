@@ -38,9 +38,7 @@ const UnidentifiedRowsModal = React.lazy(() => import('./components/Unidentified
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_GEMINI_API_KEY !== '';
 
-const AppContent: React.FC = () => {
-    if (!isApiKeySet) return <ApiKeyErrorDisplay />;
-
+const MainApp: React.FC = () => {
     const { user, isLoading: authLoading } = useAuth();
     const [showAdminModal, setShowAdminModal] = useState(false);
     const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -380,6 +378,11 @@ const AppContent: React.FC = () => {
             </div>
         </div>
     );
+};
+
+const AppContent: React.FC = () => {
+    if (!isApiKeySet) return <ApiKeyErrorDisplay />;
+    return <MainApp />;
 };
 
 const App: React.FC = () => {

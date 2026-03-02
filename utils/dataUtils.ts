@@ -9,6 +9,35 @@ import {
 import { REGION_KEYWORD_MAP, REGION_BY_CITY_MAP } from './addressMappings';
 import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';
 
+export const TT_NAME_STOP = new Set([
+  'ооо','ип','ао','пао','зао','оао','тд','гк',
+  'магазин','супермаркет','гипермаркет','сеть','пвз','пункт','выдачи'
+]);
+
+export const normalizeTtName = (s?: string | null) => {
+  if (!s) return '';
+  return String(s)
+    .toLowerCase()
+    .replace(/ё/g,'е')
+    .replace(/[«»"']/g,' ')
+    .replace(/[.,/#!$%^&*;:{}=\-_`~()]/g,' ')
+    .replace(/\s+/g,' ')
+    .trim()
+    .split(' ')
+    .filter(w => w.length >= 2 && !TT_NAME_STOP.has(w))
+    .join(' ');
+};
+
+export const ttNameSimilarity = (a: string, b: string) => {
+  const A = new Set(a.split(/\s+/).filter(Boolean));
+  const B = new Set(b.split(/\s+/).filter(Boolean));
+  if (A.size === 0 || B.size === 0) return 0;
+  let inter = 0;
+  for (const w of A) if (B.has(w)) inter++;
+  const union = A.size + B.size - inter;
+  return union === 0 ? 0 : inter / union;
+};
+
 /**
  * Normalizes an RM name for consistent matching.
  */
