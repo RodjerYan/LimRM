@@ -40,19 +40,22 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
         {/* Header */}
         <div className="shrink-0 px-5 pt-5 pb-4 border-b border-slate-200/60">
           <div className="flex items-center gap-3">
-            <div className="relative w-10 h-10 rounded-2xl overflow-hidden shadow-[0_16px_40px_rgba(99,102,241,0.18)] border border-slate-200/60">
-              <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 to-sky-500" />
-              <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.9),transparent_55%)]" />
-              <div className="relative h-full w-full flex items-center justify-center text-white font-black">
-                L
-              </div>
+            <div className="shrink-0">
+               <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M6 6H14V24H6V6Z" className="fill-slate-700" />
+                  <path d="M6 28H34V34H6V28Z" className="fill-slate-700" />
+                  <circle cx="22" cy="10" r="3" className="fill-slate-700" />
+                  <circle cx="30" cy="10" r="3" className="fill-slate-700" />
+                  <circle cx="22" cy="18" r="3" className="fill-slate-700" />
+                  <circle cx="30" cy="18" r="3" className="fill-slate-700" />
+               </svg>
             </div>
 
             <div className="min-w-0">
-              <div className="text-sm font-extrabold text-slate-900 tracking-tight leading-tight">
+              <div className="text-lg font-bold text-slate-700 tracking-tight leading-none">
                 LimRM Group
               </div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-[0.18em]">
+              <div className="text-[10px] text-slate-400 uppercase tracking-[0.15em] font-medium mt-1">
                 Analytics Core
               </div>
             </div>

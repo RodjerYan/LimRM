@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "main": "server.js",
-  "author": "Limkorm",
+  "author": "LimRM Group",
   "description": "LimRM Geo Analyzer Desktop",
   "engines": {
     "node": ">=20.0.0"

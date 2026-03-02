@@ -179,7 +179,7 @@ const NotFoundPage: React.FC<NotFoundPageProps> = ({ onLogin, onRegister }) => {
 
             {/* Logo */}
             <div className="absolute top-10 left-1/2 -translate-x-1/2 z-20 opacity-80 text-xs tracking-[0.3em] font-light text-slate-400 uppercase pointer-events-auto">
-                Limkorm Group
+                LimRM Group
             </div>
 
             {/* Canvas */}
