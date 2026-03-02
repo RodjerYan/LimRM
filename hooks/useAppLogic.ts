@@ -51,7 +51,7 @@ const getUniqueKeyForBluePoint = (row: OkbDataRow) => {
 
 export const useAppLogic = () => {
     // --- AUTH INTEGRATION ---
-    const { user } = useAuth();
+    const { user, token } = useAuth();
     
     const [activeModule, setActiveModule] = useState('adapta');
     const [updateJobStatus, setUpdateJobStatus] = useState<UpdateJobStatus | null>(null);
@@ -413,10 +413,13 @@ export const useAppLogic = () => {
             if (allData.length === 0 || processingState.isProcessing || isSyncingRef.current) return;
             isSyncingRef.current = true;
             try {
-                const deltasRes = await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
+                const headers: HeadersInit = {};
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+
+                const deltasRes = await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`, { headers });
                 const deltas = deltasRes.ok ? await deltasRes.json() : [];
 
-                const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+                const res = await fetch(`/api/get-full-cache?t=${Date.now()}`, { headers });
                 if (!res.ok) return;
                 const cacheData = await res.json();
                 
@@ -438,7 +441,7 @@ export const useAppLogic = () => {
         };
         const intervalId = setInterval(syncData, 45000);
         return () => clearInterval(intervalId);
-    }, [allData, processingState.isProcessing, applyCacheToData, applyDeltasToData, setAllData, addNotification]);
+    }, [allData, processingState.isProcessing, applyCacheToData, applyDeltasToData, setAllData, addNotification, token]);
 
     useEffect(() => {
         const init = async () => {

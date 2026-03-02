@@ -4,10 +4,12 @@ import { AggregatedDataRow, UnidentifiedRow, FileProcessingState, DeltaItem, Coo
 import { saveAnalyticsState, loadAnalyticsState } from '../utils/db';
 import { enrichWithAbcCategories } from '../utils/analytics';
 import { normalizeAddress, findAddressInRow, normalizeAggregatedToPeriod } from '../utils/dataUtils';
+import { useAuth } from '../components/auth/AuthContext';
 
 const MAX_CHUNK_SIZE_BYTES = 850 * 1024;
 
 export const useDataSync = (addNotification: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void) => {
+    const { token } = useAuth();
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
     const [unidentifiedRows, setUnidentifiedRows] = useState<UnidentifiedRow[]>([]);
     const [interestDeltas, setInterestDeltas] = useState<InterestDelta[]>([]); // New state for Blue Points deltas
@@ -26,7 +28,14 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
         setIsCloudSaving(true);
         console.info(`☁️ [Cloud] Saving Delta (${delta.type}):`, delta.key);
         try {
-            const res = await fetch('/api/get-full-cache?action=save-delta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(delta) });
+            const headers: HeadersInit = { 'Content-Type': 'application/json' };
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+
+            const res = await fetch('/api/get-full-cache?action=save-delta', { 
+                method: 'POST', 
+                headers, 
+                body: JSON.stringify(delta) 
+            });
             if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
             console.log("✅ [Cloud] Delta saved successfully");
         } catch (e) { console.error("❌ [Cloud] Failed to save delta:", e); addNotification('Ошибка сохранения изменений в облако', 'warning'); } 
@@ -38,9 +47,12 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
         setIsCloudSaving(true);
         console.info(`☁️ [Cloud] Saving Interest Delta (${delta.type}):`, delta.key);
         try {
+            const headers: HeadersInit = { 'Content-Type': 'application/json' };
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+
             const res = await fetch('/api/get-full-cache?action=save-interest-delta', { 
                 method: 'POST', 
-                headers: { 'Content-Type': 'application/json' }, 
+                headers, 
                 body: JSON.stringify(delta) 
             });
             if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
@@ -241,7 +253,14 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                 for (let i = 0; i < chunksToUpload.length; i += CONCURRENCY) {
                     const batch = chunksToUpload.slice(i, i + CONCURRENCY).map((item) => {
                         const queryParams = item.targetFileId ? `action=save-chunk&targetFileId=${item.targetFileId}` : `action=save-chunk&chunkIndex=${item.index}`;
-                        return fetch(`/api/get-full-cache?${queryParams}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chunk: item.content }) }).then(async res => {
+                        const headers: HeadersInit = { 'Content-Type': 'application/json' };
+                        if (token) headers['Authorization'] = `Bearer ${token}`;
+                        
+                        return fetch(`/api/get-full-cache?${queryParams}`, { 
+                            method: 'POST', 
+                            headers, 
+                            body: JSON.stringify({ chunk: item.content }) 
+                        }).then(async res => {
                             if (!res.ok) throw new Error(`Upload failed for chunk ${item.index}`);
                             lastSavedChunksRef.current.set(item.index, item.content);
                             console.log(`[Squash] Chunk ${item.index} saved.`);
@@ -251,9 +270,19 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                 }
             } else { console.log('[Squash] No chunks needed updates.'); }
             console.log('[Squash] Updating meta...');
-            await fetch('/api/get-full-cache?action=save-meta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ unidentifiedRows: currentUnidentified, okbRegionCounts: okbRegionCounts, totalRowsProcessed: totalRowsProcessedRef.current, versionHash: newVersionHash, chunkCount: lastSavedChunksRef.current.size, totalRows: totalRowsProcessedRef.current, timestamp: Date.now() }) });
+            const metaHeaders: HeadersInit = { 'Content-Type': 'application/json' };
+            if (token) metaHeaders['Authorization'] = `Bearer ${token}`;
+            
+            await fetch('/api/get-full-cache?action=save-meta', { 
+                method: 'POST', 
+                headers: metaHeaders, 
+                body: JSON.stringify({ unidentifiedRows: currentUnidentified, okbRegionCounts: okbRegionCounts, totalRowsProcessed: totalRowsProcessedRef.current, versionHash: newVersionHash, chunkCount: lastSavedChunksRef.current.size, totalRows: totalRowsProcessedRef.current, timestamp: Date.now() }) 
+            });
             console.log('[Squash] Clearing old deltas...');
-            await fetch('/api/get-full-cache?action=clear-deltas', { method: 'POST' });
+            
+            const clearHeaders: HeadersInit = {};
+            if (token) clearHeaders['Authorization'] = `Bearer ${token}`;
+            await fetch('/api/get-full-cache?action=clear-deltas', { method: 'POST', headers: clearHeaders });
             console.log("✅ [Squash] Complete. System optimized.");
             addNotification("База успешно оптимизирована (Squash)", "success");
         } catch (e) { console.error("❌ Save Snapshot Error:", e); addNotification('Ошибка сохранения снимка', 'error'); } finally { setIsCloudSaving(false); }

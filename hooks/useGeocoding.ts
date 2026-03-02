@@ -1,6 +1,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { MapPoint, ActionQueueItem } from '../types';
+import { useAuth } from '../components/auth/AuthContext';
 
 const MAX_GEOCODING_ATTEMPTS = 60;
 const GEOCODING_POLLING_INTERVAL_MS = 3000;
@@ -11,6 +12,7 @@ export const useGeocoding = (
     onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number) => void,
     onDeleteClientLocal: (rm: string, address: string) => void
 ) => {
+    const { token } = useAuth();
     const [actionQueue, setActionQueue] = useState<ActionQueueItem[]>([]);
     const [isProcessingQueue, setIsProcessingQueue] = useState(false);
 
@@ -37,13 +39,16 @@ export const useGeocoding = (
             console.info(`[Queue] Processing action: ${action.type}`, action.payload);
 
             try {
+                const headers: HeadersInit = { 'Content-Type': 'application/json' };
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+
                 if (action.type === 'UPDATE_ADDRESS') {
                     const { rmName, oldAddress, newAddress, comment, lat, lon, skipHistory, waitForGeocoding, trackingKey, originalIndex, basePoint } = action.payload;
                     
                     // 1. Send Update Request
                     const res = await fetch('/api/update-address', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers,
                         body: JSON.stringify({ rmName, oldAddress, newAddress, comment, lat, lon, skipHistory }),
                     });
                     if (!res.ok) throw new Error('Failed to update address');
@@ -62,7 +67,12 @@ export const useGeocoding = (
                             console.info(`📡 [Geocoding] Polling for ${newAddress} (Attempt ${attempts}/${MAX_GEOCODING_ATTEMPTS})`);
                             
                             try {
-                                const pollRes = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(newAddress)}&t=${Date.now()}`);
+                                const pollHeaders: HeadersInit = {};
+                                if (token) pollHeaders['Authorization'] = `Bearer ${token}`;
+                                
+                                const pollRes = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(newAddress)}&t=${Date.now()}`, {
+                                    headers: pollHeaders
+                                });
                                 if (pollRes.ok) {
                                     const data = await pollRes.json();
                                     
@@ -124,7 +134,7 @@ export const useGeocoding = (
                     const { rmName, address } = action.payload;
                     const res = await fetch('/api/delete-address', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers,
                         body: JSON.stringify({ rmName, address }),
                     });
                     
@@ -160,7 +170,7 @@ export const useGeocoding = (
 
         const timer = setInterval(processNextAction, 500);
         return () => clearInterval(timer);
-    }, [actionQueue, isProcessingQueue, addNotification]);
+    }, [actionQueue, isProcessingQueue, addNotification, token]);
 
     // --- PUBLIC HANDLERS ---
 
