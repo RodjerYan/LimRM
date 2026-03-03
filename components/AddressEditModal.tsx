@@ -549,33 +549,36 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       let backendOk = true;
 
       // Call backend to save comment to Sheet (Persistent)
-      try {
-          const originalRow = getSafeOriginalRow(data);
-          const rm = getRmName(data);
-          const address = (data as MapPoint).address || findAddressInRow(originalRow) || '';
-          
-          if (rm && address) {
-              const res = await fetch('/api/get-full-cache?action=update-address', {
-                  method: 'POST',
-                  headers: { 
-                      'Content-Type': 'application/json',
-                      'Authorization': `Bearer ${token}`
-                  },
-                  body: JSON.stringify({
-                      rmName: rm,
-                      oldAddress: address,
-                      newAddress: address, // No change in address
-                      comment: newComment,
-                      skipHistory: false
-                  })
-              });
-              if (!res.ok) backendOk = false;
-          } else {
+      // SKIP for Potential Clients (Blue Points) as they don't have a valid RM/Address for this endpoint
+      if (!isPotential) {
+          try {
+              const originalRow = getSafeOriginalRow(data);
+              const rm = getRmName(data);
+              const address = (data as MapPoint).address || findAddressInRow(originalRow) || '';
+              
+              if (rm && address) {
+                  const res = await fetch('/api/get-full-cache?action=update-address', {
+                      method: 'POST',
+                      headers: { 
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${token}`
+                      },
+                      body: JSON.stringify({
+                          rmName: rm,
+                          oldAddress: address,
+                          newAddress: address, // No change in address
+                          comment: newComment,
+                          skipHistory: false
+                      })
+                  });
+                  if (!res.ok) backendOk = false;
+              } else {
+                  backendOk = false;
+              }
+          } catch (e) {
+              console.error("Failed to save comment to backend:", e);
               backendOk = false;
           }
-      } catch (e) {
-          console.error("Failed to save comment to backend:", e);
-          backendOk = false;
       }
 
       if (!backendOk) {
@@ -626,35 +629,38 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
       let backendOk = true;
 
       // Call backend to delete from Sheet
-      try {
-          const originalRow = getSafeOriginalRow(data);
-          const rm = getRmName(data);
-          const address = (data as MapPoint).address || findAddressInRow(originalRow) || '';
-          
-          if (rm && address) {
-              const res = await fetch('/api/get-full-cache', {
-                  method: 'POST',
-                  headers: { 
-                      'Content-Type': 'application/json',
-                      'Authorization': `Bearer ${token}`
-                  },
-                  body: JSON.stringify({
-                      action: 'delete-history-entry',
-                      rmName: rm,
-                      address: address,
-                      entryText: entryText,
-                      timestamp: timestamp,
-                      commentText: commentText,
-                      author: typeof item === 'string' ? item.split(':')[0].trim() : item.user
-                  })
-              });
-              if (!res.ok) backendOk = false;
-          } else {
+      // SKIP for Potential Clients
+      if (!isPotential) {
+          try {
+              const originalRow = getSafeOriginalRow(data);
+              const rm = getRmName(data);
+              const address = (data as MapPoint).address || findAddressInRow(originalRow) || '';
+              
+              if (rm && address) {
+                  const res = await fetch('/api/get-full-cache', {
+                      method: 'POST',
+                      headers: { 
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${token}`
+                      },
+                      body: JSON.stringify({
+                          action: 'delete-history-entry',
+                          rmName: rm,
+                          address: address,
+                          entryText: entryText,
+                          timestamp: timestamp,
+                          commentText: commentText,
+                          author: typeof item === 'string' ? item.split(':')[0].trim() : item.user
+                      })
+                  });
+                  if (!res.ok) backendOk = false;
+              } else {
+                  backendOk = false;
+              }
+          } catch (e) {
+              console.error("Failed to delete comment from backend:", e);
               backendOk = false;
           }
-      } catch (e) {
-          console.error("Failed to delete comment from backend:", e);
-          backendOk = false;
       }
 
       // Rollback UI if backend failed
